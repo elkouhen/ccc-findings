@@ -26,3 +26,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cccf"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests d'intégration exécutant réellement Semgrep",
+    "slow: tests lents (téléchargement de modèle, etc.)",
+]

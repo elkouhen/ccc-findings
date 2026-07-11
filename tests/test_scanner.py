@@ -1,0 +1,81 @@
+from pathlib import Path
+
+import pytest
+
+from cccf.config import Config
+from cccf.scanner import SemgrepError, parse_semgrep_json, run_semgrep
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+VULN_REPO = FIXTURES_DIR / "vuln_repo"
+SEMGREP_OUTPUT = (FIXTURES_DIR / "semgrep_output.json").read_text()
+
+
+def make_config(**overrides: object) -> Config:
+    defaults: dict = {"rules": ["rules/rules.yml"]}
+    defaults.update(overrides)
+    return Config(**defaults)
+
+
+def test_parse_semgrep_json_fixture_returns_expected_findings() -> None:
+    findings = parse_semgrep_json(SEMGREP_OUTPUT, VULN_REPO)
+
+    assert len(findings) == 2
+
+    by_path = {f.path: f for f in findings}
+    sql_finding = by_path["app/db.py"]
+    assert sql_finding.rule_id == "rules.custom.sql-fstring"
+    assert sql_finding.severity == "ERROR"
+    assert sql_finding.start_line == 6
+    assert sql_finding.end_line == 6
+    assert sql_finding.cwe == ["CWE-89"]
+    assert "cursor.execute" in sql_finding.snippet
+
+    shell_finding = by_path["app/shell.py"]
+    assert shell_finding.rule_id == "rules.custom.subprocess-shell-true"
+    assert shell_finding.severity == "WARNING"
+    assert shell_finding.cwe == ["CWE-78"]
+
+    # ids stables : reparser la même sortie donne les mêmes ids
+    findings_again = parse_semgrep_json(SEMGREP_OUTPUT, VULN_REPO)
+    assert [f.id for f in findings] == [f.id for f in findings_again]
+
+
+def test_parse_semgrep_json_malformed_raises_semgrep_error() -> None:
+    with pytest.raises(SemgrepError):
+        parse_semgrep_json("not json", VULN_REPO)
+
+
+def test_parse_semgrep_json_missing_results_field_raises_semgrep_error() -> None:
+    with pytest.raises(SemgrepError):
+        parse_semgrep_json("{}", VULN_REPO)
+
+
+@pytest.mark.integration
+def test_run_semgrep_full_scan_returns_two_findings() -> None:
+    config = make_config()
+
+    findings = run_semgrep(VULN_REPO, config)
+
+    assert len(findings) == 2
+    assert {f.path for f in findings} == {"app/db.py", "app/shell.py"}
+
+
+@pytest.mark.integration
+def test_run_semgrep_targeted_scan_returns_one_finding() -> None:
+    config = make_config()
+
+    findings = run_semgrep(VULN_REPO, config, files=["app/db.py"])
+
+    assert len(findings) == 1
+    assert findings[0].path == "app/db.py"
+
+
+@pytest.mark.integration
+def test_run_semgrep_min_severity_error_filters_warning() -> None:
+    config = make_config(min_severity="ERROR")
+
+    findings = run_semgrep(VULN_REPO, config)
+
+    assert len(findings) == 1
+    assert findings[0].severity == "ERROR"
+    assert findings[0].path == "app/db.py"
