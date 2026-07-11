@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -10,7 +11,10 @@ from cccf import __version__
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import Embedder
 from cccf.indexer import index_repo
+from cccf.render import render_search_json, render_search_text, render_summary_json, render_summary_text
 from cccf.scanner import SemgrepError
+from cccf.search import search_findings
+from cccf.search import summary as compute_summary
 from cccf.store import Store
 
 app = typer.Typer(help="ccc-findings: index Semgrep interrogeable par LLM")
@@ -113,6 +117,64 @@ def index_cmd(
         f"scanned={report.scanned} skipped={report.skipped} "
         f"+findings={report.findings_added} -findings={report.findings_removed}"
     )
+
+
+def _require_index(repo_root: Path) -> None:
+    db_path = repo_root / ".cccf" / "findings.db"
+    if not db_path.is_file():
+        typer.echo("Index absent. Lancez d'abord: cccf index", err=True)
+        raise typer.Exit(code=2)
+
+
+@app.command()
+def search(
+    query: str,
+    severity: Optional[str] = typer.Option(None, "--severity"),  # noqa: UP007
+    rule: Optional[str] = typer.Option(None, "--rule"),  # noqa: UP007
+    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
+    limit: int = typer.Option(5, "--limit"),
+    offset: int = typer.Option(0, "--offset"),
+    context: bool = typer.Option(False, "--context"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recherche en langage naturel dans les findings Semgrep indexés."""
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+
+    config = load_config(repo_root)
+    embedder = _make_embedder(config.embedding_model)
+
+    with Store(repo_root) as store:
+        hits = search_findings(
+            store,
+            embedder,
+            query,
+            severity=severity,
+            rule=rule,
+            path_glob=path,
+            limit=limit,
+            offset=offset,
+        )
+
+        if json_output:
+            typer.echo(json.dumps(render_search_json(hits, repo_root, context)))
+        else:
+            typer.echo(render_search_text(hits, repo_root, context))
+
+
+@app.command(name="summary")
+def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Vue agrégée des findings (sévérités, top règles, top répertoires)."""
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+
+    with Store(repo_root) as store:
+        result = compute_summary(store)
+
+    if json_output:
+        typer.echo(json.dumps(render_summary_json(result)))
+    else:
+        typer.echo(render_summary_text(result))
 
 
 if __name__ == "__main__":
