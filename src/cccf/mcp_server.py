@@ -3,6 +3,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from cccf.ccc_bridge import CccUnavailable, annotate_with_findings, search_code
 from cccf.cli import _make_embedder
 from cccf.config import load_config
 from cccf.indexer import index_repo
@@ -99,5 +100,26 @@ def reindex_findings() -> str:
                 "deleted_files": report.deleted_files,
             }
         )
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def search_code_with_findings(query: str, limit: int = 5) -> str:
+    """Recherche sémantique de code (via ccc) annotée des findings Semgrep connus
+    sur chaque résultat. Outil à privilégier pour explorer du code en tenant
+    compte de sa dette sécurité.
+    """
+    repo_root = _repo_root()
+    try:
+        code_hits = search_code(repo_root, query, limit)
+    except CccUnavailable:
+        fallback = json.loads(search_findings(query, limit=limit))
+        return json.dumps({"error": "ccc non disponible", "fallback": fallback})
+
+    try:
+        with Store(repo_root) as store:
+            annotated = annotate_with_findings(code_hits, store)
+        return json.dumps(annotated)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
