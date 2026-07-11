@@ -49,3 +49,4 @@
 | A4 — Centraliser et cacher la factory d'embedder | `archive/BACKLOG-4.md` | Terminé |
 | A5 — Détecter les embeddings incompatibles avant la recherche | `archive/BACKLOG-4.md` | Terminé |
 | A12 — Corriger les incohérences de documentation fonctionnelle | `archive/BACKLOG-4.md` | Terminé |
+| UX1 — Simplifier le parcours d'usage du skill | `archive/BACKLOG-5.md` | Terminé |

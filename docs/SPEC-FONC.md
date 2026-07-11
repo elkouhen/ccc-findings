@@ -159,21 +159,23 @@ utilisable pour l'appel suivant) :
 
 Déclencheurs : vulnérabilité, sécurité, semgrep, finding, dette, audit.
 
-Quatre workflows :
-1. **Explorer les problèmes connus** — `search_findings` puis, sur le finding
-   retenu, rappel avec `include_context: true`.
-2. **Avant de modifier un fichier** — `search_findings(path_glob="<fichier>*")`.
-3. **Boucle de correction** — `search_findings` → lecture du contexte →
-   patch (en respectant `fix` si fourni) → vérification via le MCP Semgrep
-   officiel (`semgrep_scan`) sur le seul fichier modifié si disponible →
-   `reindex_findings` → re-`search_findings` avec le même filtre pour
-   confirmer la disparition ; abandon et signalement après 2 tentatives
-   infructueuses.
-4. **Vue d'ensemble** — `findings_summary`.
+Règle d'or UX : commencer par la requête la moins coûteuse qui répond à la
+question, puis demander plus de contexte seulement quand il faut agir. Le skill
+choisit donc entre :
+1. **Vue d'ensemble** — `findings_summary()` pour un état court.
+2. **Recherche ciblée** — `search_findings(...)` pour un problème ou un fichier.
+3. **Recherche code + dette** — `search_code_with_findings(...)` quand la
+   question porte d'abord sur du code.
+4. **Boucle de correction** — `search_findings(..., include_context=true)` →
+   patch → scan Semgrep frais sur le fichier si le MCP officiel est disponible
+   → `reindex_findings()` → même `search_findings(...)` pour confirmer la
+   disparition ; abandon et signalement après 2 tentatives infructueuses.
 
 Anti-patterns explicites : ne pas scanner tout le repo via le MCP Semgrep
-officiel (préférer l'index `cccf`), ne pas corriger sans avoir lu le
-contexte, ne pas supprimer un commentaire `# nosemgrep` existant.
+officiel (préférer l'index `cccf`), ne pas corriger sans avoir lu le contexte,
+ne pas supprimer un commentaire `# nosemgrep` existant, ne pas exposer le JSON
+brut à l'utilisateur sauf demande explicite, et utiliser les fallbacks MCP
+existants plutôt que bloquer inutilement.
 
 ## 5. Comportements d'erreur — résumé
 
