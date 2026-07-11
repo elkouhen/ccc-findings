@@ -91,7 +91,9 @@ Rendu texte, un bloc par résultat :
    Une requête SQL construite par f-string permet une injection SQL.
 ```
 Avec `--context`, le bloc de code numéroté est ajouté à la suite (format
-`{n:>5}| {ligne}`).
+`{n:>5}| {ligne}`). Si le fichier source a disparu ou n'est plus lisible depuis
+la dernière indexation, le finding reste affiché et le contexte est signalé
+comme indisponible pour ce résultat uniquement.
 
 Rendu `--json` : liste d'objets — **contrat stable**, consommé aussi par le
 serveur MCP (`search_findings`) :
@@ -100,7 +102,8 @@ serveur MCP (`search_findings`) :
   "id": "...", "rule_id": "...", "severity": "...", "message": "...",
   "path": "...", "start_line": 0, "end_line": 0, "score": 0.0,
   "fix": null, "cwe": [], "owasp": [],
-  "context": "..."  // présent seulement si --context
+  "context": "...", // présent seulement si --context ; null si indisponible
+  "context_error": "..."  // présent seulement si --context et contexte indisponible
 }
 ```
 
@@ -177,9 +180,10 @@ contexte, ne pas supprimer un commentaire `# nosemgrep` existant.
 | Situation | Surface | Comportement |
 |---|---|---|
 | `.cccf/config.yml` absent | `cccf index` | stderr + code 1 |
-| Pas de config Semgrep détectée et pas de `--rules` | `cccf init` | stderr (message exact ci-dessus) + code 1 |
+| Pas de config Semgrep détectée et pas de `--rules` | `cccf init` | repli sur `p/security-audit`, message informatif stdout + code 0 |
 | `.cccf/config.yml` déjà existant | `cccf init` | stderr + code 1, fichier non modifié |
 | Semgrep échoue ou dépasse le timeout | `cccf index` | stderr + code 2, base inchangée |
 | `.cccf/findings.db` absent | `cccf search` / `cccf summary` | stderr (message exact) + code 2 |
+| Embeddings incompatibles avec la requête | `cccf search` | stderr actionnable + code 2 |
 | Toute exception | tools MCP | `{"error": "<message>"}`, jamais de crash serveur |
 | `ccc` absent ou en erreur | `search_code_with_findings` | fallback sur `search_findings`, jamais d'échec sec |

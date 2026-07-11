@@ -288,3 +288,65 @@ télécharge et s'exécute avec succès dans l'environnement de développement
 sa couverture réelle sur un cas donné dépend du contenu du registry Semgrep,
 hors du contrôle de `cccf`. `docs/PRD.md` §12 point 2 est mis à jour pour
 refléter que cette question n'est plus ouverte.
+
+---
+
+## ADR-14 — Le périmètre `cccf` prime sur les ignores Semgrep
+
+**Statut** : Acté.
+
+**Contexte** : la revue architecture a confirmé deux trous d'index silencieux :
+`include: ["**/*"]` ne matchait pas les fichiers à la racine avec `fnmatch`, et
+Semgrep pouvait exclure des répertoires `tests/` via ses mécanismes d'ignore
+avant même que `cccf` ne parse les résultats.
+
+**Décision** : `cccf` traite explicitement `**/*` comme « tout fichier du repo »
+pendant la phase de hashing, et invoque Semgrep avec
+`--x-ignore-semgrepignore-files` pour que le périmètre sélectionné par
+`.cccf/config.yml` reste la source de vérité.
+
+**Conséquences** : les fichiers racine et les répertoires `tests/` ne sont plus
+silencieusement absents de l'index. Le choix repose sur un flag Semgrep interne
+non garanti comme API stable ; si Semgrep le retire, `run_semgrep` échouera
+bruyamment plutôt que de produire un index incomplet sans signal.
+
+---
+
+## ADR-15 — L'identité d'un finding inclut sa localisation
+
+**Statut** : Acté.
+
+**Contexte** : l'identité historique `hash(rule_id|path|snippet_normalisé)`
+résistait aux décalages de lignes, mais fusionnait deux occurrences identiques
+de la même règle dans un même fichier, et fusionnait encore plus facilement des
+findings au snippet vide.
+
+**Décision** : l'identité calculée par `compute_finding_id` inclut désormais la
+plage `start_line:end_line` en plus de la règle, du chemin et du snippet
+normalisé.
+
+**Conséquences** : deux occurrences identiques restent distinctes en base et ne
+s'écrasent plus via la clé primaire. En contrepartie, un finding dont le code ne
+change pas mais dont la ligne se décale reçoit un nouvel identifiant ; c'est
+accepté pour privilégier l'absence de sous-rapportage silencieux.
+
+---
+
+## ADR-16 — Signature et dimension des embeddings stockées dans l'index
+
+**Statut** : Acté.
+
+**Contexte** : le hook `CCCF_FAKE_EMBEDDER=1` utilisé en test pouvait créer une
+base avec des vecteurs 8 dimensions tout en enregistrant seulement le nom du
+modèle réel, puis une recherche avec le vrai modèle échouait tardivement dans
+NumPy.
+
+**Décision** : chaque embedder expose une `signature` qui encode son type et son
+modèle. `index_repo` stocke `embedding_signature` et `embedding_dim` dans la
+table `meta`, ré-embedde tout lorsque la signature change, et la recherche
+vérifie explicitement la dimension des vecteurs avant le produit scalaire.
+
+**Conséquences** : les index mixtes ou corrompus produisent une erreur
+actionnable demandant une réindexation complète, au lieu d'un traceback brut ou
+de scores incohérents. Le fake embedder reste disponible pour les tests, mais sa
+signature distincte empêche de le confondre avec le modèle de production.

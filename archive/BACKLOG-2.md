@@ -8,7 +8,7 @@
 
 ## Findings de correction (correctness / efficacité)
 
-### [ ] R1 — Les fichiers racine du repo ne sont jamais indexés
+### [x] R1 — Les fichiers racine du repo ne sont jamais indexés
 - **Fichier** : `src/cccf/indexer.py:36` (+ `src/cccf/config.py` `DEFAULT_INCLUDE`)
 - **Sévérité** : CRITIQUE — trou d'index silencieux
 - **Vérifié** : `fnmatch("setup.py", "**/*") == False` (fnmatch exige un `/` dans le chemin)
@@ -19,7 +19,7 @@
   « tout », ou tester aussi `fnmatch(rel_path, "*")` pour les chemins sans `/`),
   et ajouter un fichier racine vulnérable au fixture pour verrouiller le cas.
 
-### [ ] R2 — Les répertoires `tests/` des repos utilisateurs sont silencieusement exclus du scan
+### [x] R2 — Les répertoires `tests/` des repos utilisateurs sont silencieusement exclus du scan
 - **Fichier** : `src/cccf/scanner.py:110` (`run_semgrep`)
 - **Sévérité** : CRITIQUE — fausse impression de sécurité
 - **Contexte** : le `.semgrepignore` racine ajouté en F0.2 ne corrige que CE repo ;
@@ -33,7 +33,7 @@
   version) OU générer un `.semgrepignore` dans le repo cible depuis la config, OU a
   minima remonter le rapport `paths.skipped` de Semgrep en avertissement.
 
-### [ ] R3 — `CCCF_FAKE_EMBEDDER` peut empoisonner un index de prod de façon indétectable
+### [x] R3 — `CCCF_FAKE_EMBEDDER` peut empoisonner un index de prod de façon indétectable
 - **Fichier** : `src/cccf/cli.py:87` (`_make_embedder`, `_FakeEmbedder`)
 - **Sévérité** : HAUTE
 - **Scénario** : indexer avec la variable posée (vecteurs sha256 8-dim, mais
@@ -45,7 +45,7 @@
   un switch runtime reste souhaité, l'enregistrer dans `meta` pour que
   l'incompatibilité index/requête soit détectée et déclenche un ré-embed.
 
-### [ ] R4 — Le serveur MCP recharge le modèle d'embedding à chaque appel de tool
+### [x] R4 — Le serveur MCP recharge le modèle d'embedding à chaque appel de tool
 - **Fichier** : `src/cccf/mcp_server.py:44` (et `:91`)
 - **Sévérité** : HAUTE — NF1 (p95 < 1 s) structurellement inatteignable
 - **Scénario** : le cache de `Embedder._load` est par instance et `_make_embedder`
@@ -55,7 +55,7 @@
   avec `functools.lru_cache`, importé par `cli.py` ET `mcp_server.py` (règle au
   passage l'inversion de dépendance MCP → CLI, voir N2).
 
-### [ ] R5 — Un seul fichier non-UTF-8 fait échouer toute l'indexation
+### [x] R5 — Un seul fichier non-UTF-8 fait échouer toute l'indexation
 - **Fichier** : `src/cccf/scanner.py:44` (`_read_snippet`)
 - **Sévérité** : HAUTE
 - **Scénario** : un fichier legacy latin-1 (un `é` en 0xE9 dans un commentaire
@@ -65,7 +65,7 @@
 - **Fix proposé** : `read_text(encoding="utf-8", errors="replace")` + catch
   élargi ; à terme préférer `extra.lines` de Semgrep quand disponible (voir R6).
 
-### [ ] R6 — Collision d'IDs de findings quand le snippet est vide ou dupliqué
+### [x] R6 — Collision d'IDs de findings quand le snippet est vide ou dupliqué
 - **Fichiers** : `src/cccf/scanner.py:46`, `src/cccf/models.py:5`, `src/cccf/store.py:130`
 - **Sévérité** : HAUTE — sous-rapportage silencieux
 - **Scénario** : fichier illisible (course de suppression, permissions CI) →
@@ -77,7 +77,7 @@
   de schéma nécessaire) ou échouer bruyamment sur snippet vide ; remplacer l'upsert
   par un INSERT strict + assertion, pour que toute collision devienne visible.
 
-### [ ] R7 — `get_context` crashe sur index périmé et détruit tout le résultat MCP
+### [x] R7 — `get_context` crashe sur index périmé et détruit tout le résultat MCP
 - **Fichier** : `src/cccf/search.py:72` (+ `render.py`, `mcp_server.py`)
 - **Sévérité** : MOYENNE-HAUTE — frappe précisément la boucle de correction du skill
 - **Scénario** : indexer, puis supprimer/renommer un fichier flaggé sans réindexer
@@ -137,6 +137,10 @@
   → factory public dans `embedder.py`, fakes dans `tests/conftest.py`
   (conftest à créer : les fixtures repo_copy sont aussi dupliquées dans 5 fichiers
   de test). Se traite naturellement avec R3 et R4.
+- **Statut revue 2026-07-12** : partiellement traité par A4/R4/R3
+  (`make_embedder` public et cache côté runtime, plus d'import MCP → CLI). Reste
+  ouvert tant que les fakes/fixtures de tests ne sont pas unifiés dans
+  `tests/conftest.py`.
 
 ### [ ] N3 — Une seule sérialisation `Finding → dict` et un seul rendu summary
 - `ccc_bridge._finding_to_dict` duplique le mapping de `render.render_search_json`

@@ -91,6 +91,10 @@ class Store:
             (key, value),
         )
 
+    def get_embedding_dim(self) -> int | None:
+        raw = self.get_meta("embedding_dim")
+        return int(raw) if raw else None
+
     # -- files --
 
     def set_file_hash(self, path: str, sha: str) -> None:

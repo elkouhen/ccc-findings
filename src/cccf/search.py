@@ -4,6 +4,7 @@ from typing import Protocol
 
 import numpy as np
 
+from cccf.embedder import EmbeddingError
 from cccf.models import Finding
 from cccf.store import Store
 
@@ -41,6 +42,14 @@ def search_findings(
     if not candidates:
         return []
 
+    stored_signature = store.get_meta("embedding_signature")
+    query_signature = getattr(embedder, "signature", None)
+    if stored_signature and query_signature and stored_signature != query_signature:
+        raise EmbeddingError(
+            f"Signature d'embedding incompatible : index={stored_signature}, "
+            f"requête={query_signature}. Relancez: cccf index --full"
+        )
+
     embeddings = dict(store.iter_embeddings())
     query_vec = embedder.embed_query(query)
 
@@ -49,6 +58,12 @@ def search_findings(
         vector = embeddings.get(finding.id)
         if vector is None:
             continue
+        if vector.shape != query_vec.shape:
+            raise EmbeddingError(
+                f"Dimension d'embedding incompatible pour {finding.id}: "
+                f"index={vector.shape[0]}, requête={query_vec.shape[0]}. "
+                "Relancez: cccf index --full"
+            )
         hits.append(SearchHit(finding=finding, score=float(vector @ query_vec)))
 
     hits.sort(key=lambda hit: hit.score, reverse=True)
@@ -69,7 +84,9 @@ def summary(store: Store) -> Summary:
 
 
 def get_context(repo_root: Path, finding: Finding, before: int = 5, after: int = 5) -> str:
-    lines = (repo_root / finding.path).read_text().splitlines()
+    lines = (repo_root / finding.path).read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines()
     start_line = max(finding.start_line - before, 1)
     end_line = min(finding.end_line + after, len(lines))
     return "\n".join(f"{n:>5}| {lines[n - 1]}" for n in range(start_line, end_line + 1))

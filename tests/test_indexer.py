@@ -61,6 +61,23 @@ def test_first_index_run_finds_all_findings_and_scans_all_files(repo_copy: Path)
 
 
 @pytest.mark.integration
+def test_default_include_indexes_root_files(repo_copy: Path) -> None:
+    (repo_copy / "root_vuln.py").write_text(
+        "import sqlite3\n\n"
+        "def find_user(conn: sqlite3.Connection, name: str):\n"
+        "    cursor = conn.cursor()\n"
+        "    cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n"
+    )
+
+    with Store(repo_copy) as store:
+        index_repo(repo_copy, make_config(), store, FakeEmbedder())
+        findings = store.all_findings(path_glob="root_vuln.py")
+
+    assert len(findings) == 1
+    assert findings[0].path == "root_vuln.py"
+
+
+@pytest.mark.integration
 def test_second_run_without_changes_scans_nothing(repo_copy: Path) -> None:
     config = make_config()
 

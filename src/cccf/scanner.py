@@ -40,8 +40,10 @@ def _normalize_str_or_list(value: Any) -> list[str]:
 
 def _read_snippet(repo_root: Path, rel_path: str, start_line: int, end_line: int) -> str:
     try:
-        lines = (repo_root / rel_path).read_text().splitlines()
-    except OSError:
+        lines = (repo_root / rel_path).read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+    except (OSError, UnicodeError):
         return ""
     start_idx = max(start_line - 1, 0)
     end_idx = min(end_line, len(lines))
@@ -86,7 +88,7 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
         metadata = extra.get("metadata") or {}
         findings.append(
             Finding(
-                id=compute_finding_id(rule_id, path, snippet),
+                id=compute_finding_id(rule_id, path, snippet, start_line, end_line),
                 rule_id=rule_id,
                 severity=severity,
                 message=extra.get("message", ""),
@@ -111,6 +113,7 @@ def run_semgrep(
         "scan",
         "--json",
         "--quiet",
+        "--x-ignore-semgrepignore-files",
         "--timeout",
         str(config.semgrep_timeout_s),
     ]

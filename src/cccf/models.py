@@ -2,9 +2,18 @@ import hashlib
 from dataclasses import dataclass
 
 
-def compute_finding_id(rule_id: str, path: str, snippet: str) -> str:
+def compute_finding_id(
+    rule_id: str,
+    path: str,
+    snippet: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str:
     normalized_snippet = " ".join(snippet.split())
-    digest = hashlib.sha256(f"{rule_id}|{path}|{normalized_snippet}".encode()).hexdigest()
+    location = "" if start_line is None else f"|{start_line}:{end_line or start_line}"
+    digest = hashlib.sha256(
+        f"{rule_id}|{path}{location}|{normalized_snippet}".encode()
+    ).hexdigest()
     return digest[:16]
 
 

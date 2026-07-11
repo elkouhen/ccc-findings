@@ -30,7 +30,7 @@ pipx install semgrep
 ## Démarrage
 
 ```bash
-cccf init                       # détecte .semgrep.yml / semgrep.yml / .semgrep, ou --rules explicite
+cccf init                       # détecte une config Semgrep, sinon utilise p/security-audit
 cccf index                      # scan Semgrep incrémental + embeddings
 cccf search "injection sql"     # recherche en langage naturel
 cccf summary                    # vue agrégée (sévérités, top règles, top répertoires)

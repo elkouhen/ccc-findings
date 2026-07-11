@@ -3,10 +3,12 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from cccf.embedder import finding_to_text
+from cccf.embedder import EmbeddingError, finding_to_text
 from cccf.models import Finding
-from cccf.search import get_context, search_findings, summary
+from cccf.render import render_search_json, render_search_text
+from cccf.search import SearchHit, get_context, search_findings, summary
 from cccf.store import Store
 
 
@@ -158,3 +160,33 @@ def test_get_context_narrow_window(tmp_path: Path) -> None:
     context_lines = context.splitlines()
 
     assert context_lines == ["    9| line 9", "   10| line 10", "   11| line 11"]
+
+
+def test_search_findings_rejects_incompatible_embedding_dimensions(tmp_path: Path) -> None:
+    indexed_embedder = BagOfWordsFakeEmbedder(dim=8)
+    query_embedder = BagOfWordsFakeEmbedder(dim=16)
+
+    with Store(tmp_path) as store:
+        seed_store(store, indexed_embedder)
+
+        with pytest.raises(EmbeddingError, match="Dimension d'embedding incompatible"):
+            search_findings(store, query_embedder, "injection sql")
+
+
+def test_render_search_json_degrades_when_context_file_is_missing(tmp_path: Path) -> None:
+    hit = SearchHit(finding=SQL_FINDING, score=0.9)
+
+    result = render_search_json([hit], tmp_path, include_context=True)
+
+    assert result[0]["context"] is None
+    assert "context_error" in result[0]
+    assert result[0]["path"] == "app/db.py"
+
+
+def test_render_search_text_degrades_when_context_file_is_missing(tmp_path: Path) -> None:
+    hit = SearchHit(finding=SQL_FINDING, score=0.9)
+
+    result = render_search_text([hit], tmp_path, include_context=True)
+
+    assert "contexte indisponible" in result
+    assert "custom.sql-fstring" in result

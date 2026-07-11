@@ -13,8 +13,13 @@ def render_search_text(hits: list[SearchHit], repo_root: Path, include_context: 
         )
         lines.append(f"   {finding.message}")
         if include_context:
-            for context_line in get_context(repo_root, finding).splitlines():
-                lines.append(f"   {context_line}")
+            try:
+                context = get_context(repo_root, finding)
+            except OSError as exc:
+                lines.append(f"   contexte indisponible : {exc}")
+            else:
+                for context_line in context.splitlines():
+                    lines.append(f"   {context_line}")
     return "\n".join(lines)
 
 
@@ -38,7 +43,11 @@ def render_search_json(
             "owasp": finding.owasp,
         }
         if include_context:
-            entry["context"] = get_context(repo_root, finding)
+            try:
+                entry["context"] = get_context(repo_root, finding)
+            except OSError as exc:
+                entry["context"] = None
+                entry["context_error"] = str(exc)
         results.append(entry)
     return results
 

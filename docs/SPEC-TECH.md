@@ -23,8 +23,8 @@
 | `mcp_server.py` | Serveur `FastMCP` stdio, 4 tools | `cli` (factory embedder), `ccc_bridge`, `config`, `indexer`, `render`, `search`, `store` |
 
 Le sens des dépendances est globalement `cli.py`/`mcp_server.py` → logique
-métier → `store.py`. `mcp_server.py` importe `cli._make_embedder` (privé) —
-inversion de couche notée dans `archive/BACKLOG-2.md` (N2).
+métier → `store.py`. La factory publique d'embedder vit dans `embedder.py` et
+est utilisée par le CLI comme par le serveur MCP.
 
 ## 2. Modèle de données
 
@@ -32,7 +32,7 @@ inversion de couche notée dans `archive/BACKLOG-2.md` (N2).
 ```python
 @dataclass(frozen=True)
 class Finding:
-    id: str            # sha256(rule_id|path|snippet_normalisé)[:16]
+    id: str            # sha256(rule_id|path|start:end|snippet_normalisé)[:16]
     rule_id: str        # check_id Semgrep (peut être préfixé, voir §4)
     severity: str        # INFO | WARNING | ERROR (normalisée)
     message: str
@@ -45,17 +45,19 @@ class Finding:
     owasp: list[str]
 ```
 
-`compute_finding_id(rule_id, path, snippet)` : normalise le snippet
-(`" ".join(snippet.split())` — espaces/indentation réduits) puis
-`sha256(f"{rule_id}|{path}|{snippet_normalisé}")[:16]`. Stable aux décalages
-de lignes ; **pas** stable si deux findings de même règle/chemin ont un
-snippet identique (voir défaut connu R6 dans `archive/BACKLOG-2.md`).
+`compute_finding_id(rule_id, path, snippet, start_line, end_line)` : normalise
+le snippet (`" ".join(snippet.split())` — espaces/indentation réduits) puis
+`sha256(f"{rule_id}|{path}|{start_line}:{end_line}|{snippet_normalisé}")[:16]`.
+La localisation rend deux occurrences identiques d'une même règle dans un même
+fichier distinctes ; le compromis est que l'identité change si le finding se
+décale dans le fichier.
 
 ### Schéma SQLite (`.cccf/findings.db`, géré par `Store`)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
--- clés utilisées : schema_version ("1"), embedding_model
+-- clés utilisées : schema_version ("1"), embedding_model,
+-- embedding_signature, embedding_dim
 
 CREATE TABLE files (
     path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, indexed_at TEXT NOT NULL
@@ -92,8 +94,8 @@ laisse la base dans son état d'avant l'appel).
        unique mécanisme de mise à jour (gère nativement les findings corrigés).
      set_file_hash pour chaque fichier de changed.
 5. Embedding (voir §5) :
-     si meta.embedding_model != config.embedding_model : ré-embedder TOUT
-       store.all_findings() et mettre à jour meta.
+       si meta.embedding_signature != signature de l'embedder courant :
+         ré-embedder TOUT store.all_findings() et mettre à jour meta.
      sinon : n'embedder que les findings de `changed` dont l'id n'a pas déjà
        un embedding en base (iter_embeddings()).
 6. Retourner IndexReport(scanned, skipped, findings_added, findings_removed,
@@ -109,12 +111,15 @@ dans `archive/BACKLOG-2.md`).
 
 Commande construite :
 ```
-semgrep scan --json --quiet --timeout <semgrep_timeout_s>
+semgrep scan --json --quiet --x-ignore-semgrepignore-files --timeout <semgrep_timeout_s>
   --config <r1> --config <r2> ...   # un par entrée de config.rules
   <fichiers de `files`>  ou  "."     # scan ciblé ou complet
 ```
 Exécutée avec `cwd=repo_root`. Codes retour 0 et 1 sont normaux (1 = « des
 findings ont été trouvés ») ; tout autre code lève `SemgrepError(stderr)`.
+`--x-ignore-semgrepignore-files` est utilisé pour que le périmètre piloté par
+`.cccf/config.yml` ne soit pas silencieusement réduit par les `.semgrepignore`
+ou ignores par défaut de Semgrep, notamment sur les répertoires `tests/`.
 
 **Effet de bord notable** : quand une entrée de `config.rules` contient un
 chemin avec sous-répertoire (ex. `rules/rules.yml`), Semgrep préfixe le
@@ -130,8 +135,9 @@ au lieu de `custom.sql-fstring`). C'est la valeur réelle stockée dans
 - `start.line` / `end.line`
 - **snippet** : relu depuis le fichier source (`repo_root/path`, lignes
   `start_line`..`end_line`) plutôt que depuis `extra.lines` — voir ADR-8.
-  Retourne `""` si le fichier n'est pas lisible (`OSError` uniquement,
-  `UnicodeDecodeError` non catché — défaut connu R5).
+  Retourne `""` si le fichier n'est pas lisible ; le décodage utilise
+  `encoding="utf-8", errors="replace"` pour éviter qu'un fichier legacy
+  non-UTF-8 fasse échouer toute l'indexation.
 - `extra.fix` → `fix`
 - `extra.metadata.cwe` / `.owasp` : chaîne ou liste acceptée, normalisée en
   liste.
@@ -153,7 +159,11 @@ f"{f.rule_id} | {f.severity} | {f.message} | {' '.join(f.cwe + f.owasp)} | {f.pa
 `Embedder` (sentence-transformers, modèle par défaut
 `Snowflake/snowflake-arctic-embed-xs`) charge le modèle paresseusement au
 premier appel, encode par batch, normalise L2, retourne du `float32`.
-`embed_query` réutilise `embed_texts` sur une liste à un élément.
+`embed_query` réutilise `embed_texts` sur une liste à un élément. La factory
+publique `make_embedder(model_name)` est cachée par modèle et mode fake dans le
+processus, ce qui évite de recharger le modèle à chaque appel MCP. Chaque
+embedder expose une `signature` stockée dans `meta.embedding_signature`; la
+dimension vectorielle est stockée dans `meta.embedding_dim`.
 
 `search.search_findings` :
 1. Filtre d'abord en SQL/Python (`store.all_findings(severity_at_least, rule_id,
@@ -161,9 +171,12 @@ premier appel, encode par batch, normalise L2, retourne du `float32`.
 2. Charge tous les embeddings de la base (`store.iter_embeddings()`), pas
    seulement ceux des candidats filtrés (défaut connu — coût, voir
    `archive/BACKLOG-2.md`).
-3. Calcule le cosinus par produit scalaire (`vector @ query_vec`, vecteurs
+3. Vérifie que chaque vecteur candidat a la même dimension que le vecteur de
+   requête ; une incompatibilité lève `EmbeddingError` avec un message demandant
+   de réindexer.
+4. Calcule le cosinus par produit scalaire (`vector @ query_vec`, vecteurs
    déjà normalisés L2 des deux côtés).
-4. Trie décroissant, pagine (`offset`, `limit`).
+5. Trie décroissant, pagine (`offset`, `limit`).
 
 `search.summary` : `by_severity`/`top_rules` via `Store.counts_by` (SQL
 `GROUP BY`), `by_top_level_dir` calculé côté Python sur
@@ -171,8 +184,9 @@ premier appel, encode par batch, normalise L2, retourne du `float32`.
 
 `search.get_context(repo_root, finding, before=5, after=5)` : relit le
 fichier source, retourne les lignes `[start_line-before, end_line+after]`
-bornées à `[1, len(lignes)]`, préfixées `f"{n:>5}| {ligne}"`. Aucune gestion
-d'erreur si le fichier a disparu depuis l'indexation (défaut connu R7).
+bornées à `[1, len(lignes)]`, préfixées `f"{n:>5}| {ligne}"`. Les renderers
+capturent les erreurs de lecture par finding : le JSON expose `context: null`
+et `context_error`, le rendu texte affiche un contexte indisponible.
 
 ## 6. Jointure avec `ccc` (`ccc_bridge.py`)
 
@@ -228,10 +242,10 @@ sérialisation (`render.py`, `ccc_bridge.py`) — actuellement dupliqués, voir
   sentence-transformers réel — **exclus par défaut** (`addopts = "-m 'not
   slow'"` dans `pyproject.toml`, voir ADR-11) ; à lancer explicitement via
   `uv run pytest -m slow`.
-- `CCCF_FAKE_EMBEDDER=1` : bascule `cli._make_embedder` sur un embedder
-  déterministe (hash SHA-256, 8 dimensions) pour les tests d'intégration
-  n'ayant pas besoin de sémantique réelle. **Ne jamais** positionner cette
-  variable sur un index de production (voir défaut connu R3).
+- `CCCF_FAKE_EMBEDDER=1` : bascule `embedder.make_embedder` sur un embedder
+  déterministe (hash SHA-256, 8 dimensions, signature `fake:<model>:8`) pour les
+  tests d'intégration n'ayant pas besoin de sémantique réelle. Un index créé
+  avec ce fake est distingué d'un index de production via `embedding_signature`.
 - `eval/run_eval.py` : indexe une copie temporaire de `vuln_repo` avec le
   vrai embedder, calcule le hit-rate top-3 sur `eval/queries.yml` (8
   requêtes FR/EN). Seuil de passage : ≥ 0,75 (mesuré : 1.00 au dernier run).

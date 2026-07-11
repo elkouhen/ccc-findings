@@ -1,6 +1,14 @@
+import hashlib
+import os
+from functools import lru_cache
+
 import numpy as np
 
 from cccf.models import Finding
+
+
+class EmbeddingError(Exception):
+    pass
 
 
 def finding_to_text(f: Finding) -> str:
@@ -15,6 +23,7 @@ class Embedder:
     def __init__(self, model_name: str) -> None:
         self._model_name = model_name
         self._model = None
+        self.signature = f"sentence-transformers:{model_name}"
 
     def _load(self):
         if self._model is None:
@@ -32,3 +41,35 @@ class Embedder:
 
     def embed_query(self, text: str) -> np.ndarray:
         return self.embed_texts([text])[0]
+
+
+class FakeEmbedder:
+    """Embedder déterministe sans dépendance réseau, réservé aux tests."""
+
+    def __init__(self, model_name: str, dim: int = 8) -> None:
+        self._model_name = model_name
+        self._dim = dim
+        self.signature = f"fake:{model_name}:{dim}"
+
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        vectors = []
+        for text in texts:
+            digest = hashlib.sha256(text.encode()).digest()
+            raw = np.frombuffer(digest[: self._dim], dtype=np.uint8).astype(np.float32)
+            norm = np.linalg.norm(raw)
+            vectors.append(raw / norm if norm > 0 else raw)
+        return np.array(vectors, dtype=np.float32)
+
+    def embed_query(self, text: str) -> np.ndarray:
+        return self.embed_texts([text])[0]
+
+
+@lru_cache(maxsize=None)
+def _make_embedder_cached(model_name: str, fake: bool) -> object:
+    if fake:
+        return FakeEmbedder(model_name)
+    return Embedder(model_name)
+
+
+def make_embedder(model_name: str) -> object:
+    return _make_embedder_cached(model_name, os.environ.get("CCCF_FAKE_EMBEDDER") == "1")

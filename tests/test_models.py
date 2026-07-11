@@ -27,3 +27,14 @@ def test_compute_finding_id_changes_with_snippet_content() -> None:
     other = compute_finding_id("custom.sql-fstring", "app/db.py", "cursor.execute(other_query)")
 
     assert base != other
+
+
+def test_compute_finding_id_changes_with_location_when_provided() -> None:
+    base = compute_finding_id(
+        "custom.sql-fstring", "app/db.py", "cursor.execute(query)", 10, 10
+    )
+    duplicate_later = compute_finding_id(
+        "custom.sql-fstring", "app/db.py", "cursor.execute(query)", 20, 20
+    )
+
+    assert base != duplicate_later

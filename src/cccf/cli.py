@@ -1,15 +1,12 @@
-import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import typer
 
 from cccf import __version__
 from cccf.config import ConfigError, init_config, load_config
-from cccf.embedder import Embedder
+from cccf.embedder import EmbeddingError, make_embedder
 from cccf.indexer import index_repo
 from cccf.render import render_search_json, render_search_text, render_summary_json, render_summary_text
 from cccf.scanner import SemgrepError
@@ -72,28 +69,6 @@ def init(
     typer.echo(f"Configuration créée : {path}")
 
 
-class _FakeEmbedder:
-    """Embedder déterministe sans dépendance réseau (CCCF_FAKE_EMBEDDER=1)."""
-
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        vectors = []
-        for text in texts:
-            digest = hashlib.sha256(text.encode()).digest()
-            vector = np.frombuffer(digest[:8], dtype=np.uint8).astype(np.float32)
-            norm = np.linalg.norm(vector)
-            vectors.append(vector / norm if norm > 0 else vector)
-        return np.array(vectors, dtype=np.float32)
-
-    def embed_query(self, text: str) -> np.ndarray:
-        return self.embed_texts([text])[0]
-
-
-def _make_embedder(model_name: str) -> object:
-    if os.environ.get("CCCF_FAKE_EMBEDDER") == "1":
-        return _FakeEmbedder()
-    return Embedder(model_name)
-
-
 @app.command(name="index")
 def index_cmd(
     full: bool = typer.Option(False, "--full", help="Force un scan complet."),
@@ -107,12 +82,12 @@ def index_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    embedder = _make_embedder(config.embedding_model)
+    embedder = make_embedder(config.embedding_model)
 
     try:
         with Store(repo_root) as store:
             report = index_repo(repo_root, config, store, embedder, full=full)
-    except SemgrepError as exc:
+    except (SemgrepError, EmbeddingError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
 
@@ -145,24 +120,28 @@ def search(
     _require_index(repo_root)
 
     config = load_config(repo_root)
-    embedder = _make_embedder(config.embedding_model)
+    embedder = make_embedder(config.embedding_model)
 
-    with Store(repo_root) as store:
-        hits = search_findings(
-            store,
-            embedder,
-            query,
-            severity=severity,
-            rule=rule,
-            path_glob=path,
-            limit=limit,
-            offset=offset,
-        )
+    try:
+        with Store(repo_root) as store:
+            hits = search_findings(
+                store,
+                embedder,
+                query,
+                severity=severity,
+                rule=rule,
+                path_glob=path,
+                limit=limit,
+                offset=offset,
+            )
+    except EmbeddingError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
 
-        if json_output:
-            typer.echo(json.dumps(render_search_json(hits, repo_root, context)))
-        else:
-            typer.echo(render_search_text(hits, repo_root, context))
+    if json_output:
+        typer.echo(json.dumps(render_search_json(hits, repo_root, context)))
+    else:
+        typer.echo(render_search_text(hits, repo_root, context))
 
 
 @app.command(name="summary")

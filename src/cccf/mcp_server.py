@@ -4,8 +4,8 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from cccf.ccc_bridge import CccUnavailable, annotate_with_findings, search_code
-from cccf.cli import _make_embedder
 from cccf.config import load_config
+from cccf.embedder import make_embedder
 from cccf.indexer import index_repo
 from cccf.render import render_search_json
 from cccf.search import search_findings as run_search_findings
@@ -41,7 +41,7 @@ def search_findings(
     try:
         _require_index(repo_root)
         config = load_config(repo_root)
-        embedder = _make_embedder(config.embedding_model)
+        embedder = make_embedder(config.embedding_model)
 
         with Store(repo_root) as store:
             hits = run_search_findings(
@@ -88,7 +88,7 @@ def reindex_findings() -> str:
     repo_root = _repo_root()
     try:
         config = load_config(repo_root)
-        embedder = _make_embedder(config.embedding_model)
+        embedder = make_embedder(config.embedding_model)
         with Store(repo_root) as store:
             report = index_repo(repo_root, config, store, embedder)
         return json.dumps(

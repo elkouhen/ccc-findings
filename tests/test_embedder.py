@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cccf.embedder import Embedder, finding_to_text
+from cccf.embedder import Embedder, finding_to_text, make_embedder
 from cccf.models import Finding
 
 
@@ -32,6 +32,16 @@ def test_finding_to_text_exact_format() -> None:
         "CWE-89 A03:2021 | app/db.py | "
         "cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")"
     )
+
+
+def test_make_embedder_reuses_cached_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+
+    first = make_embedder("test-cache-model")
+    second = make_embedder("test-cache-model")
+
+    assert first is second
+    assert getattr(first, "signature") == "fake:test-cache-model:8"
 
 
 @pytest.mark.slow

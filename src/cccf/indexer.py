@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 
 from cccf.config import Config
-from cccf.embedder import finding_to_text
+from cccf.embedder import EmbeddingError, finding_to_text
 from cccf.models import Finding
 from cccf.scanner import run_semgrep
 from cccf.store import Store
@@ -31,7 +31,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _matches_any(rel_path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(rel_path, pattern) for pattern in patterns)
+    return any(pattern == "**/*" or fnmatch.fnmatch(rel_path, pattern) for pattern in patterns)
 
 
 def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
@@ -48,12 +48,26 @@ def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
     return hashes
 
 
-def _embed_findings(embedder: EmbedderLike, store: Store, findings: list[Finding]) -> None:
+def _embedder_signature(embedder: EmbedderLike, config: Config) -> str:
+    return str(getattr(embedder, "signature", config.embedding_model))
+
+
+def _embed_findings(
+    embedder: EmbedderLike, store: Store, findings: list[Finding]
+) -> int | None:
     if not findings:
-        return
+        return None
     vectors = embedder.embed_texts([finding_to_text(f) for f in findings])
+    dim = int(vectors.shape[1]) if vectors.ndim == 2 else int(vectors.shape[0])
+    stored_dim = store.get_embedding_dim()
+    if stored_dim is not None and stored_dim != dim:
+        raise EmbeddingError(
+            f"Dimension d'embedding incompatible : index={stored_dim}, nouveau={dim}. "
+            "Relancez un ré-embedding complet."
+        )
     for finding, vector in zip(findings, vectors, strict=True):
         store.set_embedding(finding.id, vector)
+    return dim
 
 
 def index_repo(
@@ -98,12 +112,21 @@ def index_repo(
         for path in changed:
             store.set_file_hash(path, current_hashes[path])
 
-    if store.get_meta("embedding_model") != config.embedding_model:
-        _embed_findings(embedder, store, store.all_findings())
+    signature = _embedder_signature(embedder, config)
+    if store.get_meta("embedding_signature") != signature:
+        store.set_meta("embedding_signature", signature)
         store.set_meta("embedding_model", config.embedding_model)
+        store.set_meta("embedding_dim", "")
+        dim = _embed_findings(embedder, store, store.all_findings())
+        if dim is not None:
+            store.set_meta("embedding_dim", str(dim))
     else:
         embedded_ids = {finding_id for finding_id, _ in store.iter_embeddings()}
-        _embed_findings(embedder, store, [f for f in findings if f.id not in embedded_ids])
+        dim = _embed_findings(
+            embedder, store, [f for f in findings if f.id not in embedded_ids]
+        )
+        if dim is not None and store.get_meta("embedding_dim") != str(dim):
+            store.set_meta("embedding_dim", str(dim))
 
     return IndexReport(
         scanned=len(changed),

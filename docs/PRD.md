@@ -137,7 +137,7 @@ Non-objectifs (voir §5) : remplacer Semgrep CI/CD, faire du triage de vulnérab
 
 ```bash
 # Setup
-cccf init                              # détecte .semgrep.yml, ou --rules explicite
+cccf init                              # détecte une config Semgrep, sinon p/security-audit
 cccf index                             # findings, incrémental
 
 # Développeur

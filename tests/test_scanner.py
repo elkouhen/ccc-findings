@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -83,3 +84,20 @@ def test_run_semgrep_min_severity_error_filters_warning() -> None:
 
     assert {f.severity for f in findings} == {"ERROR"}
     assert {f.path for f in findings} == {"app/db.py", "app/yaml_loader.py"}
+
+
+@pytest.mark.integration
+def test_run_semgrep_scans_tests_directory_when_config_targets_it(tmp_path: Path) -> None:
+    repo = tmp_path / "vuln_repo"
+    shutil.copytree(VULN_REPO, repo)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "db_test.py").write_text(
+        "import sqlite3\n\n"
+        "def find_user(conn: sqlite3.Connection, name: str):\n"
+        "    cursor = conn.cursor()\n"
+        "    cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n"
+    )
+
+    findings = run_semgrep(repo, make_config(), files=["tests/db_test.py"])
+
+    assert [f.path for f in findings] == ["tests/db_test.py"]
