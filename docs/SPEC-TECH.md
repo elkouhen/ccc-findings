@@ -1,0 +1,237 @@
+# Spécification technique — ccc-findings (`cccf`)
+
+> Décrit l'architecture interne réellement livrée : modules, modèle de
+> données, algorithmes, schéma SQLite, contrats internes. Pour le
+> comportement observable par l'utilisateur, voir
+> [`SPEC-FONC.md`](./SPEC-FONC.md). Pour le pourquoi des choix, voir
+> [`ADR.md`](./ADR.md). Pour les défauts connus, voir `archive/BACKLOG-2.md`.
+
+## 1. Carte des modules (`src/cccf/`)
+
+| Module | Rôle | Dépend de |
+|---|---|---|
+| `models.py` | `Finding` (dataclass gelée) + `compute_finding_id` | — |
+| `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
+| `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` | `models`, `config` |
+| `store.py` | `Store` : persistance SQLite (findings, hashs de fichiers, meta, embeddings) | `models` |
+| `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding) | `config`, `scanner`, `store`, `embedder` |
+| `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
+| `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
+| `render.py` | Sérialisation texte/JSON des résultats de recherche et du résumé | `search` |
+| `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings` | `models`, `store` |
+| `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `summary`, `mcp`) | tous les modules ci-dessus |
+| `mcp_server.py` | Serveur `FastMCP` stdio, 4 tools | `cli` (factory embedder), `ccc_bridge`, `config`, `indexer`, `render`, `search`, `store` |
+
+Le sens des dépendances est globalement `cli.py`/`mcp_server.py` → logique
+métier → `store.py`. `mcp_server.py` importe `cli._make_embedder` (privé) —
+inversion de couche notée dans `archive/BACKLOG-2.md` (N2).
+
+## 2. Modèle de données
+
+### `Finding` (`models.py`)
+```python
+@dataclass(frozen=True)
+class Finding:
+    id: str            # sha256(rule_id|path|snippet_normalisé)[:16]
+    rule_id: str        # check_id Semgrep (peut être préfixé, voir §4)
+    severity: str        # INFO | WARNING | ERROR (normalisée)
+    message: str
+    path: str            # relatif au repo_root, séparateurs '/'
+    start_line: int
+    end_line: int
+    snippet: str          # lu depuis le fichier source, pas depuis Semgrep (voir ADR-8)
+    fix: str | None
+    cwe: list[str]
+    owasp: list[str]
+```
+
+`compute_finding_id(rule_id, path, snippet)` : normalise le snippet
+(`" ".join(snippet.split())` — espaces/indentation réduits) puis
+`sha256(f"{rule_id}|{path}|{snippet_normalisé}")[:16]`. Stable aux décalages
+de lignes ; **pas** stable si deux findings de même règle/chemin ont un
+snippet identique (voir défaut connu R6 dans `archive/BACKLOG-2.md`).
+
+### Schéma SQLite (`.cccf/findings.db`, géré par `Store`)
+
+```sql
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+-- clés utilisées : schema_version ("1"), embedding_model
+
+CREATE TABLE files (
+    path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, indexed_at TEXT NOT NULL
+);
+
+CREATE TABLE findings (
+    id TEXT PRIMARY KEY, rule_id TEXT, severity TEXT, message TEXT,
+    path TEXT, start_line INTEGER, end_line INTEGER, snippet TEXT,
+    fix TEXT, cwe TEXT,      -- JSON-sérialisé
+    owasp TEXT,               -- JSON-sérialisé
+    embedding BLOB             -- float32.tobytes(), NULL tant que non embeddé
+);
+CREATE INDEX idx_findings_path ON findings(path);
+CREATE INDEX idx_findings_severity ON findings(severity);
+```
+
+`Store` est un context manager : ouverture = connexion + création de schéma
+si absent ; sortie = `commit()` si aucune exception n'a été levée dans le
+bloc, sinon la connexion est fermée sans commit (rollback SQLite implicite —
+c'est le mécanisme qui garantit NF5 : un `SemgrepError` en cours d'indexation
+laisse la base dans son état d'avant l'appel).
+
+## 3. Pipeline d'indexation (`indexer.index_repo`)
+
+```
+1. Lister les fichiers du repo (rglob) matchant include/exclude (fnmatch),
+   calculer leur sha256.
+2. Comparer aux hashs stockés (table files) → deleted / changed / unchanged.
+   Si full=True : changed = tous les fichiers actuels.
+3. store.remove_files(deleted)  — purge fichiers + findings associés.
+4. Si changed non vide :
+     run_semgrep(repo_root, config, files=changed)
+     store.replace_findings_for_files(changed, findings)  — DELETE puis INSERT,
+       unique mécanisme de mise à jour (gère nativement les findings corrigés).
+     set_file_hash pour chaque fichier de changed.
+5. Embedding (voir §5) :
+     si meta.embedding_model != config.embedding_model : ré-embedder TOUT
+       store.all_findings() et mettre à jour meta.
+     sinon : n'embedder que les findings de `changed` dont l'id n'a pas déjà
+       un embedding en base (iter_embeddings()).
+6. Retourner IndexReport(scanned, skipped, findings_added, findings_removed,
+   deleted_files).
+```
+
+`findings_removed` est calculé en comptant, **avant** suppression, les
+findings déjà en base pour les chemins de `deleted` et de `changed` (via
+`store.all_findings(path_glob=p)` — un appel par chemin, voir défaut connu R9
+dans `archive/BACKLOG-2.md`).
+
+## 4. Exécution Semgrep (`scanner.py`)
+
+Commande construite :
+```
+semgrep scan --json --quiet --timeout <semgrep_timeout_s>
+  --config <r1> --config <r2> ...   # un par entrée de config.rules
+  <fichiers de `files`>  ou  "."     # scan ciblé ou complet
+```
+Exécutée avec `cwd=repo_root`. Codes retour 0 et 1 sont normaux (1 = « des
+findings ont été trouvés ») ; tout autre code lève `SemgrepError(stderr)`.
+
+**Effet de bord notable** : quand une entrée de `config.rules` contient un
+chemin avec sous-répertoire (ex. `rules/rules.yml`), Semgrep préfixe le
+`check_id` retourné avec les composants du chemin (`rules.custom.sql-fstring`
+au lieu de `custom.sql-fstring`). C'est la valeur réelle stockée dans
+`Finding.rule_id` — voir ADR-9.
+
+`parse_semgrep_json(raw, repo_root)` mappe :
+- `check_id` → `rule_id`
+- `extra.severity`, normalisée via une table incluant l'ancien format
+  `LOW/MEDIUM/HIGH/CRITICAL` → `INFO/WARNING/ERROR/ERROR`
+- `path` relativisé à `repo_root` (gère les chemins absolus ou relatifs)
+- `start.line` / `end.line`
+- **snippet** : relu depuis le fichier source (`repo_root/path`, lignes
+  `start_line`..`end_line`) plutôt que depuis `extra.lines` — voir ADR-8.
+  Retourne `""` si le fichier n'est pas lisible (`OSError` uniquement,
+  `UnicodeDecodeError` non catché — défaut connu R5).
+- `extra.fix` → `fix`
+- `extra.metadata.cwe` / `.owasp` : chaîne ou liste acceptée, normalisée en
+  liste.
+
+Le filtrage par `min_severity` est appliqué dans `run_semgrep` (après
+`parse_semgrep_json`, qui retourne tout sans filtre) — appliqué **au moment
+du scan uniquement** ; durcir `min_severity` en config n'affecte pas les
+findings déjà indexés tant que leur fichier n'est pas re-scanné (défaut connu
+R10).
+
+## 5. Embedding et recherche
+
+`embedder.finding_to_text(f)` — format exact (contrat figé, utilisé pour
+l'index ET pour vérifier la pertinence via `eval/run_eval.py`) :
+```
+f"{f.rule_id} | {f.severity} | {f.message} | {' '.join(f.cwe + f.owasp)} | {f.path} | {' '.join(f.snippet.split())[:500]}"
+```
+
+`Embedder` (sentence-transformers, modèle par défaut
+`Snowflake/snowflake-arctic-embed-xs`) charge le modèle paresseusement au
+premier appel, encode par batch, normalise L2, retourne du `float32`.
+`embed_query` réutilise `embed_texts` sur une liste à un élément.
+
+`search.search_findings` :
+1. Filtre d'abord en SQL/Python (`store.all_findings(severity_at_least, rule_id,
+   path_glob)`).
+2. Charge tous les embeddings de la base (`store.iter_embeddings()`), pas
+   seulement ceux des candidats filtrés (défaut connu — coût, voir
+   `archive/BACKLOG-2.md`).
+3. Calcule le cosinus par produit scalaire (`vector @ query_vec`, vecteurs
+   déjà normalisés L2 des deux côtés).
+4. Trie décroissant, pagine (`offset`, `limit`).
+
+`search.summary` : `by_severity`/`top_rules` via `Store.counts_by` (SQL
+`GROUP BY`), `by_top_level_dir` calculé côté Python sur
+`finding.path.split("/", 1)[0]`.
+
+`search.get_context(repo_root, finding, before=5, after=5)` : relit le
+fichier source, retourne les lignes `[start_line-before, end_line+after]`
+bornées à `[1, len(lignes)]`, préfixées `f"{n:>5}| {ligne}"`. Aucune gestion
+d'erreur si le fichier a disparu depuis l'indexation (défaut connu R7).
+
+## 6. Jointure avec `ccc` (`ccc_bridge.py`)
+
+`ccc search <query> --limit N` est appelé en subprocess (`cwd=repo_root`).
+**Le flag `--json` n'existe pas** dans la version de `ccc` installée
+(vérifié via `ccc search --help`) — voir ADR-10. `search_code` parse donc le
+format texte réel :
+```
+--- Result 1 (score: 0.657) ---
+File: src/mailer.py:1-6 [python]
+<contenu...>
+```
+via deux regex ancrées sur ce format (`_RESULT_HEADER_RE`, `_FILE_LINE_RE`),
+séparant les blocs sur `\n(?=--- Result \d+ )`. Un bloc qui ne matche pas les
+deux regex est silencieusement ignoré (pas d'erreur — dérive de format non
+détectée, voir `archive/BACKLOG-2.md`).
+
+`ccc` absent du PATH ou code de sortie non nul → `CccUnavailable`.
+
+`annotate_with_findings(code_hits, store)` : jointure par égalité stricte de
+chemin puis chevauchement inclusif de plage
+(`finding.start_line <= hit.end_line and finding.end_line >= hit.start_line`
+— une seule ligne commune suffit). Sérialise chaque finding joint sans le
+champ `score` (absent du contrat F4.2 dans ce contexte, puisqu'aucune requête
+sémantique n'est faite sur les findings ici).
+
+## 7. Contrat JSON (F4.2 — figé)
+
+Consommé par `cccf search --json`, le tool MCP `search_findings`, et (sans
+`score`) par `search_code_with_findings` :
+```json
+{
+  "id": "str", "rule_id": "str", "severity": "INFO|WARNING|ERROR",
+  "message": "str", "path": "str", "start_line": 0, "end_line": 0,
+  "score": 0.0, "fix": "str|null", "cwe": ["str"], "owasp": ["str"],
+  "context": "str (optionnel)"
+}
+```
+Ce schéma ne doit pas être modifié sans mettre à jour les 3 points de
+sérialisation (`render.py`, `ccc_bridge.py`) — actuellement dupliqués, voir
+`archive/BACKLOG-2.md` (N3).
+
+## 8. Tests et fixtures
+
+- `tests/fixtures/vuln_repo/` : mini-repo avec 4 fichiers vulnérables (SQL
+  injection par f-string, `subprocess.run(shell=True)`, `yaml.load` sans
+  Loader, `random.random` pour un token) et `rules/rules.yml` (4 règles
+  Semgrep locales, jamais de pack registry — tests déterministes et
+  hors-ligne).
+- Tests marqués `@pytest.mark.integration` : exécutent le vrai binaire
+  Semgrep (nécessaire, installé dans l'environnement CI/dev).
+- Tests marqués `@pytest.mark.slow` : téléchargent le modèle
+  sentence-transformers réel — **exclus par défaut** (`addopts = "-m 'not
+  slow'"` dans `pyproject.toml`, voir ADR-11) ; à lancer explicitement via
+  `uv run pytest -m slow`.
+- `CCCF_FAKE_EMBEDDER=1` : bascule `cli._make_embedder` sur un embedder
+  déterministe (hash SHA-256, 8 dimensions) pour les tests d'intégration
+  n'ayant pas besoin de sémantique réelle. **Ne jamais** positionner cette
+  variable sur un index de production (voir défaut connu R3).
+- `eval/run_eval.py` : indexe une copie temporaire de `vuln_repo` avec le
+  vrai embedder, calcule le hit-rate top-3 sur `eval/queries.yml` (8
+  requêtes FR/EN). Seuil de passage : ≥ 0,75 (mesuré : 1.00 au dernier run).

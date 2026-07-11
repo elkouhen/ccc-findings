@@ -5,8 +5,16 @@ Index Semgrep interrogeable en langage naturel, combiné à [cocoindex-code](htt
 `cccf` indexe localement les findings Semgrep d'un projet (dans une base
 SQLite `.cccf/findings.db`), les rend interrogeables en langage naturel
 (recherche par embeddings) et les joint aux résultats de recherche de code
-de `ccc` à la requête. Voir `PRD.md` pour le produit complet et
-`BACKLOG.md` pour le plan d'implémentation.
+de `ccc` à la requête.
+
+## Documentation
+
+- [`docs/PRD.md`](docs/PRD.md) — produit : problème, vision, personas, cas d'usage, métriques de succès.
+- [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — spécification fonctionnelle : commandes CLI, tools MCP, skill, comportements d'erreur.
+- [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — spécification technique : modules, modèle de données, schéma SQLite, algorithmes.
+- [`docs/ADR.md`](docs/ADR.md) — décisions d'architecture (contexte, choix, conséquences).
+- [`skills/cccf/SKILL.md`](skills/cccf/SKILL.md) — skill Claude Code.
+- `archive/` — historique du plan d'implémentation (`BACKLOG.md`) et des findings de revue de code (`BACKLOG-2.md`).
 
 ## Installation
 
@@ -52,36 +60,12 @@ uv run pytest
 ```
 
 Pour la vérification fraîche post-patch d'un fichier précis (boucle de
-correction, voir `skills/cccf/SKILL.md`), enregistrer en complément le MCP
-Semgrep officiel :
+correction, voir [`skills/cccf/SKILL.md`](skills/cccf/SKILL.md)), enregistrer
+en complément le MCP Semgrep officiel :
 
 ```json
 {"mcpServers": {"semgrep": {"command": "uvx", "args": ["semgrep-mcp"]}}}
 ```
 
-## Configuration `.cccf/config.yml`
-
-Créé par `cccf init` (ou à éditer à la main) :
-
-```yaml
-rules:                 # requis — chemins ou identifiants de config Semgrep (ex. rules/rules.yml, p/security-audit)
-  - rules/rules.yml
-include:                # globs inclus dans le scan de fichiers (défaut : tout)
-  - "**/*"
-exclude:                # globs exclus du scan de fichiers
-  - ".git/**"
-  - ".venv/**"
-  - "node_modules/**"
-  - ".cccf/**"
-min_severity: INFO      # INFO | WARNING | ERROR — sévérité minimale indexée
-embedding_model: Snowflake/snowflake-arctic-embed-xs  # modèle sentence-transformers
-semgrep_timeout_s: 120  # timeout Semgrep, en secondes
-```
-
-## Positionnement vs `ccc`
-
-`cccf` est un package compagnon de `ccc` (cocoindex-code), pas un fork :
-il indexe les findings Semgrep dans son propre store SQLite et se joint
-aux résultats de `ccc` à la requête plutôt que de dupliquer son moteur de
-recherche de code. Voir `PRD.md` pour la vision produit complète et les
-décisions d'architecture.
+Détail des champs de configuration `.cccf/config.yml` : voir
+[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#1-configuration-du-projet).
