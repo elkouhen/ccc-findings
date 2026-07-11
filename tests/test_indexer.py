@@ -1,6 +1,8 @@
+import hashlib
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from cccf.config import Config
@@ -11,6 +13,27 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
 
 
+class FakeEmbedder:
+    """Embedder déterministe basé sur un hash du texte, sans dépendance réseau."""
+
+    def __init__(self, dim: int = 8) -> None:
+        self.dim = dim
+        self.calls = 0
+
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        self.calls += len(texts)
+        vectors = []
+        for text in texts:
+            digest = hashlib.sha256(text.encode()).digest()
+            raw = np.frombuffer(digest[: self.dim], dtype=np.uint8).astype(np.float32)
+            norm = np.linalg.norm(raw)
+            vectors.append(raw / norm if norm > 0 else raw)
+        return np.array(vectors, dtype=np.float32)
+
+    def embed_query(self, text: str) -> np.ndarray:
+        return self.embed_texts([text])[0]
+
+
 @pytest.fixture
 def repo_copy(tmp_path: Path) -> Path:
     dest = tmp_path / "vuln_repo"
@@ -18,8 +41,10 @@ def repo_copy(tmp_path: Path) -> Path:
     return dest
 
 
-def make_config() -> Config:
-    return Config(rules=["rules/rules.yml"])
+def make_config(**overrides: object) -> Config:
+    defaults: dict = {"rules": ["rules/rules.yml"]}
+    defaults.update(overrides)
+    return Config(**defaults)
 
 
 @pytest.mark.integration
@@ -28,7 +53,7 @@ def test_first_index_run_finds_two_findings_and_scans_all_files(repo_copy: Path)
     total_files = sum(1 for p in repo_copy.rglob("*") if p.is_file())
 
     with Store(repo_copy) as store:
-        report = index_repo(repo_copy, config, store)
+        report = index_repo(repo_copy, config, store, FakeEmbedder())
         findings = store.all_findings()
 
     assert report.scanned == total_files
@@ -40,8 +65,8 @@ def test_second_run_without_changes_scans_nothing(repo_copy: Path) -> None:
     config = make_config()
 
     with Store(repo_copy) as store:
-        index_repo(repo_copy, config, store)
-        report = index_repo(repo_copy, config, store)
+        index_repo(repo_copy, config, store, FakeEmbedder())
+        report = index_repo(repo_copy, config, store, FakeEmbedder())
         findings = store.all_findings()
 
     assert report.scanned == 0
@@ -53,7 +78,7 @@ def test_fixing_db_py_removes_error_finding_keeps_warning(repo_copy: Path) -> No
     config = make_config()
 
     with Store(repo_copy) as store:
-        index_repo(repo_copy, config, store)
+        index_repo(repo_copy, config, store, FakeEmbedder())
 
         (repo_copy / "app" / "db.py").write_text(
             "import sqlite3\n\n\n"
@@ -63,7 +88,7 @@ def test_fixing_db_py_removes_error_finding_keeps_warning(repo_copy: Path) -> No
             "    return cursor.fetchall()\n"
         )
 
-        index_repo(repo_copy, config, store)
+        index_repo(repo_copy, config, store, FakeEmbedder())
         findings = store.all_findings()
 
     assert [f.severity for f in findings] == ["WARNING"]
@@ -75,12 +100,45 @@ def test_deleting_shell_py_removes_its_finding(repo_copy: Path) -> None:
     config = make_config()
 
     with Store(repo_copy) as store:
-        index_repo(repo_copy, config, store)
+        index_repo(repo_copy, config, store, FakeEmbedder())
 
         (repo_copy / "app" / "shell.py").unlink()
 
-        report = index_repo(repo_copy, config, store)
+        report = index_repo(repo_copy, config, store, FakeEmbedder())
         findings = store.all_findings()
 
     assert report.deleted_files == 1
     assert [f.path for f in findings] == ["app/db.py"]
+
+
+@pytest.mark.integration
+def test_index_repo_embeds_all_findings(repo_copy: Path) -> None:
+    config = make_config()
+
+    with Store(repo_copy) as store:
+        index_repo(repo_copy, config, store, FakeEmbedder())
+        embeddings = dict(store.iter_embeddings())
+        findings = store.all_findings()
+
+    assert len(embeddings) == len(findings) == 2
+    for finding in findings:
+        assert finding.id in embeddings
+        assert embeddings[finding.id] is not None
+
+
+@pytest.mark.integration
+def test_changing_embedding_model_reembeds_everything(repo_copy: Path) -> None:
+    config = make_config(embedding_model="model-a")
+    embedder = FakeEmbedder()
+
+    with Store(repo_copy) as store:
+        index_repo(repo_copy, config, store, embedder)
+        calls_after_first_run = embedder.calls
+
+        other_config = make_config(embedding_model="model-b")
+        index_repo(repo_copy, other_config, store, embedder)
+        findings = store.all_findings()
+
+    assert calls_after_first_run == 2
+    # changement de modèle -> tous les findings sont ré-embeddés, pas seulement les nouveaux
+    assert embedder.calls == calls_after_first_run + len(findings)

@@ -2,10 +2,19 @@ import fnmatch
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
+
+import numpy as np
 
 from cccf.config import Config
+from cccf.embedder import finding_to_text
+from cccf.models import Finding
 from cccf.scanner import run_semgrep
 from cccf.store import Store
+
+
+class EmbedderLike(Protocol):
+    def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
 
 @dataclass
@@ -39,8 +48,20 @@ def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
     return hashes
 
 
+def _embed_findings(embedder: EmbedderLike, store: Store, findings: list[Finding]) -> None:
+    if not findings:
+        return
+    vectors = embedder.embed_texts([finding_to_text(f) for f in findings])
+    for finding, vector in zip(findings, vectors, strict=True):
+        store.set_embedding(finding.id, vector)
+
+
 def index_repo(
-    repo_root: Path, config: Config, store: Store, full: bool = False
+    repo_root: Path,
+    config: Config,
+    store: Store,
+    embedder: EmbedderLike,
+    full: bool = False,
 ) -> IndexReport:
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
@@ -66,6 +87,7 @@ def index_repo(
     store.remove_files(deleted)
 
     findings_added = 0
+    findings: list[Finding] = []
     if changed:
         findings_removed += sum(len(store.all_findings(path_glob=p)) for p in changed)
 
@@ -75,6 +97,13 @@ def index_repo(
 
         for path in changed:
             store.set_file_hash(path, current_hashes[path])
+
+    if store.get_meta("embedding_model") != config.embedding_model:
+        _embed_findings(embedder, store, store.all_findings())
+        store.set_meta("embedding_model", config.embedding_model)
+    else:
+        embedded_ids = {finding_id for finding_id, _ in store.iter_embeddings()}
+        _embed_findings(embedder, store, [f for f in findings if f.id not in embedded_ids])
 
     return IndexReport(
         scanned=len(changed),
