@@ -28,7 +28,7 @@
 
 ## EPIC 0 — Socle projet
 
-### [ ] F0.1 — Scaffolding du package
+### [x] F0.1 — Scaffolding du package
 - **Deps** : —
 - **Taille** : S
 - **Fichiers** : `pyproject.toml`, `src/cccf/__init__.py`, `src/cccf/cli.py`, `tests/test_smoke.py`, `.gitignore`, `README.md`
@@ -38,7 +38,7 @@
   2. `uv run cccf version` affiche `0.1.0`.
   3. `uv run pytest` passe (le test smoke importe `cccf` et vérifie la version).
 
-### [ ] F0.2 — Fixtures : mini-repo vulnérable + règles Semgrep locales
+### [x] F0.2 — Fixtures : mini-repo vulnérable + règles Semgrep locales
 - **Deps** : F0.1
 - **Taille** : S
 - **Fichiers** : `tests/fixtures/vuln_repo/app/db.py`, `tests/fixtures/vuln_repo/app/shell.py`, `tests/fixtures/vuln_repo/app/clean.py`, `tests/fixtures/vuln_repo/rules/rules.yml`
@@ -46,7 +46,7 @@
 - **CA** :
   1. `semgrep scan --config tests/fixtures/vuln_repo/rules/rules.yml tests/fixtures/vuln_repo/app --json` retourne exactement 2 findings : 1 ERROR dans `db.py`, 1 WARNING dans `shell.py`, 0 dans `clean.py`. (Semgrep doit être installé ; sinon `pipx install semgrep` d'abord.)
 
-### [ ] F0.3 — Configuration projet `.cccf/config.yml`
+### [x] F0.3 — Configuration projet `.cccf/config.yml`
 - **Deps** : F0.1
 - **Taille** : S
 - **Fichiers** : `src/cccf/config.py`, `tests/test_config.py`
@@ -58,7 +58,7 @@
 
 ## EPIC 1 — Scanner Semgrep
 
-### [ ] F1.1 — Modèle de données `Finding`
+### [x] F1.1 — Modèle de données `Finding`
 - **Deps** : F0.3
 - **Taille** : S
 - **Fichiers** : `src/cccf/models.py`, `tests/test_models.py`
@@ -67,7 +67,7 @@
   1. Test : deux snippets identiques à l'indentation près donnent le même id.
   2. Test : changer `rule_id`, `path` ou le contenu du snippet change l'id.
 
-### [ ] F1.2 — Exécution Semgrep et parsing JSON
+### [x] F1.2 — Exécution Semgrep et parsing JSON
 - **Deps** : F1.1, F0.2
 - **Taille** : M
 - **Fichiers** : `src/cccf/scanner.py`, `tests/test_scanner.py`, `tests/fixtures/semgrep_output.json`
@@ -82,7 +82,7 @@
 
 ## EPIC 2 — Store SQLite
 
-### [ ] F2.1 — Schéma et cycle de vie de la base
+### [x] F2.1 — Schéma et cycle de vie de la base
 - **Deps** : F1.1
 - **Taille** : M
 - **Fichiers** : `src/cccf/store.py`, `tests/test_store.py`
@@ -97,7 +97,7 @@
   3. Test : embedding stocké puis relu égal (np.allclose).
   4. Test : réouverture de la base existante → pas d'erreur, `schema_version` lu.
 
-### [ ] F2.2 — Indexation incrémentale orchestrée
+### [x] F2.2 — Indexation incrémentale orchestrée
 - **Deps** : F2.1, F1.2, F0.3
 - **Taille** : M
 - **Fichiers** : `src/cccf/indexer.py`, `tests/test_indexer.py`
@@ -118,7 +118,7 @@
 
 ## EPIC 3 — Embeddings et recherche sémantique
 
-### [ ] F3.1 — Service d'embedding
+### [x] F3.1 — Service d'embedding
 - **Deps** : F0.3
 - **Taille** : S
 - **Fichiers** : `src/cccf/embedder.py`, `tests/test_embedder.py`
@@ -127,7 +127,7 @@
   1. Test `finding_to_text` : format exact vérifié sur un finding exemple.
   2. Test (marqué `@pytest.mark.slow`, car télécharge le modèle) : `embed_texts` retourne shape `(n, dim)`, vecteurs de norme ≈ 1.
 
-### [ ] F3.2 — Vectorisation des findings à l'indexation
+### [x] F3.2 — Vectorisation des findings à l'indexation
 - **Deps** : F3.1, F2.2
 - **Taille** : S
 - **Fichiers** : `src/cccf/indexer.py` (modification), `tests/test_indexer.py` (ajout)
@@ -136,7 +136,7 @@
   1. Test avec `FakeEmbedder` : après indexation, chaque finding a un embedding non nul.
   2. Test : changement de `embedding_model` en config → tous les embeddings recalculés (le fake compte ses appels).
 
-### [ ] F3.3 — Recherche sémantique et agrégats
+### [x] F3.3 — Recherche sémantique et agrégats
 - **Deps** : F3.2
 - **Taille** : M
 - **Fichiers** : `src/cccf/search.py`, `tests/test_search.py`
@@ -154,7 +154,7 @@
 
 ## EPIC 4 — CLI
 
-### [ ] F4.1 — Commandes `init` et `index`
+### [x] F4.1 — Commandes `init` et `index`
 - **Deps** : F2.2, F3.2
 - **Taille** : M
 - **Fichiers** : `src/cccf/cli.py`, `tests/test_cli.py`
@@ -166,7 +166,7 @@
   2. Test : `init --rules rules/rules.yml` puis `index` (FakeEmbedder injecté via variable d'env `CCCF_FAKE_EMBEDDER=1` gérée dans `cli.py`) → rapport correct.
   3. Test : `index` deux fois → second run `scanned=0`.
 
-### [ ] F4.2 — Commandes `search` et `summary`
+### [x] F4.2 — Commandes `search` et `summary`
 - **Deps** : F4.1, F3.3
 - **Taille** : M
 - **Fichiers** : `src/cccf/cli.py` (modification), `src/cccf/render.py`, `tests/test_cli.py` (ajout)
@@ -183,7 +183,7 @@
 
 ## EPIC 5 — Serveur MCP
 
-### [ ] F5.1 — Serveur MCP stdio avec tools findings
+### [x] F5.1 — Serveur MCP stdio avec tools findings
 - **Deps** : F4.2
 - **Taille** : M
 - **Fichiers** : `src/cccf/mcp_server.py`, `src/cccf/cli.py` (ajout commande `mcp`), `tests/test_mcp_server.py`
@@ -197,7 +197,7 @@
   2. Test : repo non indexé → `{"error": ...}` explicite, le serveur répond encore ensuite.
   3. `cccf mcp --help` documente l'enregistrement client : bloc JSON `{"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}`.
 
-### [ ] F5.2 — Tool combiné `search_code_with_findings` (jointure CCC)
+### [x] F5.2 — Tool combiné `search_code_with_findings` (jointure CCC)
 - **Deps** : F5.1
 - **Taille** : M
 - **Fichiers** : `src/cccf/ccc_bridge.py`, `src/cccf/mcp_server.py` (modification), `tests/test_ccc_bridge.py`
@@ -214,7 +214,7 @@
 
 ## EPIC 6 — Skill agent et boucle de correction
 
-### [ ] F6.1 — Skill Claude Code
+### [x] F6.1 — Skill Claude Code
 - **Deps** : F5.2
 - **Taille** : S
 - **Fichiers** : `skills/cccf/SKILL.md`
@@ -228,7 +228,7 @@
   1. Le fichier respecte le format skill (frontmatter YAML valide, < 150 lignes).
   2. Chaque workflow cite uniquement des tools existants (F5.1/F5.2 + `semgrep_scan` du MCP officiel).
 
-### [ ] F6.2 — Documentation d'installation et README
+### [x] F6.2 — Documentation d'installation et README
 - **Deps** : F6.1
 - **Taille** : S
 - **Fichiers** : `README.md`
@@ -240,7 +240,7 @@
 
 ## EPIC 7 — Qualité et évaluation
 
-### [ ] F7.1 — Jeu d'évaluation de pertinence
+### [x] F7.1 — Jeu d'évaluation de pertinence
 - **Deps** : F4.2
 - **Taille** : M
 - **Fichiers** : `eval/queries.yml`, `eval/run_eval.py`, `tests/fixtures/vuln_repo/app/` (2 fichiers vulnérables supplémentaires + 2 règles ajoutées dans `rules.yml`)
@@ -248,7 +248,7 @@
 - **CA** :
   1. `uv run python eval/run_eval.py` s'exécute et affiche un hit rate ≥ 0.75. Si < 0.75 : ajuster `finding_to_text` (F3.1) et documenter le changement dans le rapport de tâche — c'est le seul cas autorisé de retour sur une tâche antérieure.
 
-### [ ] F7.2 — Test de bout en bout
+### [x] F7.2 — Test de bout en bout
 - **Deps** : F5.2, F4.2
 - **Taille** : S
 - **Fichiers** : `tests/test_e2e.py`
