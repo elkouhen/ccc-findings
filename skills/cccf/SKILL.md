@@ -7,8 +7,36 @@ description: Interroger et corriger la dette sécurité/qualité d'un repo via l
 
 Index Semgrep local, interrogeable en langage naturel, joint au code via `ccc`.
 Utilise les tools MCP `search_findings`, `findings_summary`,
-`search_code_with_findings` et `reindex_findings` exposés par `cccf mcp`
-(voir README pour l'enregistrement client).
+`search_code_with_findings` et `reindex_findings` exposés par `cccf mcp`.
+
+## Installation
+
+1. **Semgrep** (dépendance requise par `cccf`) : `pipx install semgrep` (ou
+   `brew install semgrep`).
+2. **cccf** : `uv tool install ccc-findings` (ou `pipx install ccc-findings`).
+3. **Modèle d'embedding** : téléchargé automatiquement au premier `cccf index`
+   (`sentence-transformers`, modèle `Snowflake/snowflake-arctic-embed-xs` par
+   défaut, ~100 Mo) — accès réseau nécessaire une seule fois, les exécutions
+   suivantes réutilisent le cache local (`~/.cache/huggingface`).
+4. **Initialiser et indexer le repo cible** :
+   ```bash
+   cd <votre-repo>
+   cccf init                # détecte .semgrep.yml/semgrep.yml/.semgrep, ou --rules <chemin-ou-pack>
+   cccf index
+   ```
+5. **Enregistrer le serveur MCP `cccf`** auprès du client (ex. `.mcp.json` à
+   la racine du projet pour Claude Code, ou l'équivalent de votre client) :
+   ```json
+   {"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}
+   ```
+6. **(Recommandé) Enregistrer aussi le MCP Semgrep officiel**, utilisé à
+   l'étape 4 du Workflow 3 pour la vérification fraîche post-patch :
+   ```json
+   {"mcpServers": {"semgrep": {"command": "uvx", "args": ["semgrep-mcp"]}}}
+   ```
+   Sans lui, cette étape est simplement sautée : `reindex_findings` +
+   `search_findings` (étapes 5-6 du Workflow 3) suffisent à vérifier la
+   disparition du finding, avec une confiance moindre qu'un scan frais.
 
 ## Workflow 1 — Explorer les problèmes connus
 
