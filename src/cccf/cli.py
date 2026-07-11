@@ -177,5 +177,18 @@ def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(render_summary_text(result))
 
 
+@app.command(name="mcp")
+def mcp_cmd() -> None:
+    """Lance le serveur MCP (stdio) exposant les findings du repo courant.
+
+    Enregistrement client (ex. Claude Code), à ajouter à la config MCP :
+
+    {"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}
+    """
+    from cccf.mcp_server import mcp as fastmcp_app
+
+    fastmcp_app.run()
+
+
 if __name__ == "__main__":
     app()
