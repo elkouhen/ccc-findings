@@ -28,6 +28,7 @@ build-backend = "hatchling.build"
 packages = ["src/cccf"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not slow'"
 markers = [
     "integration: tests d'intégration exécutant réellement Semgrep",
     "slow: tests lents (téléchargement de modèle, etc.)",
