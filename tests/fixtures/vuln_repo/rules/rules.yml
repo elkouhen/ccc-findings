@@ -1,0 +1,18 @@
+rules:
+  - id: custom.sql-fstring
+    severity: ERROR
+    languages: [python]
+    message: Une requête SQL construite par f-string permet une injection SQL.
+    metadata:
+      cwe: CWE-89
+    patterns:
+      - pattern: cursor.execute(f"...")
+
+  - id: custom.subprocess-shell-true
+    severity: WARNING
+    languages: [python]
+    message: L'appel à subprocess.run avec shell=True peut permettre une injection de commande.
+    metadata:
+      cwe: CWE-78
+    patterns:
+      - pattern: subprocess.run(..., shell=True, ...)
