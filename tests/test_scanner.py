@@ -51,13 +51,18 @@ def test_parse_semgrep_json_missing_results_field_raises_semgrep_error() -> None
 
 
 @pytest.mark.integration
-def test_run_semgrep_full_scan_returns_two_findings() -> None:
+def test_run_semgrep_full_scan_returns_all_findings() -> None:
     config = make_config()
 
     findings = run_semgrep(VULN_REPO, config)
 
-    assert len(findings) == 2
-    assert {f.path for f in findings} == {"app/db.py", "app/shell.py"}
+    assert len(findings) == 4
+    assert {f.path for f in findings} == {
+        "app/db.py",
+        "app/shell.py",
+        "app/yaml_loader.py",
+        "app/weak_random.py",
+    }
 
 
 @pytest.mark.integration
@@ -76,6 +81,5 @@ def test_run_semgrep_min_severity_error_filters_warning() -> None:
 
     findings = run_semgrep(VULN_REPO, config)
 
-    assert len(findings) == 1
-    assert findings[0].severity == "ERROR"
-    assert findings[0].path == "app/db.py"
+    assert {f.severity for f in findings} == {"ERROR"}
+    assert {f.path for f in findings} == {"app/db.py", "app/yaml_loader.py"}

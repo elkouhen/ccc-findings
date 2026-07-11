@@ -49,7 +49,7 @@ def test_init_with_rules_then_index_reports_correctly(
 
     assert index_result.exit_code == 0
     assert "scanned=" in index_result.output
-    assert "+findings=2" in index_result.output
+    assert "+findings=4" in index_result.output
     assert "-findings=0" in index_result.output
 
 
@@ -91,7 +91,7 @@ def test_search_json_output_matches_contract(
 
     assert result.exit_code == 0
     hits = json.loads(result.output)
-    assert len(hits) == 2
+    assert len(hits) == 4
     expected_keys = {
         "id",
         "rule_id",
@@ -136,4 +136,4 @@ def test_summary_json_has_expected_structure(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data["by_severity"] == {"ERROR": 1, "WARNING": 1}
+    assert data["by_severity"] == {"ERROR": 2, "WARNING": 2}

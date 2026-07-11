@@ -29,7 +29,7 @@ def indexed_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
     result = json.loads(search_findings("injection sql"))
 
-    assert len(result) == 2
+    assert len(result) == 4
     assert {"id", "rule_id", "severity", "path", "score"} <= set(result[0].keys())
 
 
@@ -37,7 +37,7 @@ def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
 def test_findings_summary_tool_returns_expected_json(indexed_repo: Path) -> None:
     result = json.loads(findings_summary())
 
-    assert result["by_severity"] == {"ERROR": 1, "WARNING": 1}
+    assert result["by_severity"] == {"ERROR": 2, "WARNING": 2}
 
 
 @pytest.mark.integration

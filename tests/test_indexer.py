@@ -48,7 +48,7 @@ def make_config(**overrides: object) -> Config:
 
 
 @pytest.mark.integration
-def test_first_index_run_finds_two_findings_and_scans_all_files(repo_copy: Path) -> None:
+def test_first_index_run_finds_all_findings_and_scans_all_files(repo_copy: Path) -> None:
     config = make_config()
     total_files = sum(1 for p in repo_copy.rglob("*") if p.is_file())
 
@@ -57,7 +57,7 @@ def test_first_index_run_finds_two_findings_and_scans_all_files(repo_copy: Path)
         findings = store.all_findings()
 
     assert report.scanned == total_files
-    assert len(findings) == 2
+    assert len(findings) == 4
 
 
 @pytest.mark.integration
@@ -70,11 +70,11 @@ def test_second_run_without_changes_scans_nothing(repo_copy: Path) -> None:
         findings = store.all_findings()
 
     assert report.scanned == 0
-    assert len(findings) == 2
+    assert len(findings) == 4
 
 
 @pytest.mark.integration
-def test_fixing_db_py_removes_error_finding_keeps_warning(repo_copy: Path) -> None:
+def test_fixing_db_py_removes_error_finding_keeps_others(repo_copy: Path) -> None:
     config = make_config()
 
     with Store(repo_copy) as store:
@@ -91,8 +91,11 @@ def test_fixing_db_py_removes_error_finding_keeps_warning(repo_copy: Path) -> No
         index_repo(repo_copy, config, store, FakeEmbedder())
         findings = store.all_findings()
 
-    assert [f.severity for f in findings] == ["WARNING"]
-    assert findings[0].path == "app/shell.py"
+    assert {f.path for f in findings} == {
+        "app/shell.py",
+        "app/yaml_loader.py",
+        "app/weak_random.py",
+    }
 
 
 @pytest.mark.integration
@@ -108,7 +111,11 @@ def test_deleting_shell_py_removes_its_finding(repo_copy: Path) -> None:
         findings = store.all_findings()
 
     assert report.deleted_files == 1
-    assert [f.path for f in findings] == ["app/db.py"]
+    assert {f.path for f in findings} == {
+        "app/db.py",
+        "app/yaml_loader.py",
+        "app/weak_random.py",
+    }
 
 
 @pytest.mark.integration
@@ -120,7 +127,7 @@ def test_index_repo_embeds_all_findings(repo_copy: Path) -> None:
         embeddings = dict(store.iter_embeddings())
         findings = store.all_findings()
 
-    assert len(embeddings) == len(findings) == 2
+    assert len(embeddings) == len(findings) == 4
     for finding in findings:
         assert finding.id in embeddings
         assert embeddings[finding.id] is not None
@@ -139,6 +146,6 @@ def test_changing_embedding_model_reembeds_everything(repo_copy: Path) -> None:
         index_repo(repo_copy, other_config, store, embedder)
         findings = store.all_findings()
 
-    assert calls_after_first_run == 2
+    assert calls_after_first_run == 4
     # changement de modèle -> tous les findings sont ré-embeddés, pas seulement les nouveaux
     assert embedder.calls == calls_after_first_run + len(findings)

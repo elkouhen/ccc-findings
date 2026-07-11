@@ -16,3 +16,21 @@ rules:
       cwe: CWE-78
     patterns:
       - pattern: subprocess.run(..., shell=True, ...)
+
+  - id: custom.unsafe-yaml
+    severity: ERROR
+    languages: [python]
+    message: yaml.load sans Loader explicite peut exécuter du code arbitraire à la désérialisation.
+    metadata:
+      cwe: CWE-502
+    patterns:
+      - pattern: yaml.load($DATA)
+
+  - id: custom.weak-random
+    severity: WARNING
+    languages: [python]
+    message: random.random n'est pas cryptographiquement sûr pour générer un secret ou un token.
+    metadata:
+      cwe: CWE-330
+    patterns:
+      - pattern: random.random()

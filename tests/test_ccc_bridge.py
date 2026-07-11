@@ -139,4 +139,4 @@ def test_mcp_tool_falls_back_when_ccc_unavailable(
 
     assert result["error"] == "ccc non disponible"
     assert isinstance(result["fallback"], list)
-    assert len(result["fallback"]) == 2
+    assert len(result["fallback"]) == 4

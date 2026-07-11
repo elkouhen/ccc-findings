@@ -1,0 +1,25 @@
+queries:
+  - query: "injection SQL potentielle dans une requête"
+    rule_id: rules.custom.sql-fstring
+    path: app/db.py
+  - query: "possible SQL injection via string formatting"
+    rule_id: rules.custom.sql-fstring
+    path: app/db.py
+  - query: "exécution de commande shell dangereuse"
+    rule_id: rules.custom.subprocess-shell-true
+    path: app/shell.py
+  - query: "dangerous shell command execution with shell=True"
+    rule_id: rules.custom.subprocess-shell-true
+    path: app/shell.py
+  - query: "désérialisation YAML non sécurisée pouvant exécuter du code"
+    rule_id: rules.custom.unsafe-yaml
+    path: app/yaml_loader.py
+  - query: "unsafe YAML deserialization arbitrary code execution"
+    rule_id: rules.custom.unsafe-yaml
+    path: app/yaml_loader.py
+  - query: "générateur aléatoire faible utilisé pour un token de session"
+    rule_id: rules.custom.weak-random
+    path: app/weak_random.py
+  - query: "weak random number generator used for a security token"
+    rule_id: rules.custom.weak-random
+    path: app/weak_random.py
