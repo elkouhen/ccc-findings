@@ -229,3 +229,29 @@ entièrement », documenté dans le commit F3.1 et dans `archive/BACKLOG-2.md`.
 Alternative non retenue : `pytest.mark.skipif` conditionné à la présence
 réseau, qui aurait gardé le test dans le run par défaut tout en le
 neutralisant proprement en environnement isolé.
+
+---
+
+## ADR-12 — Le skill Claude Code est distribué hors du repo `ccc-findings`
+
+**Statut** : Acté (sur demande explicite de l'utilisateur).
+
+**Contexte** : F6.1 avait livré `skills/cccf/SKILL.md` comme partie du
+package `ccc-findings`. L'utilisateur a demandé de déplacer ce fichier vers
+`~/cocoindex-ext-skill/SKILL.md`, en dehors du repo, avec suppression de la
+copie versionnée (pas une simple copie de commodité).
+
+**Décision** : `skills/cccf/SKILL.md` est retiré du repo `ccc-findings` ;
+le skill vit désormais uniquement dans `~/cocoindex-ext-skill/SKILL.md`
+(fichier `SKILL.md` à la racine de ce répertoire, convention Claude Code
+d'un dossier = un skill). `docs/SPEC-FONC.md` §4 et le `README.md` sont mis à
+jour pour pointer vers ce nouvel emplacement plutôt que documenter un chemin
+qui n'existe plus dans ce repo.
+
+**Conséquences** : le package `ccc-findings` (pip/uv) ne contient plus le
+skill — quiconque installe seulement `ccc-findings` doit récupérer le
+`SKILL.md` séparément pour l'activer dans Claude Code. `archive/BACKLOG.md`
+(tâche F6.1, historique figé) continue de mentionner `skills/cccf/SKILL.md`
+comme périmètre de fichiers : exact au moment de son exécution, plus exact
+aujourd'hui — ne pas corriger un document archivé, seuls les documents
+vivants (`docs/`, `README.md`) reflètent l'état courant.

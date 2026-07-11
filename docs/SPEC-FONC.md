@@ -150,7 +150,7 @@ utilisable pour l'appel suivant) :
 - `max_severity` : la sévérité la plus haute parmi les findings joints, ou
   `null` si aucun.
 
-## 4. Skill Claude Code (`skills/cccf/SKILL.md`)
+## 4. Skill Claude Code (distribué séparément — `~/cocoindex-ext-skill/SKILL.md`)
 
 Déclencheurs : vulnérabilité, sécurité, semgrep, finding, dette, audit.
 

@@ -14,8 +14,11 @@ de `ccc` à la requête.
 - [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — spécification fonctionnelle : commandes CLI, tools MCP, skill, comportements d'erreur.
 - [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — spécification technique : modules, modèle de données, schéma SQLite, algorithmes.
 - [`docs/ADR.md`](docs/ADR.md) — décisions d'architecture (contexte, choix, conséquences).
-- [`skills/cccf/SKILL.md`](skills/cccf/SKILL.md) — skill Claude Code.
 - `archive/` — historique du plan d'implémentation (`BACKLOG.md`) et des findings de revue de code (`BACKLOG-2.md`).
+
+Le skill Claude Code (`SKILL.md`) est distribué séparément de ce repo, dans
+`~/cocoindex-ext-skill/SKILL.md` ; son comportement fonctionnel reste
+documenté dans [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#4-skill-claude-code).
 
 ## Installation
 
@@ -61,7 +64,7 @@ uv run pytest
 ```
 
 Pour la vérification fraîche post-patch d'un fichier précis (boucle de
-correction, voir [`skills/cccf/SKILL.md`](skills/cccf/SKILL.md)), enregistrer
+correction, voir le skill `~/cocoindex-ext-skill/SKILL.md`), enregistrer
 en complément le MCP Semgrep officiel :
 
 ```json
