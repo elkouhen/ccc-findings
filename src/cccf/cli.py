@@ -20,6 +20,7 @@ from cccf.store import Store
 app = typer.Typer(help="ccc-findings: index Semgrep interrogeable par LLM")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
+DEFAULT_REGISTRY_PACK = "p/security-audit"
 
 
 @app.callback()
@@ -52,13 +53,15 @@ def init(
     rules_paths = list(rules) if rules else None
     if not rules_paths:
         detected = _detect_semgrep_config(repo_root)
-        if detected is None:
+        if detected is not None:
+            rules_paths = [detected]
+        else:
+            rules_paths = [DEFAULT_REGISTRY_PACK]
             typer.echo(
-                "Aucune config Semgrep détectée. Relancez avec --rules <chemin-ou-pack>.",
-                err=True,
+                f"Aucune config Semgrep détectée. Utilisation du pack par défaut "
+                f"'{DEFAULT_REGISTRY_PACK}' (relancez avec --rules "
+                "<chemin-ou-pack> pour le personnaliser)."
             )
-            raise typer.Exit(code=1)
-        rules_paths = [detected]
 
     try:
         path = init_config(repo_root, rules_paths)

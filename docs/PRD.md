@@ -188,5 +188,5 @@ des tâches F0.1 à F7.2 du plan d'implémentation initial est livré.
 ## 12. Questions ouvertes restantes
 
 1. Les findings **supprimés** doivent-ils être conservés en historique (audit, UC6 étendu) ou purgés ? V1 a retenu : purge (`replace_findings_for_files` supprime puis réinsère), pas de diff persistant — UC6 (Could) n'est pas livré en V1.
-2. Faut-il embarquer un **pack de règles par défaut** quand le projet n'a pas de config Semgrep ? V1 exige une config explicite (voir `SPEC-FONC.md`, commande `init`).
+2. ~~Faut-il embarquer un **pack de règles par défaut** quand le projet n'a pas de config Semgrep ?~~ Tranché (ADR-13) : `cccf init` se replie sur le pack registry `p/security-audit` quand rien n'est détecté ni passé en `--rules` — revient sur le choix initial « config explicite obligatoire » pour réduire la friction de démarrage (voir `SPEC-FONC.md`, commande `init`).
 3. Politique sur **Semgrep Pro** (règles interfile) : toujours hors scope, non traité.

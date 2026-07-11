@@ -21,18 +21,67 @@ def repo_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return dest
 
 
-def test_init_without_semgrep_config_fails_with_exact_message(
+def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["init"])
 
-    assert result.exit_code != 0
-    assert (
-        "Aucune config Semgrep détectée. Relancez avec --rules <chemin-ou-pack>."
-        in result.output
+    assert result.exit_code == 0
+    assert "p/security-audit" in result.output
+    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    assert "p/security-audit" in config_content
+
+
+@pytest.mark.integration
+def test_index_with_default_registry_pack_succeeds_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    (tmp_path / "app.py").write_text(
+        "import sqlite3\n\n\n"
+        "def find_user(conn: sqlite3.Connection, name: str):\n"
+        "    cursor = conn.cursor()\n"
+        "    cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n"
+        "    return cursor.fetchall()\n"
     )
+
+    init_result = runner.invoke(app, ["init"])
+    assert init_result.exit_code == 0
+
+    index_result = runner.invoke(app, ["index"])
+
+    assert index_result.exit_code == 0
+    assert "scanned=" in index_result.output
+
+
+def test_init_with_explicit_rules_takes_priority_over_default_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+
+    assert result.exit_code == 0
+    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    assert "rules/rules.yml" in config_content
+    assert "p/security-audit" not in config_content
+
+
+def test_init_detects_local_semgrep_config_over_default_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".semgrep.yml").write_text("rules: []\n")
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    assert ".semgrep.yml" in config_content
+    assert "p/security-audit" not in config_content
 
 
 @pytest.mark.integration

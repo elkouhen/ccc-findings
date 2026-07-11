@@ -42,9 +42,11 @@ Crée `.cccf/config.yml`.
 - `--rules` répétable : chemins ou identifiants de config Semgrep (ex.
   `rules/rules.yml`, `p/security-audit`).
 - Sans `--rules` : détection automatique dans l'ordre `.semgrep.yml` →
-  `semgrep.yml` → `.semgrep`. Si rien n'est trouvé :
-  - message exact sur stderr : `Aucune config Semgrep détectée. Relancez avec --rules <chemin-ou-pack>.`
-  - code de sortie 1.
+  `semgrep.yml` → `.semgrep`. Si rien n'est trouvé, repli sur le pack
+  registry Semgrep par défaut `p/security-audit` (pas d'erreur) : message
+  informatif sur stdout précisant le pack utilisé et comment le changer,
+  code de sortie 0. Ordre de priorité : `--rules` explicite > config locale
+  détectée > pack par défaut.
 - Si `.cccf/config.yml` existe déjà : erreur explicite, code de sortie 1, le
   fichier existant n'est jamais écrasé.
 

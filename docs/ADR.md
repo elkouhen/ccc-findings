@@ -255,3 +255,36 @@ skill — quiconque installe seulement `ccc-findings` doit récupérer le
 comme périmètre de fichiers : exact au moment de son exécution, plus exact
 aujourd'hui — ne pas corriger un document archivé, seuls les documents
 vivants (`docs/`, `README.md`) reflètent l'état courant.
+
+---
+
+## ADR-13 — `cccf init` se replie sur un pack registry par défaut
+
+**Statut** : Acté (sur demande explicite de l'utilisateur — revient sur un
+choix antérieur).
+
+**Contexte** : le PRD initial (§12, question ouverte 2) avait tranché pour
+une config Semgrep explicite obligatoire, afin d'éviter le bruit d'un pack
+par défaut mal calibré. L'utilisateur a demandé, après usage, de pouvoir
+utiliser les bibliothèques de règles standard de Semgrep sans avoir à
+définir de `rules` explicitement.
+
+**Décision** : quand `cccf init` ne reçoit ni `--rules` ni ne détecte de
+config Semgrep locale (`.semgrep.yml`/`semgrep.yml`/`.semgrep`), il se
+replie sur le pack registry `p/security-audit` plutôt que d'échouer. Un
+message informatif (stdout, code de sortie 0) indique le pack utilisé et
+comment le personnaliser via `--rules`. Choix de `p/security-audit` plutôt
+que `p/default` : cohérent avec le positionnement sécurité du produit (CWE/
+OWASP dans le modèle de données, cas d'usage centrés vulnérabilités). Ordre
+de priorité inchangé : `--rules` explicite > config locale détectée > pack
+par défaut.
+
+**Conséquences** : lève la friction de démarrage (plus besoin d'écrire des
+règles custom pour essayer `cccf`) au prix du bruit que le choix initial
+voulait éviter — un pack généraliste peut remonter des findings peu
+pertinents pour un projet donné. Vérifié manuellement : le pack se
+télécharge et s'exécute avec succès dans l'environnement de développement
+(`semgrep scan --config p/security-audit`, ~225 règles Python chargées) ;
+sa couverture réelle sur un cas donné dépend du contenu du registry Semgrep,
+hors du contrôle de `cccf`. `docs/PRD.md` §12 point 2 est mis à jour pour
+refléter que cette question n'est plus ouverte.
