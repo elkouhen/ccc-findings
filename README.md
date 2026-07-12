@@ -50,7 +50,7 @@ code + findings"]
     end
 
     FSEARCH -. "fallback: ccc_bridge.py subprocess + parse texte (ADR-10)" .-> CSEARCH
-    FMCP == "search_code_with_findings: jointure fichier + lignes" ==> CMCP
+    FMCP == "search: jointure fichier + lignes" ==> CMCP
 
     CMCP --> AGENT["Claude Code
 skill + client MCP"]
@@ -69,7 +69,7 @@ Points clés :
   recherche vectorielle (ADR-17), et le même modèle d'embedding par défaut
   (`Snowflake/snowflake-arctic-embed-xs`, ADR-3).
 - **La jointure peut utiliser l'index local expérimental** — avec
-  `--engine cocoindex`, `search_code_with_findings` interroge les chunks locaux
+  `--engine cocoindex`, le tool MCP `search` interroge les chunks locaux
   puis joint les findings par fichier + lignes ; sinon il garde le fallback
   `ccc search`.
 - **L'agent (Claude Code) est le point de convergence** — via les deux
@@ -86,8 +86,20 @@ Points clés :
 - `archive/` — historique du plan d'implémentation (`BACKLOG.md`) et des findings de revue de code (`BACKLOG-2.md`).
 
 Le skill Claude Code (`SKILL.md`) est distribué séparément de ce repo, dans
-`~/cocoindex-ext-skill/SKILL.md` ; son comportement fonctionnel reste
-documenté dans [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#4-skill-claude-code).
+[`ccc-findings-skill`](https://github.com/elkouhen/ccc-findings-skill) ; son
+comportement fonctionnel reste documenté dans
+[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#4-skill-claude-code).
+
+## Projets liés
+
+- [`cocoindex-code`](https://github.com/cocoindex-io/cocoindex-code) (`ccc`)
+  — l'outil d'indexation et de recherche de code sémantique dont `cccf` est
+  le compagnon (voir « Architecture » ci-dessus). `cccf` ne fork pas ce
+  projet et n'importe aucun de ses modules internes (ADR-1) ; il l'appelle
+  en subprocess et réutilise sa techno de stockage (`sqlite-vec`).
+- [`ccc-findings-skill`](https://github.com/elkouhen/ccc-findings-skill) —
+  le skill Claude Code qui orchestre `ccc`/`cccf` depuis l'agent (voir
+  ci-dessus).
 
 ## Installation
 
@@ -107,9 +119,11 @@ cccf findings "injection sql"   # recherche en langage naturel dans les findings
 cccf summary                    # vue agrégée (sévérités, top règles, top répertoires)
 ```
 
-`cccf search` est un **sur-ensemble de `ccc search`** : mêmes résultats, même
-format, chaque résultat enrichi des findings Semgrep qui le recouvrent et
-classé en tenant compte de leur sévérité.
+`cccf search` est un **sur-ensemble de `ccc search`** : mêmes options
+(`--limit`, `--offset`, `--lang`, `--path`, `--refresh`), mêmes résultats,
+même format, chaque résultat enrichi des findings Semgrep qui le recouvrent
+et classé en tenant compte de leur sévérité. Côté MCP, le tool porte le même
+nom que celui de `ccc` (`search`) et prend les mêmes paramètres.
 
 Exemple avec des règles explicites et un scan complet :
 
@@ -131,16 +145,17 @@ uv run pytest
 ## Serveur MCP
 
 `cccf` expose un serveur MCP (stdio) via `cccf mcp`, avec les tools
-`search_findings`, `findings_summary`, `search_code_with_findings` et
-`reindex_findings`. Enregistrement client (ex. Claude Code) :
+`search_findings`, `findings_summary`, `search` (mêmes nom et paramètres que
+le `search` de `ccc`) et `reindex_findings`. Enregistrement client (ex. Claude
+Code) :
 
 ```json
 {"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}
 ```
 
 Pour la vérification fraîche post-patch d'un fichier précis (boucle de
-correction, voir le skill `~/cocoindex-ext-skill/SKILL.md`), enregistrer
-en complément le MCP Semgrep officiel :
+correction, voir le skill [`ccc-findings-skill`](https://github.com/elkouhen/ccc-findings-skill)),
+enregistrer en complément le MCP Semgrep officiel :
 
 ```json
 {"mcpServers": {"semgrep": {"command": "uvx", "args": ["semgrep-mcp"]}}}
@@ -148,3 +163,8 @@ en complément le MCP Semgrep officiel :
 
 Détail des champs de configuration `.cccf/config.yml` : voir
 [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#1-configuration-du-projet).
+
+## Licence
+
+[Apache License 2.0](LICENSE), comme le projet amont
+[`cocoindex-code`](https://github.com/cocoindex-io/cocoindex-code).
