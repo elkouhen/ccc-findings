@@ -139,3 +139,33 @@ def test_replace_code_chunks_for_files_removes_only_targeted_paths(tmp_path: Pat
         chunks = store.all_code_chunks()
 
     assert chunks == [shell_chunk]
+
+
+def test_knn_search_code_chunks_filters_by_language_and_path_and_paginates(
+    tmp_path: Path,
+) -> None:
+    from cccf.store import CodeChunk
+
+    py_chunk = CodeChunk("py", "app/db.py", 1, 3, "python", "python code")
+    ts_chunk = CodeChunk("ts", "web/app.ts", 1, 3, "typescript", "ts code")
+    other_py_chunk = CodeChunk("py2", "lib/util.py", 1, 3, "python", "more python")
+
+    with Store(tmp_path) as store:
+        store.replace_code_chunks_for_files(
+            ["app/db.py", "web/app.ts", "lib/util.py"], [py_chunk, ts_chunk, other_py_chunk]
+        )
+        # scores decreasing in insertion order: py (best) > ts > other_py
+        store.set_code_chunk_embedding("py", np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        store.set_code_chunk_embedding("ts", np.array([0.9, 0.1, 0.0], dtype=np.float32))
+        store.set_code_chunk_embedding("py2", np.array([0.8, 0.2, 0.0], dtype=np.float32))
+
+        query_vec = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+        by_lang = store.knn_search_code_chunks(query_vec, top_k=5, language="python")
+        assert [chunk.id for chunk, _ in by_lang] == ["py", "py2"]
+
+        by_path = store.knn_search_code_chunks(query_vec, top_k=5, path_glob="web/*")
+        assert [chunk.id for chunk, _ in by_path] == ["ts"]
+
+        paginated = store.knn_search_code_chunks(query_vec, top_k=1, offset=1)
+        assert [chunk.id for chunk, _ in paginated] == ["ts"]

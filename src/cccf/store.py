@@ -15,6 +15,8 @@ SCHEMA_VERSION = "3"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
+_CODE_CHUNK_OVERFETCH_FACTOR = 3
+_CODE_CHUNK_OVERFETCH_CAP = 200
 
 
 def _chunked(items: list[str], size: int = _SQLITE_BIND_LIMIT) -> Iterator[list[str]]:
@@ -387,15 +389,30 @@ class Store:
         return [(row["finding_id"], 1.0 - row["distance"]) for row in cur.fetchall()]
 
     def knn_search_code_chunks(
-        self, query_vec: np.ndarray, top_k: int
+        self,
+        query_vec: np.ndarray,
+        top_k: int,
+        offset: int = 0,
+        language: str | None = None,
+        path_glob: str | None = None,
     ) -> list[tuple[CodeChunk, float]]:
+        """Nearest neighbors among `code_chunks`, best first.
+
+        `language`/`path_glob` are applied after the KNN fetch (vec0 has no
+        native metadata filter), so the fetch over-requests — same pattern as
+        `ccc_bridge`'s severity overfetch — to survive filtering and `offset`
+        before truncating to `top_k`.
+        """
         if top_k <= 0 or self.get_meta("code_embedding_dim") is None:
             return []
+        fetch_k = min(
+            (offset + top_k) * _CODE_CHUNK_OVERFETCH_FACTOR, _CODE_CHUNK_OVERFETCH_CAP
+        )
         query_blob = sqlite_vec.serialize_float32(query_vec.astype(np.float32).tolist())
         cur = self.conn.execute(
             "SELECT chunk_id, distance FROM vec_code_chunks "
             "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-            (query_blob, top_k),
+            (query_blob, fetch_k),
         )
         rows = cur.fetchall()
         if not rows:
@@ -406,11 +423,17 @@ class Store:
             f"SELECT * FROM code_chunks WHERE id IN ({placeholders})", ids
         ).fetchall()
         chunks_by_id = {row["id"]: _row_to_code_chunk(row) for row in chunk_rows}
-        return [
-            (chunks_by_id[row["chunk_id"]], 1.0 - row["distance"])
-            for row in rows
-            if row["chunk_id"] in chunks_by_id
-        ]
+        results: list[tuple[CodeChunk, float]] = []
+        for row in rows:
+            chunk = chunks_by_id.get(row["chunk_id"])
+            if chunk is None:
+                continue
+            if language and chunk.language != language:
+                continue
+            if path_glob and not fnmatch.fnmatch(chunk.path, path_glob):
+                continue
+            results.append((chunk, 1.0 - row["distance"]))
+        return results[offset : offset + top_k]
 
     def counts_by(self, dim: str) -> dict[str, int]:
         if dim not in _COUNTABLE_DIMENSIONS:

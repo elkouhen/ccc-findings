@@ -269,7 +269,38 @@ def test_search_without_ccc_nor_index_fails_with_message_and_code_2(
     result = runner.invoke(app, ["search", "auth"])
 
     assert result.exit_code == 2
-    assert "Index absent. Lancez d'abord: cccf index" in result.output
+    assert "ccc introuvable dans le PATH" in result.output
+
+
+def test_search_forwards_offset_lang_path_refresh_flags_to_ccc(
+    fake_ccc_args_recording_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "search", "auth",
+            "--limit", "3", "--offset", "2", "--lang", "python", "--path", "app/*", "--refresh",
+        ],
+    )
+
+    assert result.exit_code == 0
+    # search_code_with_findings sur-demande à ccc (overfetch_limit(3) == 9) pour
+    # le classement par sévérité ; les autres flags sont transmis tels quels.
+    assert "ARGS:search auth --limit 9 --offset 2 --lang python --path app/* --refresh" in result.output
+
+
+def test_search_returns_error_when_ccc_returns_error(
+    fake_ccc_error_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["search", "auth"])
+
+    assert result.exit_code == 2
+    assert "ccc a échoué (code 42)" in result.output
+    assert "ccc service failed" in result.output
 
 
 @pytest.mark.integration

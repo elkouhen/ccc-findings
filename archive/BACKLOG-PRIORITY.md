@@ -55,3 +55,4 @@
 | X1 — Cadrer l'option d'extension native CocoIndex vs package compagnon | `archive/BACKLOG-8.md` | Terminé |
 | X2 — Prototyper un indexer findings déclaratif avec CocoIndex | `archive/BACKLOG-8.md` | Terminé |
 | X4 — Préparer une jointure code + findings à l'indexation | `archive/BACKLOG-8.md` | Terminé |
+| E1 — Faire échouer `cccf search` si `ccc search` échoue | `archive/BACKLOG-9.md` | Terminé |

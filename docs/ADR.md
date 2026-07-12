@@ -423,13 +423,9 @@ fois le texte JSON habituel (`content`, pour les clients qui l'ignorent) et
 le contenu structuré (`structuredContent`) — additif, aucune régression pour
 un client existant. Les `try/except Exception` qui avalaient les erreurs sont
 supprimés : une exception remonte telle quelle, FastMCP la convertit en
-`ToolError`, exposé au client comme `isError: true`. Le cas `ccc`
-indisponible dans `search_code_with_findings` (`CccUnavailable`) reste un
-repli **volontaire**, pas une erreur : plutôt qu'une forme
-`{"error": ..., "fallback": ...}` distincte du cas succès, `CodeSearchResult`
-a un schema unique et stable (`results`, `findings_only_fallback`,
-`warning`), rempli différemment selon le cas — l'`outputSchema` reste valide
-dans les deux branches.
+`ToolError`, exposé au client comme `isError: true`. Depuis ADR-22,
+`CccUnavailable` dans `search_code_with_findings` est également une vraie erreur
+et non plus un repli success-shaped.
 
 **Conséquences** : les 4 tools sont maintenant symétriques avec `ccc mcp` sur
 la forme de sortie (schema riche, pas de string à re-parser), sans ajouter de
@@ -510,11 +506,11 @@ garde ses repères, `cccf` ajoute la couche findings. Le parseur de
 l'identique. L'ancienne recherche findings-only déménage telle quelle
 (mêmes flags, même contrat JSON) sous `cccf findings`.
 
-**Modes dégradés** (schéma `CodeSearchResult` unique dans tous les cas) :
-`ccc` indisponible → repli findings-only avec avertissement ; index findings
-absent → résultats `ccc` bruts avec avertissement (plutôt que des findings
-silencieusement vides, et sans créer `.cccf/` par effet de bord dans un repo
-non initialisé) ; les deux absents → erreur actionnable (`Index absent...`).
+**Modes dégradés** : index findings absent → résultats `ccc` bruts avec
+avertissement (plutôt que des findings silencieusement vides, et sans créer
+`.cccf/` par effet de bord dans un repo non initialisé). Depuis ADR-22, `ccc`
+indisponible ou en erreur n'est plus un mode dégradé réussi : l'erreur remonte
+au CLI/MCP.
 
 **Conséquences** : rupture du contrat CLI (`cccf search` change de
 sémantique ; les usages findings-only doivent migrer vers `cccf findings`) —
@@ -564,3 +560,73 @@ utilisateurs gardent les commandes actuelles, et l'expérimental est opt-in. Le
 prototype n'est pas encore un flow CocoIndex complet avec `live=True` ni une
 migration de backend ; ces étapes restent à traiter (X3/X5/X6). Le store passe
 en `schema_version = 3` pour ajouter `code_chunks` et `vec_code_chunks`.
+
+---
+
+## ADR-22 — Une panne `ccc` fait échouer `cccf search`
+
+**Statut** : Acté.
+
+**Contexte** : le fallback historique de `search_code_with_findings` masquait
+une panne de `ccc` (`ccc` absent ou code retour non nul) en retournant une
+recherche findings-only dans `findings_only_fallback`. Ce comportement rendait
+la sortie ambiguë : l'appelant pouvait croire avoir obtenu une recherche code +
+findings valide alors que le service code sous-jacent était en erreur.
+
+**Décision** : quand `cccf search` doit passer par le pont `ccc`, toute
+`CccUnavailable` est convertie en erreur (`RuntimeError`) et remonte au CLI
+(code de sortie 2) ou au MCP (`ToolError` / `isError: true`). Le message conserve
+la cause initiale : `ccc introuvable dans le PATH` ou
+`ccc a échoué (code N) : <stderr>`.
+
+Le mode expérimental `--engine cocoindex` reste indépendant : si un index code
+local existe, `cccf search` l'utilise sans appeler `ccc`.
+
+**Conséquences** : `findings_only_fallback` reste présent dans
+`CodeSearchResult` pour compatibilité de schema, mais il n'est plus utilisé pour
+masquer une panne `ccc`. Un utilisateur qui veut chercher uniquement dans les
+findings doit appeler explicitement `cccf findings` ou le tool MCP
+`search_findings`.
+
+---
+
+## ADR-23 — Le tool MCP de recherche code prend le même nom et les mêmes
+paramètres que `ccc search`
+
+**Statut** : Acté.
+
+**Contexte** : le tool MCP `search_code_with_findings` était déjà un
+sur-ensemble de `ccc search` (ADR-20/21) mais n'exposait que `query` et
+`limit`, alors que `ccc search` accepte aussi `--offset`, `--lang`, `--path`
+et `--refresh` (voir `ccc search --help`). Un agent qui connaît déjà `ccc`
+devait donc deviner que ces options n'existaient pas côté `cccf`, ou basculer
+vers `ccc` pour les usages paginés/filtrés — cassant le positionnement
+« `cccf search` = `ccc search` + findings ».
+
+**Décision** :
+1. Le tool MCP est renommé `search_code_with_findings` → `search`, même nom
+   que le tool exposé par `ccc mcp`. Comme les tools MCP sont préfixés par
+   serveur côté client (`mcp__cccf__search` vs `mcp__ccc__search`), il n'y a
+   pas de collision réelle même si les deux serveurs sont enregistrés
+   simultanément.
+2. `search`/`cccf search` acceptent désormais `offset`, `lang`, `path`,
+   `refresh` — mêmes noms que les flags `ccc search --offset/--lang/--path/
+   --refresh`.
+3. Quand le pont `ccc` est utilisé (pas d'index code expérimental), ces
+   paramètres sont transmis tels quels au binaire `ccc` (`ccc_bridge.
+   search_code`), sans transformation.
+4. Quand l'index code expérimental (`--engine cocoindex`) est utilisé,
+   `lang`/`path` filtrent et `offset` pagine `Store.knn_search_code_chunks`
+   (post-filtrage, `vec0` n'ayant pas de filtre de métadonnées natif — sur-
+   demande `(offset + top_k) × 3`, plafonné à 200, même schéma que l'over-
+   fetch de `rank_by_severity`) ; `refresh=True` déclenche une réindexation
+   incrémentale locale (`coco_indexer.index_repo_with_cocoindex`) avant la
+   recherche, mais seulement si le repo utilise déjà ce moteur — un
+   `refresh=True` n'active pas silencieusement le moteur expérimental sur un
+   repo indexé en mode `manual`.
+
+**Conséquences** : le nom Python de la fonction partagée CLI/MCP,
+`code_search.search_code_with_findings`, ne change pas — seul le nom du tool
+MCP exposé change. Les tests et docs qui référençaient le tool par son ancien
+nom sont mis à jour (`tests/test_mcp_server.py`,
+`tests/test_ccc_bridge.py`).

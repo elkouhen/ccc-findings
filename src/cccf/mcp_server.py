@@ -80,12 +80,22 @@ def reindex_findings() -> IndexReport:
 
 
 @mcp.tool()
-def search_code_with_findings(query: str, limit: int = 5) -> CodeSearchResult:
+def search(
+    query: str,
+    limit: int = 5,
+    offset: int = 0,
+    lang: str | None = None,
+    path: str | None = None,
+    refresh: bool = False,
+) -> CodeSearchResult:
     """Recherche sémantique de code (via ccc) annotée des findings Semgrep connus
     sur chaque résultat. Le classement favorise légèrement les résultats
     portant un finding connu (plus fortement si sévérité ERROR) par rapport à
     un résultat de pertinence sémantique proche mais sans finding. Outil à
     privilégier pour explorer du code en tenant compte de sa dette sécurité.
-    Même comportement que la CLI `cccf search`.
+    Même comportement, mêmes paramètres et même nom de tool que le `search`
+    de ccc ; équivalent à la CLI `cccf search`.
     """
-    return run_code_search(_repo_root(), query, limit=limit)
+    return run_code_search(
+        _repo_root(), query, limit=limit, offset=offset, lang=lang, path=path, refresh=refresh
+    )

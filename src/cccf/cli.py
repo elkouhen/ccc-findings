@@ -128,16 +128,22 @@ def _require_index(repo_root: Path) -> None:
 def search(
     query: str,
     limit: int = typer.Option(5, "--limit"),
+    offset: int = typer.Option(0, "--offset"),
+    lang: Optional[str] = typer.Option(None, "--lang"),  # noqa: UP007
+    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
+    refresh: bool = typer.Option(False, "--refresh"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Recherche sémantique de code (mêmes résultats que `ccc search`),
-    enrichie des findings Semgrep qui recouvrent chaque résultat et classée
-    en tenant compte de leur sévérité.
+    """Recherche sémantique de code (mêmes résultats et mêmes paramètres que
+    `ccc search`), enrichie des findings Semgrep qui recouvrent chaque
+    résultat et classée en tenant compte de leur sévérité.
     """
     repo_root = Path.cwd()
 
     try:
-        result = search_code_with_findings(repo_root, query, limit=limit)
+        result = search_code_with_findings(
+            repo_root, query, limit=limit, offset=offset, lang=lang, path=path, refresh=refresh
+        )
     except (RuntimeError, ConfigError, EmbeddingError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

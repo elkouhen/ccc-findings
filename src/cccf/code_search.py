@@ -1,8 +1,8 @@
 """Recherche de code (via `ccc`) enrichie des findings Semgrep indexés.
 
 C'est le comportement « sur-ensemble de ccc » exposé à la fois par la CLI
-(`cccf search`) et par le tool MCP `search_code_with_findings` : mêmes
-résultats que `ccc search`, annotés des findings qui les chevauchent et
+(`cccf search`) et par le tool MCP `search` : mêmes résultats et mêmes
+paramètres que `ccc search`, annotés des findings qui les chevauchent et
 classés en tenant compte de leur sévérité.
 """
 
@@ -19,27 +19,24 @@ from cccf.ccc_bridge import (
     search_code,
     without_findings,
 )
-from cccf.coco_indexer import ENGINE_META_VALUE
+from cccf.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
 from cccf.config import ConfigError, load_config
 from cccf.embedder import make_embedder
-from cccf.render import FindingHit, render_search_json
-from cccf.search import search_findings
+from cccf.render import FindingHit
 from cccf.store import Store
 
-WARNING_CCC_UNAVAILABLE = "ccc indisponible : recherche restreinte aux findings Semgrep"
 WARNING_NO_FINDINGS_INDEX = (
     "index findings absent (lancez: cccf index) : résultats sans findings"
 )
-ERROR_NOTHING_AVAILABLE = "Index absent. Lancez d'abord: cccf index"
 
 
 class CodeSearchResult(TypedDict):
-    """Shape returned by `cccf search --json` and `search_code_with_findings`.
+    """Shape returned by `cccf search --json` and the MCP tool `search`.
 
-    A single stable schema for every case — nominal, ccc unreachable
-    (`results` empty, `findings_only_fallback` populated), findings index
-    missing (`results` without findings) — so structured output stays valid
-    in all branches, `warning` telling the caller which degraded mode applies.
+    A single stable schema for nominal results and findings-index-missing
+    degraded mode (`results` without findings), `warning` telling the caller
+    which degraded mode applies. If the underlying `ccc` command fails, the
+    function raises instead of returning a success-shaped fallback.
     """
 
     results: list[CodeHitWithFindings]
@@ -52,7 +49,13 @@ def _has_findings_index(repo_root: Path) -> bool:
 
 
 def _search_indexed_code(
-    store: Store, embedder: object, query: str, limit: int
+    store: Store,
+    embedder: object,
+    query: str,
+    limit: int,
+    offset: int,
+    lang: str | None,
+    path: str | None,
 ) -> list[CodeHit]:
     if store.get_meta("index_engine") != ENGINE_META_VALUE:
         return []
@@ -68,18 +71,35 @@ def _search_indexed_code(
             score=score,
             content=chunk.content,
         )
-        for chunk, score in store.knn_search_code_chunks(query_vec, top_k=overfetch_limit(limit))
+        for chunk, score in store.knn_search_code_chunks(
+            query_vec,
+            top_k=overfetch_limit(limit),
+            offset=offset,
+            language=lang,
+            path_glob=path,
+        )
     ]
 
 
 def search_code_with_findings(
-    repo_root: Path, query: str, limit: int = 5
+    repo_root: Path,
+    query: str,
+    limit: int = 5,
+    offset: int = 0,
+    lang: str | None = None,
+    path: str | None = None,
+    refresh: bool = False,
 ) -> CodeSearchResult:
     """Recherche `ccc search` + annotation findings + classement par sévérité.
 
-    Dégradations (jamais les deux surfaces en panne sans erreur claire) :
-    - `ccc` indisponible → recherche dans les findings seuls (nécessite
-      l'index `cccf`, sinon RuntimeError).
+    Mêmes paramètres que `ccc search` (`--limit`, `--offset`, `--lang`,
+    `--path`, `--refresh`) : sur l'index code expérimental (`--engine
+    cocoindex`), `lang`/`path`/`offset` filtrent et paginent localement, et
+    `refresh` réindexe (incrémental) avant de chercher ; sinon ils sont
+    transmis tels quels au binaire `ccc`.
+
+    Dégradations :
+    - `ccc` indisponible ou en erreur → RuntimeError.
     - index findings absent → résultats `ccc` bruts, sans annotation.
     """
     if _has_findings_index(repo_root):
@@ -90,7 +110,11 @@ def search_code_with_findings(
         if config is not None:
             embedder = make_embedder(config.embedding_model)
             with Store(repo_root) as store:
-                indexed_hits = _search_indexed_code(store, embedder, query, limit)
+                if refresh and store.get_meta("index_engine") == ENGINE_META_VALUE:
+                    index_repo_with_cocoindex(repo_root, config, store, embedder)
+                indexed_hits = _search_indexed_code(
+                    store, embedder, query, limit, offset, lang, path
+                )
                 if indexed_hits:
                     annotated = annotate_with_findings(indexed_hits, store)
                     ranked = rank_by_severity(annotated, limit)
@@ -104,20 +128,17 @@ def search_code_with_findings(
         # Sur-demande à ccc : le classement par sévérité a besoin de plus de
         # candidats que `limit` pour pouvoir faire remonter un résultat
         # légèrement moins pertinent sémantiquement mais porteur d'un finding.
-        code_hits = search_code(repo_root, query, overfetch_limit(limit))
-    except CccUnavailable:
-        if not _has_findings_index(repo_root):
-            raise RuntimeError(ERROR_NOTHING_AVAILABLE) from None
-        config = load_config(repo_root)
-        embedder = make_embedder(config.embedding_model)
-        with Store(repo_root) as store:
-            hits = search_findings(store, embedder, query, limit=limit)
-            fallback = render_search_json(hits, repo_root, include_context=False)
-        return CodeSearchResult(
-            results=[],
-            findings_only_fallback=fallback,
-            warning=WARNING_CCC_UNAVAILABLE,
+        code_hits = search_code(
+            repo_root,
+            query,
+            overfetch_limit(limit),
+            offset=offset,
+            lang=lang,
+            path=path,
+            refresh=refresh,
         )
+    except CccUnavailable as exc:
+        raise RuntimeError(str(exc)) from exc
 
     if not _has_findings_index(repo_root):
         annotated = without_findings(code_hits)

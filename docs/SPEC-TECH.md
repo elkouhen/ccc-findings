@@ -242,11 +242,18 @@ et `context_error`, le rendu texte affiche un contexte indisponible.
 
 ## 6. Recherche code + jointure findings
 
-`code_search.search_code_with_findings` commence par ouvrir l'index local quand
-il existe. Si `meta.index_engine = "cocoindex-prototype"` et que
-`vec_code_chunks` contient des embeddings, la requête est embeddée avec le même
-embedder que les findings, puis `Store.knn_search_code_chunks` retourne les
-chunks les plus proches sous forme de `CodeHit`. Ces hits sont annotés par
+`code_search.search_code_with_findings(repo_root, query, limit, offset, lang,
+path, refresh)` — mêmes paramètres que `ccc search` — commence par ouvrir
+l'index local quand il existe. Si `meta.index_engine = "cocoindex-prototype"`
+et que `vec_code_chunks` contient des embeddings, `refresh=True` déclenche
+d'abord une réindexation incrémentale locale
+(`coco_indexer.index_repo_with_cocoindex`), puis la requête est embeddée avec
+le même embedder que les findings et `Store.knn_search_code_chunks(query_vec,
+top_k, offset, language, path_glob)` retourne les chunks les plus proches sous
+forme de `CodeHit`. `vec0` n'a pas de filtre de métadonnées natif : la
+méthode sur-demande (`(offset + top_k) × 3`, plafonné à 200) puis filtre
+`language`/`path_glob` en Python avant de découper `[offset:offset+top_k]` —
+même schéma de sur-demande que `ccc_bridge`. Ces hits sont annotés par
 `annotate_with_findings` (égalité stricte de chemin + chevauchement inclusif de
 ligne) puis reclassés par `rank_by_severity`.
 
@@ -254,7 +261,10 @@ Si cet index code expérimental est absent, `cccf` retombe sur le pont `ccc`.
 
 ### Pont avec `ccc` (`ccc_bridge.py`)
 
-`ccc search <query> --limit N` est appelé en subprocess (`cwd=repo_root`).
+`ccc search <query> --limit N [--offset N] [--lang L] [--path GLOB]
+[--refresh]` est appelé en subprocess (`cwd=repo_root`) — les options
+optionnelles ne sont ajoutées à la ligne de commande que si elles diffèrent de
+leur valeur par défaut.
 **Le flag `--json` n'existe pas** dans la version de `ccc` installée
 (vérifié via `ccc search --help`) — voir ADR-10. `search_code` parse donc le
 format texte réel :

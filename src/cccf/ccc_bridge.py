@@ -110,10 +110,28 @@ def overfetch_limit(limit: int) -> int:
     return min(limit * _OVERFETCH_FACTOR, _OVERFETCH_CAP)
 
 
-def search_code(repo_root: Path, query: str, limit: int = 5) -> list[CodeHit]:
+def search_code(
+    repo_root: Path,
+    query: str,
+    limit: int = 5,
+    offset: int = 0,
+    lang: str | None = None,
+    path: str | None = None,
+    refresh: bool = False,
+) -> list[CodeHit]:
+    cmd = ["ccc", "search", query, "--limit", str(limit)]
+    if offset:
+        cmd += ["--offset", str(offset)]
+    if lang:
+        cmd += ["--lang", lang]
+    if path:
+        cmd += ["--path", path]
+    if refresh:
+        cmd.append("--refresh")
+
     try:
         proc = subprocess.run(
-            ["ccc", "search", query, "--limit", str(limit)],
+            cmd,
             cwd=repo_root,
             capture_output=True,
             text=True,

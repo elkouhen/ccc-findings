@@ -26,6 +26,18 @@ File: app/db.py:6-6 [python]
 EOF
 """
 
+FAKE_CCC_ERROR_SCRIPT = """#!/bin/sh
+echo 'ccc service failed' >&2
+exit 42
+"""
+
+FAKE_CCC_ARGS_RECORDING_SCRIPT = """#!/bin/sh
+echo ""
+echo "--- Result 1 (score: 0.900) ---"
+echo "File: app/db.py:6-6 [python]"
+echo "ARGS:$*"
+"""
+
 
 def install_fake_ccc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_content: str
@@ -48,6 +60,18 @@ def fake_ccc_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def fake_ccc_two_results_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_TWO_RESULTS_SCRIPT)
+
+
+@pytest.fixture
+def fake_ccc_error_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    return install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_ERROR_SCRIPT)
+
+
+@pytest.fixture
+def fake_ccc_args_recording_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Faux `ccc` qui renvoie les arguments reçus dans le contenu du résultat
+    (`ARGS:...`), pour vérifier que les flags sont transmis tels quels."""
+    return install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_ARGS_RECORDING_SCRIPT)
 
 
 @pytest.fixture

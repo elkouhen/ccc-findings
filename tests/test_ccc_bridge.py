@@ -1,4 +1,3 @@
-import os
 import shutil
 from pathlib import Path
 
@@ -174,12 +173,36 @@ def test_search_code_with_findings_tool_promotes_finding_despite_lower_score(
     with Store(tmp_path) as store:
         store.replace_findings_for_files(["app/db.py"], [finding])
 
-    from cccf.mcp_server import search_code_with_findings
+    from cccf.mcp_server import search
 
-    result = search_code_with_findings("injection sql", limit=2)
+    result = search("injection sql", limit=2)
 
     assert [hit["path"] for hit in result["results"]] == ["app/db.py", "app/other.py"]
     assert result["results"][0]["max_severity"] == "ERROR"
+
+
+def test_search_code_passes_offset_lang_path_refresh_to_ccc(
+    fake_ccc_args_recording_on_path: Path, tmp_path: Path
+) -> None:
+    hits = search_code(
+        tmp_path, "injection sql", limit=3, offset=2, lang="python", path="app/*", refresh=True
+    )
+
+    assert len(hits) == 1
+    args = hits[0].content.removeprefix("ARGS:")
+    assert args.split() == [
+        "search", "injection", "sql", "--limit", "3", "--offset", "2",
+        "--lang", "python", "--path", "app/*", "--refresh",
+    ]
+
+
+def test_search_code_omits_default_optional_flags(
+    fake_ccc_args_recording_on_path: Path, tmp_path: Path
+) -> None:
+    hits = search_code(tmp_path, "auth", limit=5)
+
+    args = hits[0].content.removeprefix("ARGS:")
+    assert args.split() == ["search", "auth", "--limit", "5"]
 
 
 def test_search_code_without_ccc_raises_unavailable(
@@ -192,9 +215,8 @@ def test_search_code_without_ccc_raises_unavailable(
         search_code(tmp_path, "injection sql")
 
 
-@pytest.mark.integration
-def test_mcp_tool_falls_back_when_ccc_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_mcp_tool_raises_when_ccc_returns_error(
+    fake_ccc_error_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dest = tmp_path / "vuln_repo"
     shutil.copytree(VULN_REPO, dest)
@@ -204,19 +226,7 @@ def test_mcp_tool_falls_back_when_ccc_unavailable(
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
-    # PATH sans le répertoire de `ccc`, mais conservant celui de `semgrep`
-    # (déjà utilisé par l'indexation ci-dessus, donc pas nécessaire ensuite).
-    ccc_dir = str(Path(shutil.which("ccc")).parent)
-    restricted_path = os.pathsep.join(
-        p for p in os.environ.get("PATH", "").split(os.pathsep) if p != ccc_dir
-    )
-    monkeypatch.setenv("PATH", restricted_path)
+    from cccf.mcp_server import search
 
-    from cccf.mcp_server import search_code_with_findings
-
-    result = search_code_with_findings("injection sql")
-
-    assert result["results"] == []
-    assert result["warning"] == "ccc indisponible : recherche restreinte aux findings Semgrep"
-    assert isinstance(result["findings_only_fallback"], list)
-    assert len(result["findings_only_fallback"]) == 4
+    with pytest.raises(RuntimeError, match="ccc a échoué.*ccc service failed"):
+        search("injection sql")
