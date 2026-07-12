@@ -9,6 +9,24 @@ from cccf.store import Store
 
 _SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
 
+# Additive ranking boost for search_code_with_findings: small relative to the
+# typical spread of ccc's semantic scores, so it reorders close calls (a
+# borderline-relevant chunk with a critical finding overtakes a
+# slightly-more-relevant, finding-free one) without burying clearly more
+# relevant results under a distant one that merely shares a risky line.
+_SEVERITY_BOOST: dict[str | None, float] = {
+    None: 0.0,
+    "INFO": 0.0,
+    "WARNING": 0.05,
+    "ERROR": 0.15,
+}
+
+# ccc truncates to --limit before cccf ever sees the results, so a relevant
+# hit just outside the top N would never be considered for the severity
+# boost. Over-fetch, boost, re-sort, then truncate to the caller's limit.
+_OVERFETCH_FACTOR = 3
+_OVERFETCH_CAP = 50
+
 
 class FindingRef(TypedDict):
     """A finding attached to a code hit — no `score`, that belongs to the code match."""
@@ -85,6 +103,10 @@ def _parse_ccc_search_output(raw: str) -> list[CodeHit]:
     return hits
 
 
+def overfetch_limit(limit: int) -> int:
+    return min(limit * _OVERFETCH_FACTOR, _OVERFETCH_CAP)
+
+
 def search_code(repo_root: Path, query: str, limit: int = 5) -> list[CodeHit]:
     try:
         proc = subprocess.run(
@@ -149,3 +171,20 @@ def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeH
             )
         )
     return results
+
+
+def rank_by_severity(
+    hits: list[CodeHitWithFindings], limit: int
+) -> list[CodeHitWithFindings]:
+    """Re-rank ccc's semantic order, boosting hits that carry a known finding.
+
+    `score` is left untouched — it still reports ccc's raw semantic
+    similarity. Only the ordering (and truncation to `limit`) accounts for
+    severity; ties keep ccc's original relative order (stable sort).
+    """
+    ranked = sorted(
+        hits,
+        key=lambda hit: hit["score"] + _SEVERITY_BOOST[hit["max_severity"]],
+        reverse=True,
+    )
+    return ranked[:limit]

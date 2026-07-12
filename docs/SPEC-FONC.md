@@ -165,6 +165,14 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 - `max_severity` : la sévérité la plus haute parmi les findings joints, ou
   `null` si aucun.
 
+**Classement pondéré par sévérité** (`ccc_bridge.rank_by_severity`) : l'ordre
+de `ccc search` (pertinence sémantique pure) est ré-ordonné en ajoutant un
+boost additif à `score` selon `max_severity` (`ERROR` +0.15, `WARNING` +0.05,
+`INFO`/aucun +0.0), puis tronqué à `limit`. `score` lui-même n'est pas modifié
+— seul l'ordre en tient compte. Pour que ce boost puisse faire remonter un
+résultat juste hors du top `limit` de `ccc`, l'appel sous-jacent sur-demande
+(`overfetch_limit` : `limit × 3`, plafonné à 50) avant de trier et tronquer.
+
 `CodeSearchResult` a un schéma **unique et stable**, y compris quand `ccc` est
 indisponible (`CccUnavailable`) — pas de forme alternative selon le cas, pour
 que l'`outputSchema` reste valide dans les deux branches :

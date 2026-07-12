@@ -443,3 +443,43 @@ manuellement la sérialisation `Finding → dict` (voir N3 dans
 skill (`~/ccc-findings-skill/SKILL.md`) ne dépend d'aucun parsing strict de
 la clé `"error"` — vérifié avant ce changement — donc aucune mise à jour n'y
 était nécessaire.
+
+---
+
+## ADR-19 — `search_code_with_findings` : classement pondéré par sévérité, pas seulement une annotation
+
+**Statut** : Acté.
+
+**Contexte** : `search_code_with_findings` composait la recherche sémantique
+de `ccc` avec les findings `cccf` en pur post-traitement — les findings
+étaient attachés à chaque résultat mais n'influençaient jamais leur ordre. Un
+chunk avec un finding `ERROR` et un chunk sans finding pouvaient ressortir
+dans n'importe quel ordre, uniquement piloté par la pertinence sémantique de
+`ccc`. Un deuxième axe d'amélioration du couplage `ccc`↔`cccf` (traduire un
+finding en pattern `ccc grep` pour trouver des occurrences structurellement
+similaires) a été évalué en parallèle et écarté pour l'instant : testé
+empiriquement sur les 4 règles de `tests/fixtures/vuln_repo/rules/rules.yml`,
+seules les règles sans `...`/pattern composé (2 sur 4) se traduisent
+correctement — les règles avec ellipsis mêlée à un kwarg littéral
+(`subprocess.run(..., shell=True, ...)`) perdent leur contrainte de sécurité
+une fois traduites (`ccc grep` matche alors *tous* les appels à la fonction).
+
+**Décision** : `ccc_bridge.rank_by_severity` ré-ordonne les résultats déjà
+annotés en ajoutant un boost additif à `score` selon `max_severity` (`ERROR`
++0.15, `WARNING` +0.05, `INFO`/aucun +0.0), sans modifier `score` lui-même
+(qui continue de refléter la pertinence sémantique brute de `ccc`). Comme
+`ccc search` tronque déjà à `--limit` avant que `cccf` ne voie les résultats,
+un résultat juste hors du top `N` ne pourrait jamais bénéficier du boost —
+`ccc_bridge.overfetch_limit` sur-demande donc `limit × 3` (plafonné à 50)
+avant l'annotation, le classement et la troncature finale.
+
+**Conséquences** : les poids de boost sont un choix heuristique initial
+(volontairement petits devant l'écart typique des scores `ccc`, pour ne
+réordonner que les cas proches et ne jamais faire remonter un résultat
+nettement hors-sujet) — à ajuster si l'usage réel montre un besoin différent.
+Le sur-fetch ajoute un coût (jusqu'à 3× plus de résultats demandés à `ccc`
+par appel), négligeable à l'échelle cible (recherche interactive, pas de
+volumétrie). L'idée de traduction finding → `ccc grep` reste ouverte mais
+hors scope : voir `archive/BACKLOG-6.md` pour le compte-rendu de faisabilité,
+à reprendre uniquement restreinte aux règles sans ellipsis si elle est un
+jour priorisée.

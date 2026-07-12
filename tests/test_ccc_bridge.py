@@ -6,7 +6,15 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.ccc_bridge import CccUnavailable, CodeHit, annotate_with_findings, search_code
+from cccf.ccc_bridge import (
+    CccUnavailable,
+    CodeHit,
+    CodeHitWithFindings,
+    annotate_with_findings,
+    overfetch_limit,
+    rank_by_severity,
+    search_code,
+)
 from cccf.cli import app
 from cccf.models import Finding
 from cccf.store import Store
@@ -20,6 +28,19 @@ FAKE_CCC_SCRIPT = """#!/bin/sh
 cat <<'EOF'
 
 --- Result 1 (score: 0.900) ---
+File: app/db.py:6-6 [python]
+    cursor.execute(f"SELECT * FROM users WHERE name = '{name}'")
+EOF
+"""
+
+FAKE_CCC_TWO_RESULTS_SCRIPT = """#!/bin/sh
+cat <<'EOF'
+
+--- Result 1 (score: 0.900) ---
+File: app/other.py:1-1 [python]
+    clean code, no finding here
+
+--- Result 2 (score: 0.850) ---
 File: app/db.py:6-6 [python]
     cursor.execute(f"SELECT * FROM users WHERE name = '{name}'")
 EOF
@@ -68,15 +89,91 @@ def test_annotate_with_findings_inclusive_overlap(tmp_path: Path) -> None:
     assert annotated[1]["max_severity"] is None
 
 
-@pytest.fixture
-def fake_ccc_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def make_hit(
+    path: str, score: float, max_severity: str | None = None
+) -> CodeHitWithFindings:
+    return CodeHitWithFindings(
+        path=path,
+        start_line=1,
+        end_line=1,
+        score=score,
+        content="c",
+        findings=[],
+        max_severity=max_severity,
+    )
+
+
+def test_overfetch_limit_multiplies_then_caps() -> None:
+    assert overfetch_limit(5) == 15
+    assert overfetch_limit(30) == 50  # capped, 30 * 3 = 90
+
+
+def test_rank_by_severity_promotes_error_over_higher_score_no_finding() -> None:
+    # error.py est légèrement moins pertinent sémantiquement (0.80 vs 0.82)
+    # mais porte un finding ERROR : le boost (+0.15) doit le faire remonter.
+    hits = [
+        make_hit("clean.py", score=0.82, max_severity=None),
+        make_hit("error.py", score=0.80, max_severity="ERROR"),
+    ]
+
+    ranked = rank_by_severity(hits, limit=5)
+
+    assert [h["path"] for h in ranked] == ["error.py", "clean.py"]
+
+
+def test_rank_by_severity_does_not_override_a_clearly_more_relevant_result() -> None:
+    # un finding lointain ne doit pas faire remonter un résultat très peu
+    # pertinent devant un résultat nettement plus pertinent mais sans finding.
+    hits = [
+        make_hit("clean.py", score=0.90, max_severity=None),
+        make_hit("error.py", score=0.40, max_severity="ERROR"),
+    ]
+
+    ranked = rank_by_severity(hits, limit=5)
+
+    assert [h["path"] for h in ranked] == ["clean.py", "error.py"]
+
+
+def test_rank_by_severity_keeps_ccc_order_on_ties() -> None:
+    hits = [
+        make_hit("first.py", score=0.5, max_severity=None),
+        make_hit("second.py", score=0.5, max_severity=None),
+    ]
+
+    ranked = rank_by_severity(hits, limit=5)
+
+    assert [h["path"] for h in ranked] == ["first.py", "second.py"]
+
+
+def test_rank_by_severity_truncates_to_limit() -> None:
+    hits = [make_hit(f"f{i}.py", score=1.0 - i * 0.01) for i in range(10)]
+
+    ranked = rank_by_severity(hits, limit=3)
+
+    assert len(ranked) == 3
+    assert [h["path"] for h in ranked] == ["f0.py", "f1.py", "f2.py"]
+
+
+def _install_fake_ccc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_content: str
+) -> Path:
     bin_dir = tmp_path / "fake_bin"
     bin_dir.mkdir()
     script = bin_dir / "ccc"
-    script.write_text(FAKE_CCC_SCRIPT)
+    script.write_text(script_content)
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
     return bin_dir
+
+
+@pytest.fixture
+def fake_ccc_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    return _install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_SCRIPT)
+
+
+@pytest.fixture
+def fake_ccc_two_results_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    return _install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_TWO_RESULTS_SCRIPT)
 
 
 def test_search_code_with_fake_ccc_then_annotate(
@@ -100,6 +197,26 @@ def test_search_code_with_fake_ccc_then_annotate(
     assert len(annotated) == 1
     assert [f["id"] for f in annotated[0]["findings"]] == [finding.id]
     assert annotated[0]["max_severity"] == "ERROR"
+
+
+def test_search_code_with_findings_tool_promotes_finding_despite_lower_score(
+    fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end through the actual MCP tool: ccc ranks app/other.py (0.90,
+    no finding) above app/db.py (0.85, ERROR finding) — the ERROR boost
+    (+0.15) should flip that order in the tool's final result."""
+    monkeypatch.chdir(tmp_path)
+    finding = make_finding("app/db.py", 6, 6)
+
+    with Store(tmp_path) as store:
+        store.replace_findings_for_files(["app/db.py"], [finding])
+
+    from cccf.mcp_server import search_code_with_findings
+
+    result = search_code_with_findings("injection sql", limit=2)
+
+    assert [hit["path"] for hit in result["results"]] == ["app/db.py", "app/other.py"]
+    assert result["results"][0]["max_severity"] == "ERROR"
 
 
 def test_search_code_without_ccc_raises_unavailable(

@@ -3,7 +3,14 @@ from typing import TypedDict
 
 from mcp.server.fastmcp import FastMCP
 
-from cccf.ccc_bridge import CccUnavailable, CodeHitWithFindings, annotate_with_findings, search_code
+from cccf.ccc_bridge import (
+    CccUnavailable,
+    CodeHitWithFindings,
+    annotate_with_findings,
+    overfetch_limit,
+    rank_by_severity,
+    search_code,
+)
 from cccf.config import load_config
 from cccf.embedder import make_embedder
 from cccf.indexer import IndexReport, index_repo
@@ -95,12 +102,17 @@ def reindex_findings() -> IndexReport:
 @mcp.tool()
 def search_code_with_findings(query: str, limit: int = 5) -> CodeSearchResult:
     """Recherche sémantique de code (via ccc) annotée des findings Semgrep connus
-    sur chaque résultat. Outil à privilégier pour explorer du code en tenant
-    compte de sa dette sécurité.
+    sur chaque résultat. Le classement favorise légèrement les résultats
+    portant un finding connu (plus fortement si sévérité ERROR) par rapport à
+    un résultat de pertinence sémantique proche mais sans finding. Outil à
+    privilégier pour explorer du code en tenant compte de sa dette sécurité.
     """
     repo_root = _repo_root()
     try:
-        code_hits = search_code(repo_root, query, limit)
+        # Sur-demande à ccc : le classement par sévérité a besoin de plus de
+        # candidats que `limit` pour pouvoir faire remonter un résultat
+        # légèrement moins pertinent sémantiquement mais porteur d'un finding.
+        code_hits = search_code(repo_root, query, overfetch_limit(limit))
     except CccUnavailable:
         _require_index(repo_root)
         config = load_config(repo_root)
@@ -116,4 +128,5 @@ def search_code_with_findings(query: str, limit: int = 5) -> CodeSearchResult:
 
     with Store(repo_root) as store:
         annotated = annotate_with_findings(code_hits, store)
-    return CodeSearchResult(results=annotated, findings_only_fallback=[], warning=None)
+    ranked = rank_by_severity(annotated, limit)
+    return CodeSearchResult(results=ranked, findings_only_fallback=[], warning=None)
