@@ -10,11 +10,12 @@ de `ccc` à la requête.
 ## Architecture — comment `cccf` étend `ccc`
 
 `cccf` est un **package compagnon**, pas un fork : aucun import du code
-interne de `ccc` (ADR-1). Les deux outils indexent des choses différentes,
-dans des bases SQLite séparées mais construites sur la même techno
-(SQLite + extension `sqlite-vec`, ADR-17), et ne se rencontrent qu'à deux
-endroits : un appel subprocess à la requête, et la couche MCP consommée par
-l'agent.
+interne de `ccc` (ADR-1). Le moteur stable indexe les findings séparément et
+les joint aux résultats `ccc` à la requête. Un moteur expérimental
+`cccf index --engine cocoindex` prépare une extension plus native : il ajoute
+un index local de chunks de code dans le même store SQLite (`sqlite-vec`) pour
+que `cccf search` puisse éviter le parsing texte de `ccc search` quand cet
+index est disponible (ADR-21).
 
 ```mermaid
 flowchart LR
@@ -29,7 +30,7 @@ sémantique + structurel"]
         CSEARCH --> CMCP["ccc mcp"]
     end
 
-    subgraph cccf["cccf · ccc-findings — indexe les FINDINGS Semgrep"]
+    subgraph cccf["cccf · ccc-findings — indexe findings + chunks expérimentaux"]
         direction TB
         REPO["mêmes fichiers source"] --> SCAN["semgrep scan
 scanner.py"]
@@ -37,6 +38,9 @@ scanner.py"]
 sentence-transformers"]
         EMB --> FDB[("findings.db
 SQLite + sqlite-vec")]
+        REPO --> XCHUNKS["--engine cocoindex
+chunks code expérimentaux"]
+        XCHUNKS --> FDB
         FDB --> FFIND["cccf findings
 langage naturel"]
         FDB --> FSEARCH["cccf search
@@ -45,7 +49,7 @@ code + findings"]
         FSEARCH --> FMCP
     end
 
-    FSEARCH -. "ccc_bridge.py: subprocess + parse texte (ADR-10)" .-> CSEARCH
+    FSEARCH -. "fallback: ccc_bridge.py subprocess + parse texte (ADR-10)" .-> CSEARCH
     FMCP == "search_code_with_findings: jointure fichier + lignes" ==> CMCP
 
     CMCP --> AGENT["Claude Code
@@ -55,18 +59,19 @@ skill + client MCP"]
 
 Points clés :
 
-- **Pas de couplage de code** — la seule dépendance amont est un binaire
-  (`ccc`) appelé en subprocess et du texte parsé (`ccc_bridge.py`), jamais une
-  API Python interne. `ccc` peut changer sans casser `cccf` (ADR-1, ADR-10).
+- **Pas de couplage de code interne à `ccc`** — le moteur stable utilise
+  toujours le binaire `ccc` en subprocess ; le moteur expérimental ajoute un
+  index local de chunks pour réduire cette dépendance sans importer d'API
+  interne de `cocoindex-code`.
 - **Deux index, une seule techno de stockage** — chacun garde son propre
   fichier SQLite (`target_sqlite.db` pour les chunks de code, `findings.db`
   pour les findings), mais tous deux via `sqlite-vec`/`vec0` pour la
   recherche vectorielle (ADR-17), et le même modèle d'embedding par défaut
   (`Snowflake/snowflake-arctic-embed-xs`, ADR-3).
-- **La jointure se fait à la requête, pas à l'indexation** — l'outil MCP
-  `search_code_with_findings` prend les résultats de `ccc search` et surligne
-  les findings Semgrep dont la plage de lignes chevauche le extrait de code
-  retourné, sans jamais fusionner les deux bases.
+- **La jointure peut utiliser l'index local expérimental** — avec
+  `--engine cocoindex`, `search_code_with_findings` interroge les chunks locaux
+  puis joint les findings par fichier + lignes ; sinon il garde le fallback
+  `ccc search`.
 - **L'agent (Claude Code) est le point de convergence** — via les deux
   serveurs MCP (`ccc mcp`, `cccf mcp`) et le skill, qui orchestre recherche de
   code, recherche de findings et boucle de correction.
@@ -96,6 +101,7 @@ pipx install semgrep
 ```bash
 cccf init                       # détecte une config Semgrep, sinon utilise p/security-audit
 cccf index                      # scan Semgrep incrémental + embeddings
+cccf index --engine cocoindex   # expérimental : ajoute un index local de chunks code
 cccf search "user auth flow"    # recherche de code (via ccc) + findings qui la recouvrent
 cccf findings "injection sql"   # recherche en langage naturel dans les findings seuls
 cccf summary                    # vue agrégée (sévérités, top règles, top répertoires)

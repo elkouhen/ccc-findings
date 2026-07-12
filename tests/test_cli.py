@@ -231,6 +231,24 @@ def test_search_json_returns_stable_code_search_result_schema(
             "findings", "max_severity"} <= set(data["results"][0].keys())
 
 
+@pytest.mark.integration
+def test_search_prefers_experimental_indexed_code_when_available(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+    index_result = runner.invoke(app, ["index", "--engine", "cocoindex"])
+    assert index_result.exit_code == 0
+
+    result = runner.invoke(app, ["search", "injection sql", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["results"]
+    assert data["warning"] is None
+    assert "path" in data["results"][0]
+
+
 def test_search_without_findings_index_warns_but_shows_code_results(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

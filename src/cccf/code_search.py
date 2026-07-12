@@ -11,6 +11,7 @@ from typing import TypedDict
 
 from cccf.ccc_bridge import (
     CccUnavailable,
+    CodeHit,
     CodeHitWithFindings,
     annotate_with_findings,
     overfetch_limit,
@@ -18,7 +19,8 @@ from cccf.ccc_bridge import (
     search_code,
     without_findings,
 )
-from cccf.config import load_config
+from cccf.coco_indexer import ENGINE_META_VALUE
+from cccf.config import ConfigError, load_config
 from cccf.embedder import make_embedder
 from cccf.render import FindingHit, render_search_json
 from cccf.search import search_findings
@@ -49,6 +51,27 @@ def _has_findings_index(repo_root: Path) -> bool:
     return (repo_root / ".cccf" / "findings.db").is_file()
 
 
+def _search_indexed_code(
+    store: Store, embedder: object, query: str, limit: int
+) -> list[CodeHit]:
+    if store.get_meta("index_engine") != ENGINE_META_VALUE:
+        return []
+    if store.code_chunk_embedding_count() == 0:
+        return []
+    query_vec = embedder.embed_query(query)
+    return [
+        CodeHit(
+            path=chunk.path,
+            start_line=chunk.start_line,
+            end_line=chunk.end_line,
+            language=chunk.language,
+            score=score,
+            content=chunk.content,
+        )
+        for chunk, score in store.knn_search_code_chunks(query_vec, top_k=overfetch_limit(limit))
+    ]
+
+
 def search_code_with_findings(
     repo_root: Path, query: str, limit: int = 5
 ) -> CodeSearchResult:
@@ -59,6 +82,24 @@ def search_code_with_findings(
       l'index `cccf`, sinon RuntimeError).
     - index findings absent → résultats `ccc` bruts, sans annotation.
     """
+    if _has_findings_index(repo_root):
+        try:
+            config = load_config(repo_root)
+        except ConfigError:
+            config = None
+        if config is not None:
+            embedder = make_embedder(config.embedding_model)
+            with Store(repo_root) as store:
+                indexed_hits = _search_indexed_code(store, embedder, query, limit)
+                if indexed_hits:
+                    annotated = annotate_with_findings(indexed_hits, store)
+                    ranked = rank_by_severity(annotated, limit)
+                    return CodeSearchResult(
+                        results=ranked,
+                        findings_only_fallback=[],
+                        warning=None,
+                    )
+
     try:
         # Sur-demande à ccc : le classement par sévérité a besoin de plus de
         # candidats que `limit` pour pouvoir faire remonter un résultat

@@ -523,3 +523,44 @@ tools MCP sont inchangés (`search_findings` = `cccf findings`,
 `search_code_with_findings` = `cccf search`). Au passage, les fixtures de
 faux `ccc` sont mutualisées dans `tests/conftest.py` (première étape de N2,
 `archive/BACKLOG-2.md`).
+
+---
+
+## ADR-21 — Prototype d'extension native CocoIndex sans abandonner le package compagnon
+
+**Statut** : Acté expérimental.
+
+**Contexte** : la revue de `../cocoindex/examples` a montré que l'indexation
+actuelle de `cccf` réimplémente à la main plusieurs primitives fournies par
+CocoIndex : état cible déclaratif (`TargetState = Transform(SourceState)`),
+invalidation incrémentale, suppression automatique des orphelins, mémoïsation
+des transformations et mode live. Le pont actuel vers `ccc` reste en outre
+fragile car `ccc search` ne fournit pas de JSON stable dans la version utilisée
+localement (ADR-10) : `cccf` parse une sortie humaine.
+
+**Décision** : `cccf` reste un package compagnon distinct (ADR-1 n'est pas
+annulé) mais introduit un mode expérimental `cccf index --engine cocoindex`.
+Ce mode prépare une extension native CocoIndex en modélisant les findings et
+les chunks de code comme des états cibles typés dans le store local. Il ne
+dépend pas encore d'API internes de `cocoindex-code` et ne rend pas `cocoindex`
+obligatoire à l'installation : le backend stable reste `--engine manual`.
+
+Quand l'index expérimental existe (`meta.index_engine = "cocoindex-prototype"`),
+`cccf search` et le tool MCP `search_code_with_findings` interrogent d'abord les
+chunks de code indexés localement (`vec_code_chunks`) puis annotent ces résultats
+avec les findings. Le fallback `ccc search` + parsing texte reste disponible
+pour les index manuels ou les repos non migrés.
+
+Options rejetées pour l'instant :
+- contribuer directement dans `cocoindex-code` / `ccc` : meilleur alignement à
+  terme, mais trop couplé pour une correction locale rapide ;
+- remplacer immédiatement `cccf` par un nouvel index unifié : trop risqué pour
+  les commandes MCP/CLI existantes ;
+- rendre `cocoindex` dépendance obligatoire : prématuré tant que le prototype ne
+  couvre pas les mêmes garanties que l'indexer manuel.
+
+**Conséquences** : X2/X4 diminuent le risque d'ADR-10 sans rupture : les
+utilisateurs gardent les commandes actuelles, et l'expérimental est opt-in. Le
+prototype n'est pas encore un flow CocoIndex complet avec `live=True` ni une
+migration de backend ; ces étapes restent à traiter (X3/X5/X6). Le store passe
+en `schema_version = 3` pour ajouter `code_chunks` et `vec_code_chunks`.

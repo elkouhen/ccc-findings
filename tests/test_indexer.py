@@ -7,6 +7,7 @@ import pytest
 
 from cccf.config import Config
 from cccf.indexer import index_repo
+from cccf.coco_indexer import index_repo_with_cocoindex
 from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -166,3 +167,52 @@ def test_changing_embedding_model_reembeds_everything(repo_copy: Path) -> None:
     assert calls_after_first_run == 4
     # changement de modèle -> tous les findings sont ré-embeddés, pas seulement les nouveaux
     assert embedder.calls == calls_after_first_run + len(findings)
+
+
+@pytest.mark.integration
+def test_cocoindex_prototype_indexes_findings_and_code_chunks(repo_copy: Path) -> None:
+    config = make_config()
+
+    with Store(repo_copy) as store:
+        report = index_repo_with_cocoindex(repo_copy, config, store, FakeEmbedder())
+        findings = store.all_findings()
+        chunks = store.all_code_chunks()
+
+    assert report.scanned > 0
+    assert len(findings) == 4
+    assert {chunk.path for chunk in chunks} >= {
+        "app/db.py",
+        "app/shell.py",
+        "app/yaml_loader.py",
+        "app/weak_random.py",
+    }
+
+
+@pytest.mark.integration
+def test_cocoindex_prototype_removes_deleted_file_chunks(repo_copy: Path) -> None:
+    config = make_config()
+
+    with Store(repo_copy) as store:
+        index_repo_with_cocoindex(repo_copy, config, store, FakeEmbedder())
+        (repo_copy / "app" / "shell.py").unlink()
+
+        report = index_repo_with_cocoindex(repo_copy, config, store, FakeEmbedder())
+        chunks = store.all_code_chunks()
+        findings = store.all_findings()
+
+    assert report.deleted_files == 1
+    assert "app/shell.py" not in {chunk.path for chunk in chunks}
+    assert "app/shell.py" not in {finding.path for finding in findings}
+
+
+@pytest.mark.integration
+def test_cocoindex_prototype_backfills_chunks_after_manual_index(repo_copy: Path) -> None:
+    config = make_config()
+
+    with Store(repo_copy) as store:
+        index_repo(repo_copy, config, store, FakeEmbedder())
+        report = index_repo_with_cocoindex(repo_copy, config, store, FakeEmbedder())
+        chunks = store.all_code_chunks()
+
+    assert report.scanned == 0
+    assert {chunk.path for chunk in chunks} >= {"app/db.py", "app/shell.py"}

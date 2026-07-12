@@ -50,7 +50,7 @@ Crée `.cccf/config.yml`.
 - Si `.cccf/config.yml` existe déjà : erreur explicite, code de sortie 1, le
   fichier existant n'est jamais écrasé.
 
-### `cccf index [--full]`
+### `cccf index [--full] [--engine manual|cocoindex]`
 Indexe le projet (findings Semgrep).
 
 - Par défaut : incrémental — ne re-scanne que les fichiers ajoutés ou
@@ -58,6 +58,11 @@ Indexe le projet (findings Semgrep).
   fichiers supprimés du disque voient leurs findings purgés.
 - `--full` : force un scan complet, comme si tous les fichiers étaient
   modifiés (les fichiers supprimés du disque sont quand même purgés).
+- `--engine manual` (défaut) : indexe uniquement les findings, avec le moteur
+  incrémental historique.
+- `--engine cocoindex` : mode expérimental inspiré de CocoIndex. Il indexe les
+  mêmes findings et ajoute un index local de chunks de code (`code_chunks` +
+  embeddings) utilisé ensuite par `cccf search` avant de retomber sur `ccc`.
 - Sortie sur une ligne :
   `scanned=<N> skipped=<N> +findings=<N> -findings=<N>`
   - `scanned` : nombre de fichiers (re)scannés.
@@ -73,12 +78,16 @@ Indexe le projet (findings Semgrep).
   sortie 1.
 
 ### `cccf search "<requête>" [--limit N] [--json]`
-Recherche sémantique de code — **sur-ensemble de `ccc search`** : mêmes
-résultats (mêmes extraits, même format d'affichage), chaque résultat enrichi
-des findings Semgrep qui le recouvrent, et classé en tenant compte de leur
-sévérité (voir §3, `rank_by_severity`). C'est la commande principale :
-`ccc search "user authentication flow"` décrit le flux, `cccf search "user
-authentication flow"` décrit le même flux **et** remonte sa dette sécurité.
+Recherche sémantique de code enrichie des findings Semgrep qui recouvrent
+chaque résultat, puis classée en tenant compte de leur sévérité (voir §3,
+`rank_by_severity`).
+
+Deux sources de code sont possibles :
+- si le repo a été indexé avec `cccf index --engine cocoindex`, `cccf search`
+  interroge d'abord l'index local de chunks de code (`vec_code_chunks`) et ne
+  dépend pas du format texte de `ccc search` ;
+- sinon, `cccf search` reste un **sur-ensemble de `ccc search`** : mêmes
+  résultats (mêmes extraits, même format d'affichage), enrichis des findings.
 
 Rendu texte — format identique à `ccc search`, plus un bloc findings sous
 chaque résultat concerné :
@@ -98,6 +107,8 @@ par sévérité n'affecte que l'ordre.
 Rendu `--json` : objet `CodeSearchResult` (schéma unique et stable, voir §3).
 
 Dégradations :
+- **Index code expérimental absent** : comportement normal ; fallback sur
+  `ccc search`.
 - **`ccc` indisponible** (absent du PATH, ou en erreur) : repli sur la
   recherche findings seule — avertissement sur stderr, résultats au format
   `cccf findings`. Nécessite l'index `cccf` ; sans lui non plus, message
@@ -193,7 +204,7 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 | `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Recherche en langage naturel — même contrat que `cccf findings --json` | Pas de pagination (`offset`) côté MCP |
 | `findings_summary()` | `FindingsSummary` | Vue agrégée à faible coût | Même structure que `cccf summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
-| `search_code_with_findings(query, limit=5)` | `CodeSearchResult` | Recherche de code (via `ccc`) annotée des findings qui recouvrent chaque résultat — même comportement que la CLI `cccf search` (implémentation partagée, `code_search.py`) | Voir schéma de fallback ci-dessous |
+| `search_code_with_findings(query, limit=5)` | `CodeSearchResult` | Recherche de code annotée des findings qui recouvrent chaque résultat — même comportement que la CLI `cccf search` (implémentation partagée, `code_search.py`) | Utilise l'index code expérimental s'il existe, sinon `ccc` |
 
 `search_code_with_findings` ajoute à chaque résultat de code :
 - `findings` : liste des findings dont `path` est identique et dont la plage

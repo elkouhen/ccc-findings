@@ -2,6 +2,7 @@ import fnmatch
 import json
 import sqlite3
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
@@ -10,7 +11,7 @@ import sqlite_vec
 
 from cccf.models import Finding
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -19,6 +20,16 @@ _SQLITE_BIND_LIMIT = 900
 def _chunked(items: list[str], size: int = _SQLITE_BIND_LIMIT) -> Iterator[list[str]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
+
+
+@dataclass(frozen=True)
+class CodeChunk:
+    id: str
+    path: str
+    start_line: int
+    end_line: int
+    language: str
+    content: str
 
 
 class Store:
@@ -83,10 +94,19 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS idx_findings_path ON findings(path);
             CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+            CREATE TABLE IF NOT EXISTS code_chunks (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                language TEXT NOT NULL,
+                content TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_code_chunks_path ON code_chunks(path);
             """
         )
         self._migrate_legacy_embeddings()
-        if self.get_meta("schema_version") is None:
+        if self.get_meta("schema_version") != SCHEMA_VERSION:
             self.set_meta("schema_version", SCHEMA_VERSION)
         self.conn.commit()
 
@@ -146,6 +166,7 @@ class Store:
         removed_ids = self._finding_ids_for_paths(paths)
         self.conn.execute(f"DELETE FROM findings WHERE path IN ({placeholders})", paths)
         self._delete_embeddings(removed_ids)
+        self.replace_code_chunks_for_files(paths, [])
 
     # -- findings --
 
@@ -198,6 +219,54 @@ class Store:
                 ),
             )
 
+    # -- indexed code chunks (experimental CocoIndex-style target state) --
+
+    def _code_chunk_ids_for_paths(self, paths: list[str]) -> list[str]:
+        placeholders = ",".join("?" for _ in paths)
+        cur = self.conn.execute(
+            f"SELECT id FROM code_chunks WHERE path IN ({placeholders})", paths
+        )
+        return [row["id"] for row in cur.fetchall()]
+
+    def replace_code_chunks_for_files(
+        self, paths: list[str], chunks: list[CodeChunk]
+    ) -> None:
+        if paths:
+            removed_ids = self._code_chunk_ids_for_paths(paths)
+            placeholders = ",".join("?" for _ in paths)
+            self.conn.execute(
+                f"DELETE FROM code_chunks WHERE path IN ({placeholders})", paths
+            )
+            self._delete_code_chunk_embeddings(removed_ids)
+        for chunk in chunks:
+            self.conn.execute(
+                """
+                INSERT INTO code_chunks
+                    (id, path, start_line, end_line, language, content)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    path = excluded.path,
+                    start_line = excluded.start_line,
+                    end_line = excluded.end_line,
+                    language = excluded.language,
+                    content = excluded.content
+                """,
+                (
+                    chunk.id,
+                    chunk.path,
+                    chunk.start_line,
+                    chunk.end_line,
+                    chunk.language,
+                    chunk.content,
+                ),
+            )
+
+    def all_code_chunks(self) -> list[CodeChunk]:
+        cur = self.conn.execute(
+            "SELECT id, path, start_line, end_line, language, content FROM code_chunks"
+        )
+        return [_row_to_code_chunk(row) for row in cur.fetchall()]
+
     def all_findings(
         self,
         severity_at_least: str | None = None,
@@ -237,6 +306,17 @@ class Store:
         )
         self.set_meta("embedding_dim", str(dim))
 
+    def _ensure_code_vec_table(self, dim: int) -> None:
+        raw_dim = self.get_meta("code_embedding_dim")
+        if raw_dim and int(raw_dim) == dim:
+            return
+        self.conn.execute("DROP TABLE IF EXISTS vec_code_chunks")
+        self.conn.execute(
+            f"CREATE VIRTUAL TABLE vec_code_chunks USING vec0("
+            f"embedding float[{dim}] distance_metric=cosine, +chunk_id TEXT)"
+        )
+        self.set_meta("code_embedding_dim", str(dim))
+
     def _delete_embeddings(self, finding_ids: list[str]) -> None:
         if not finding_ids or self.get_embedding_dim() is None:
             return
@@ -246,6 +326,15 @@ class Store:
                 f"DELETE FROM vec_findings WHERE finding_id IN ({placeholders})", chunk
             )
 
+    def _delete_code_chunk_embeddings(self, chunk_ids: list[str]) -> None:
+        if not chunk_ids or self.get_meta("code_embedding_dim") is None:
+            return
+        for chunk in _chunked(chunk_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            self.conn.execute(
+                f"DELETE FROM vec_code_chunks WHERE chunk_id IN ({placeholders})", chunk
+            )
+
     def set_embedding(self, finding_id: str, vector: np.ndarray) -> None:
         vector = vector.astype(np.float32)
         self._ensure_vec_table(vector.shape[0])
@@ -253,6 +342,15 @@ class Store:
         self.conn.execute(
             "INSERT INTO vec_findings (embedding, finding_id) VALUES (?, ?)",
             (sqlite_vec.serialize_float32(vector.tolist()), finding_id),
+        )
+
+    def set_code_chunk_embedding(self, chunk_id: str, vector: np.ndarray) -> None:
+        vector = vector.astype(np.float32)
+        self._ensure_code_vec_table(vector.shape[0])
+        self.conn.execute("DELETE FROM vec_code_chunks WHERE chunk_id = ?", (chunk_id,))
+        self.conn.execute(
+            "INSERT INTO vec_code_chunks (embedding, chunk_id) VALUES (?, ?)",
+            (sqlite_vec.serialize_float32(vector.tolist()), chunk_id),
         )
 
     def iter_embeddings(self) -> Iterable[tuple[str, np.ndarray]]:
@@ -266,6 +364,11 @@ class Store:
         if self.get_embedding_dim() is None:
             return 0
         return self.conn.execute("SELECT COUNT(*) AS c FROM vec_findings").fetchone()["c"]
+
+    def code_chunk_embedding_count(self) -> int:
+        if self.get_meta("code_embedding_dim") is None:
+            return 0
+        return self.conn.execute("SELECT COUNT(*) AS c FROM vec_code_chunks").fetchone()["c"]
 
     def knn_search(self, query_vec: np.ndarray, top_k: int) -> list[tuple[str, float]]:
         """Nearest neighbors by cosine similarity, best first.
@@ -282,6 +385,32 @@ class Store:
             (query_blob, top_k),
         )
         return [(row["finding_id"], 1.0 - row["distance"]) for row in cur.fetchall()]
+
+    def knn_search_code_chunks(
+        self, query_vec: np.ndarray, top_k: int
+    ) -> list[tuple[CodeChunk, float]]:
+        if top_k <= 0 or self.get_meta("code_embedding_dim") is None:
+            return []
+        query_blob = sqlite_vec.serialize_float32(query_vec.astype(np.float32).tolist())
+        cur = self.conn.execute(
+            "SELECT chunk_id, distance FROM vec_code_chunks "
+            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (query_blob, top_k),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return []
+        ids = [row["chunk_id"] for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        chunk_rows = self.conn.execute(
+            f"SELECT * FROM code_chunks WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        chunks_by_id = {row["id"]: _row_to_code_chunk(row) for row in chunk_rows}
+        return [
+            (chunks_by_id[row["chunk_id"]], 1.0 - row["distance"])
+            for row in rows
+            if row["chunk_id"] in chunks_by_id
+        ]
 
     def counts_by(self, dim: str) -> dict[str, int]:
         if dim not in _COUNTABLE_DIMENSIONS:
@@ -305,4 +434,15 @@ def _row_to_finding(row: sqlite3.Row) -> Finding:
         fix=row["fix"],
         cwe=json.loads(row["cwe"]) if row["cwe"] else [],
         owasp=json.loads(row["owasp"]) if row["owasp"] else [],
+    )
+
+
+def _row_to_code_chunk(row: sqlite3.Row) -> CodeChunk:
+    return CodeChunk(
+        id=row["id"],
+        path=row["path"],
+        start_line=row["start_line"],
+        end_line=row["end_line"],
+        language=row["language"],
+        content=row["content"],
     )

@@ -13,8 +13,9 @@
 | `models.py` | `Finding` (dataclass gelée) + `compute_finding_id` | — |
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
 | `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` | `models`, `config` |
-| `store.py` | `Store` : persistance SQLite (findings, hashs de fichiers, meta, embeddings) | `models` |
-| `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding) | `config`, `scanner`, `store`, `embedder` |
+| `store.py` | `Store` : persistance SQLite (findings, chunks de code expérimentaux, hashs de fichiers, meta, embeddings) | `models` |
+| `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding ; peut aussi indexer des chunks de code) | `config`, `scanner`, `store`, `embedder` |
+| `coco_indexer.py` | Adaptateur expérimental `--engine cocoindex` : findings + chunks de code comme états cibles typés | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
 | `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings) et du résumé | `search`, `ccc_bridge` |
@@ -57,8 +58,9 @@ décale dans le fichier.
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
--- clés utilisées : schema_version ("2"), embedding_model,
--- embedding_signature, embedding_dim
+-- clés utilisées : schema_version ("3"), embedding_model,
+-- embedding_signature, embedding_dim, index_engine,
+-- code_embedding_signature, code_embedding_dim
 
 CREATE TABLE files (
     path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, indexed_at TEXT NOT NULL
@@ -73,6 +75,12 @@ CREATE TABLE findings (
 CREATE INDEX idx_findings_path ON findings(path);
 CREATE INDEX idx_findings_severity ON findings(severity);
 
+CREATE TABLE code_chunks (
+    id TEXT PRIMARY KEY, path TEXT, start_line INTEGER, end_line INTEGER,
+    language TEXT, content TEXT
+);
+CREATE INDEX idx_code_chunks_path ON code_chunks(path);
+
 -- Table virtuelle vec0 (extension sqlite-vec), créée paresseusement au
 -- premier set_embedding() une fois la dimension connue ; recréée si la
 -- dimension change (changement de modèle, ADR-16/ADR-17). meta.embedding_dim
@@ -80,6 +88,11 @@ CREATE INDEX idx_findings_severity ON findings(severity);
 CREATE VIRTUAL TABLE vec_findings USING vec0(
     embedding float[N] distance_metric=cosine,
     +finding_id TEXT   -- colonne auxiliaire, pas indexée par le KNN
+);
+
+CREATE VIRTUAL TABLE vec_code_chunks USING vec0(
+    embedding float[N] distance_metric=cosine,
+    +chunk_id TEXT
 );
 ```
 
@@ -93,9 +106,14 @@ la base dans son état d'avant l'appel).
 **Migration schema v1 → v2** (ADR-17) : à l'ouverture, si `findings.embedding`
 (colonne `BLOB`, ancien format) existe encore, `Store` la supprime
 (`ALTER TABLE ... DROP COLUMN`), efface `embedding_signature`/`embedding_dim`
-de `meta` et passe `schema_version` à `2`. Le prochain `cccf index` détecte la
-signature manquante et ré-embedde tout automatiquement (§3 étape 5) — aucune
-commande de migration séparée.
+de `meta`.
+
+**Migration schema v2 → v3** (ADR-21) : `Store` crée paresseusement
+`code_chunks` et `vec_code_chunks`, puis passe `schema_version` à `3`. Les
+repos déjà indexés restent utilisables : l'index code expérimental reste vide
+tant qu'un `cccf index --engine cocoindex` n'a pas été exécuté. Le prochain
+`cccf index` manuel continue de fonctionner sans remplir `code_chunks`; aucune
+commande de migration séparée n'est requise.
 
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
@@ -118,6 +136,17 @@ commande de migration séparée.
 6. Retourner IndexReport(scanned, skipped, findings_added, findings_removed,
    deleted_files).
 ```
+
+Avec `index_code_chunks=True` (utilisé par `coco_indexer.index_repo_with_cocoindex`) :
+après le scan des fichiers changés, chaque fichier est découpé en chunks de
+80 lignes maximum, typé par extension (`.py` → `python`, `.ts` →
+`typescript`, fallback `text`), stocké dans `code_chunks`, puis embeddé dans
+`vec_code_chunks`. Les fichiers supprimés passent par `Store.remove_files`, qui
+purge findings, chunks et embeddings associés.
+
+`cccf index --engine cocoindex` appelle cet adaptateur expérimental et écrit
+`meta.index_engine = "cocoindex-prototype"`. Le moteur manuel reste le défaut et
+écrit `meta.index_engine = "manual"` quand il est utilisé via la CLI.
 
 `findings_removed` est calculé en comptant, **avant** suppression, les
 findings déjà en base pour les chemins de `deleted` et de `changed` (via
@@ -211,7 +240,19 @@ bornées à `[1, len(lignes)]`, préfixées `f"{n:>5}| {ligne}"`. Les renderers
 capturent les erreurs de lecture par finding : le JSON expose `context: null`
 et `context_error`, le rendu texte affiche un contexte indisponible.
 
-## 6. Jointure avec `ccc` (`ccc_bridge.py`)
+## 6. Recherche code + jointure findings
+
+`code_search.search_code_with_findings` commence par ouvrir l'index local quand
+il existe. Si `meta.index_engine = "cocoindex-prototype"` et que
+`vec_code_chunks` contient des embeddings, la requête est embeddée avec le même
+embedder que les findings, puis `Store.knn_search_code_chunks` retourne les
+chunks les plus proches sous forme de `CodeHit`. Ces hits sont annotés par
+`annotate_with_findings` (égalité stricte de chemin + chevauchement inclusif de
+ligne) puis reclassés par `rank_by_severity`.
+
+Si cet index code expérimental est absent, `cccf` retombe sur le pont `ccc`.
+
+### Pont avec `ccc` (`ccc_bridge.py`)
 
 `ccc search <query> --limit N` est appelé en subprocess (`cwd=repo_root`).
 **Le flag `--json` n'existe pas** dans la version de `ccc` installée

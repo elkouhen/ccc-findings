@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import typer
 
@@ -8,6 +8,7 @@ from cccf import __version__
 from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
+from cccf.coco_indexer import index_repo_with_cocoindex
 from cccf.indexer import index_repo
 from cccf.render import (
     render_code_search_text,
@@ -80,6 +81,11 @@ def init(
 @app.command(name="index")
 def index_cmd(
     full: bool = typer.Option(False, "--full", help="Force un scan complet."),
+    engine: Literal["manual", "cocoindex"] = typer.Option(
+        "manual",
+        "--engine",
+        help="Moteur d'indexation : manual (défaut) ou cocoindex (expérimental).",
+    ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
@@ -94,7 +100,13 @@ def index_cmd(
 
     try:
         with Store(repo_root) as store:
-            report = index_repo(repo_root, config, store, embedder, full=full)
+            if engine == "cocoindex":
+                report = index_repo_with_cocoindex(
+                    repo_root, config, store, embedder, full=full
+                )
+            else:
+                report = index_repo(repo_root, config, store, embedder, full=full)
+                store.set_meta("index_engine", "manual")
     except (SemgrepError, EmbeddingError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

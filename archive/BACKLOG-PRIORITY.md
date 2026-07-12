@@ -8,25 +8,27 @@
 
 | Rang | Tâche | Priorité | Source | Pourquoi maintenant |
 |---:|---|---|---|---|
-| 1 | A6 — Durcir le pont `ccc` contre les changements de format | MOYENNE-HAUTE | `archive/BACKLOG-4.md` | Évite une recherche code vide silencieuse si le format texte de `ccc search` change ; préserve le fallback MCP. |
-| 2 | A14 — Préparer une politique de versionnement du schéma SQLite | MOYENNE | `archive/BACKLOG-4.md` | Devient prioritaire car les tâches récentes ont ajouté des métadonnées d'embeddings et modifié l'identité des findings sans vraie stratégie de migration. |
-| 3 | A8 / R10 — Rendre les filtres de lecture cohérents avec la configuration courante | MOYENNE | `archive/BACKLOG-4.md`, `archive/BACKLOG-2.md` | Empêche `search`/`summary` de servir des findings qui ne correspondent plus à `min_severity`, `include` ou `exclude`. |
-| 4 | R9 — Corriger les compteurs de findings supprimés | MOYENNE | `archive/BACKLOG-2.md` | Les compteurs `-findings=` peuvent être faux pour des chemins contenant des caractères glob (`[id]`) et coûtent trop cher sur beaucoup de fichiers. |
-| 5 | A7 / R8 — Batcher les opérations SQLite dépendantes du nombre de fichiers | MOYENNE | `archive/BACKLOG-4.md`, `archive/BACKLOG-2.md` | Nécessaire pour éviter `too many SQL variables` sur gros monorepos ; peut être traité avec R9 via un helper SQL partagé. |
-| 6 | A9 — Ajouter une commande de diagnostic de santé de l'index | MOYENNE | `archive/BACKLOG-4.md` | Rend les problèmes de config/base/embeddings/Semgrep actionnables avant usage agent. |
-| 7 | N1 — Unifier l'ordre des sévérités | MOYENNE | `archive/BACKLOG-2.md` | Réduit le risque d'incohérence entre scanner, store, config et pont `ccc`. |
-| 8 | N2 — Unifier les fakes et fixtures de tests | MOYENNE | `archive/BACKLOG-2.md` | Le runtime est maintenant centralisé, mais les fakes/fixtures de tests restent dupliqués. |
-| 9 | N3 — Unifier la sérialisation `Finding → dict` et le rendu summary | MOYENNE | `archive/BACKLOG-2.md` | Réduit les duplications entre CLI, MCP et pont `ccc`, et limite les écarts de contrat JSON. |
-| 10 | A10 — Transformer l'évaluation de pertinence en garde-fou exploitable | MOYENNE | `archive/BACKLOG-4.md` | Rend mesurable la qualité de la recherche sémantique avant diffusion plus large. |
-| 11 | A11 — Mesurer latence et coût token des réponses principales | MOYENNE | `archive/BACKLOG-4.md` | Vérifie les promesses produit p95 < 1 s et réduction de sortie vs Semgrep brut. |
-| 12 | A13 — Définir la stratégie de distribution du skill séparé | MOYENNE | `archive/BACKLOG-4.md` | Clarifie ce qu'installe réellement le package Python et comment distribuer/mettre à jour le skill externe. |
+| 1 | A6 — Durcir le pont `ccc` contre les changements de format | MOYENNE-HAUTE | `archive/BACKLOG-4.md` | Reste utile comme garde-fou court terme pour les index manuels et les repos non migrés vers l'index code expérimental. |
+| 2 | X3 — Déléguer l'invalidation embeddings/modèle à la mémoïsation CocoIndex | MOYENNE-HAUTE | `archive/BACKLOG-8.md` | Le prototype X2/X4 existe ; il faut maintenant éviter les embeddings de chunks périmés quand modèle ou logique changent. |
+| 3 | A14 / X6 — Préparer la migration de schéma, stockage et distribution | MOYENNE | `archive/BACKLOG-4.md`, `archive/BACKLOG-8.md` | Devient transversal : le schéma SQLite est passé en v3 et le mode expérimental impose une stratégie de backend/migration avant généralisation. |
+| 4 | A8 / R10 — Rendre les filtres de lecture cohérents avec la configuration courante | MOYENNE | `archive/BACKLOG-4.md`, `archive/BACKLOG-2.md` | Empêche `search`/`summary` de servir des findings qui ne correspondent plus à `min_severity`, `include` ou `exclude`. |
+| 5 | R9 — Corriger les compteurs de findings supprimés | MOYENNE | `archive/BACKLOG-2.md` | Les compteurs `-findings=` peuvent être faux pour des chemins contenant des caractères glob (`[id]`) et coûtent trop cher sur beaucoup de fichiers ; à traiter seulement si l'indexer manuel reste actif. |
+| 6 | A7 / R8 — Batcher les opérations SQLite dépendantes du nombre de fichiers | MOYENNE | `archive/BACKLOG-4.md`, `archive/BACKLOG-2.md` | Nécessaire pour éviter `too many SQL variables` sur gros monorepos si le stockage SQLite actuel reste le backend principal. |
+| 7 | X5 — Ajouter un mode live/fraîcheur continue pour les agents | MOYENNE | `archive/BACKLOG-8.md` | Les exemples CocoIndex supportent `live=True` ; cette capacité améliorerait directement l'usage MCP/agent. |
+| 8 | A9 — Ajouter une commande de diagnostic de santé de l'index | MOYENNE | `archive/BACKLOG-4.md` | Rend les problèmes de config/base/embeddings/Semgrep actionnables avant usage agent. |
+| 9 | N1 — Unifier l'ordre des sévérités | MOYENNE | `archive/BACKLOG-2.md` | Réduit le risque d'incohérence entre scanner, store, config et pont `ccc`. |
+| 10 | N2 — Unifier les fakes et fixtures de tests | MOYENNE | `archive/BACKLOG-2.md` | Le runtime est maintenant centralisé, mais les fakes/fixtures de tests restent dupliqués. |
+| 11 | N3 — Unifier la sérialisation `Finding → dict` et le rendu summary | MOYENNE | `archive/BACKLOG-2.md` | Réduit les duplications entre CLI, MCP et pont `ccc`, et limite les écarts de contrat JSON. |
+| 12 | A10 — Transformer l'évaluation de pertinence en garde-fou exploitable | MOYENNE | `archive/BACKLOG-4.md` | Rend mesurable la qualité de la recherche sémantique avant diffusion plus large. |
+| 13 | A11 — Mesurer latence et coût token des réponses principales | MOYENNE | `archive/BACKLOG-4.md` | Vérifie les promesses produit p95 < 1 s et réduction de sortie vs Semgrep brut. |
+| 14 | A13 — Définir la stratégie de distribution du skill séparé | MOYENNE | `archive/BACKLOG-4.md` | Clarifie ce qu'installe réellement le package Python et comment distribuer/mettre à jour le skill externe. |
 
 ## Regroupements conseillés
 
-1. **Robustesse intégration** : A6.
-2. **Cohérence index/config/schema** : A14 → A8/R10.
-3. **Scalabilité store** : R9 → A7/R8.
-4. **UX diagnostic** : A9.
+1. **Garde-fou court terme du pont actuel** : A6.
+2. **Invalidation, schema et migration** : X3 → A14/X6 → A8/R10.
+3. **Scalabilité store actuel si conservé** : R9 → A7/R8.
+4. **Fraîcheur et diagnostic agent** : X5 → A9.
 5. **Nettoyage transverse** : N1 → N2 → N3.
 6. **Mesure produit et distribution** : A10 → A11 → A13.
 
@@ -50,3 +52,6 @@
 | A5 — Détecter les embeddings incompatibles avant la recherche | `archive/BACKLOG-4.md` | Terminé |
 | A12 — Corriger les incohérences de documentation fonctionnelle | `archive/BACKLOG-4.md` | Terminé |
 | UX1 — Simplifier le parcours d'usage du skill | `archive/BACKLOG-5.md` | Terminé |
+| X1 — Cadrer l'option d'extension native CocoIndex vs package compagnon | `archive/BACKLOG-8.md` | Terminé |
+| X2 — Prototyper un indexer findings déclaratif avec CocoIndex | `archive/BACKLOG-8.md` | Terminé |
+| X4 — Préparer une jointure code + findings à l'indexation | `archive/BACKLOG-8.md` | Terminé |

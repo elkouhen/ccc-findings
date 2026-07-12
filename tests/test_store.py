@@ -79,10 +79,10 @@ def test_set_and_iter_embeddings(tmp_path: Path) -> None:
 
 def test_reopening_existing_database_reads_schema_version(tmp_path: Path) -> None:
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "2"
+        assert store.get_meta("schema_version") == "3"
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "2"
+        assert store.get_meta("schema_version") == "3"
 
 
 def _make_legacy_v1_db(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
     _make_legacy_v1_db(tmp_path)
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "2"
+        assert store.get_meta("schema_version") == "3"
         # signature/dim cleared -> next `cccf index` re-embeds everything
         assert store.get_meta("embedding_signature") is None
         assert store.get_embedding_dim() is None
@@ -124,3 +124,18 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
         assert [f.id for f in store.all_findings()] == ["abc123"]
         cols = {row["name"] for row in store.conn.execute("PRAGMA table_info(findings)")}
         assert "embedding" not in cols
+
+
+def test_replace_code_chunks_for_files_removes_only_targeted_paths(tmp_path: Path) -> None:
+    from cccf.store import CodeChunk
+
+    db_chunk = CodeChunk("db", "app/db.py", 1, 3, "python", "db code")
+    shell_chunk = CodeChunk("shell", "app/shell.py", 1, 3, "python", "shell code")
+
+    with Store(tmp_path) as store:
+        store.replace_code_chunks_for_files(["app/db.py"], [db_chunk])
+        store.replace_code_chunks_for_files(["app/shell.py"], [shell_chunk])
+        store.replace_code_chunks_for_files(["app/db.py"], [])
+        chunks = store.all_code_chunks()
+
+    assert chunks == [shell_chunk]
