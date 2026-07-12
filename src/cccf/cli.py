@@ -5,10 +5,18 @@ from typing import Optional
 import typer
 
 from cccf import __version__
+from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.indexer import index_repo
-from cccf.render import render_search_json, render_search_text, render_summary_json, render_summary_text
+from cccf.render import (
+    render_code_search_text,
+    render_fallback_findings_text,
+    render_search_json,
+    render_search_text,
+    render_summary_json,
+    render_summary_text,
+)
 from cccf.scanner import SemgrepError
 from cccf.search import search_findings
 from cccf.search import summary as compute_summary
@@ -107,6 +115,35 @@ def _require_index(repo_root: Path) -> None:
 @app.command()
 def search(
     query: str,
+    limit: int = typer.Option(5, "--limit"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recherche sémantique de code (mêmes résultats que `ccc search`),
+    enrichie des findings Semgrep qui recouvrent chaque résultat et classée
+    en tenant compte de leur sévérité.
+    """
+    repo_root = Path.cwd()
+
+    try:
+        result = search_code_with_findings(repo_root, query, limit=limit)
+    except (RuntimeError, ConfigError, EmbeddingError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+
+    if result["findings_only_fallback"]:
+        typer.echo(f"⚠ {result['warning']}", err=True)
+        typer.echo(render_fallback_findings_text(result["findings_only_fallback"]))
+    else:
+        typer.echo(render_code_search_text(result["results"], warning=result["warning"]))
+
+
+@app.command(name="findings")
+def findings_cmd(
+    query: str,
     severity: Optional[str] = typer.Option(None, "--severity"),  # noqa: UP007
     rule: Optional[str] = typer.Option(None, "--rule"),  # noqa: UP007
     path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
@@ -115,7 +152,9 @@ def search(
     context: bool = typer.Option(False, "--context"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Recherche en langage naturel dans les findings Semgrep indexés."""
+    """Recherche en langage naturel dans les findings Semgrep indexés (seuls,
+    sans recherche de code — pour la recherche code + findings, voir `search`).
+    """
     repo_root = Path.cwd()
     _require_index(repo_root)
 

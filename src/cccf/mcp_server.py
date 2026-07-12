@@ -1,16 +1,9 @@
 from pathlib import Path
-from typing import TypedDict
 
 from mcp.server.fastmcp import FastMCP
 
-from cccf.ccc_bridge import (
-    CccUnavailable,
-    CodeHitWithFindings,
-    annotate_with_findings,
-    overfetch_limit,
-    rank_by_severity,
-    search_code,
-)
+from cccf.code_search import CodeSearchResult
+from cccf.code_search import search_code_with_findings as run_code_search
 from cccf.config import load_config
 from cccf.embedder import make_embedder
 from cccf.indexer import IndexReport, index_repo
@@ -20,19 +13,6 @@ from cccf.search import summary as compute_summary
 from cccf.store import Store
 
 mcp = FastMCP("cccf")
-
-
-class CodeSearchResult(TypedDict):
-    """Shape returned by `search_code_with_findings`.
-
-    `results` is empty and `findings_only_fallback` populated when `ccc` is
-    unreachable — a single stable schema instead of two differently-shaped
-    payloads, so structured output stays valid either way.
-    """
-
-    results: list[CodeHitWithFindings]
-    findings_only_fallback: list[FindingHit]
-    warning: str | None
 
 
 def _repo_root() -> Path:
@@ -106,27 +86,6 @@ def search_code_with_findings(query: str, limit: int = 5) -> CodeSearchResult:
     portant un finding connu (plus fortement si sévérité ERROR) par rapport à
     un résultat de pertinence sémantique proche mais sans finding. Outil à
     privilégier pour explorer du code en tenant compte de sa dette sécurité.
+    Même comportement que la CLI `cccf search`.
     """
-    repo_root = _repo_root()
-    try:
-        # Sur-demande à ccc : le classement par sévérité a besoin de plus de
-        # candidats que `limit` pour pouvoir faire remonter un résultat
-        # légèrement moins pertinent sémantiquement mais porteur d'un finding.
-        code_hits = search_code(repo_root, query, overfetch_limit(limit))
-    except CccUnavailable:
-        _require_index(repo_root)
-        config = load_config(repo_root)
-        embedder = make_embedder(config.embedding_model)
-        with Store(repo_root) as store:
-            hits = run_search_findings(store, embedder, query, limit=limit)
-            fallback = render_search_json(hits, repo_root, include_context=False)
-        return CodeSearchResult(
-            results=[],
-            findings_only_fallback=fallback,
-            warning="ccc indisponible : recherche restreinte aux findings Semgrep",
-        )
-
-    with Store(repo_root) as store:
-        annotated = annotate_with_findings(code_hits, store)
-    ranked = rank_by_severity(annotated, limit)
-    return CodeSearchResult(results=ranked, findings_only_fallback=[], warning=None)
+    return run_code_search(_repo_root(), query, limit=limit)

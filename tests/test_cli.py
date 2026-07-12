@@ -117,26 +117,26 @@ def test_index_twice_second_run_scans_nothing(
     assert "scanned=0" in second_result.output
 
 
-def test_search_without_index_fails_with_exact_message_and_code_2(
+def test_findings_without_index_fails_with_exact_message_and_code_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["search", "injection sql"])
+    result = runner.invoke(app, ["findings", "injection sql"])
 
     assert result.exit_code == 2
     assert "Index absent. Lancez d'abord: cccf index" in result.output
 
 
 @pytest.mark.integration
-def test_search_json_output_matches_contract(
+def test_findings_json_output_matches_contract(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
-    result = runner.invoke(app, ["search", "injection sql", "--json"])
+    result = runner.invoke(app, ["findings", "injection sql", "--json"])
 
     assert result.exit_code == 0
     hits = json.loads(result.output)
@@ -158,7 +158,7 @@ def test_search_json_output_matches_contract(
 
 
 @pytest.mark.integration
-def test_search_context_includes_offending_source_line(
+def test_findings_context_includes_offending_source_line(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
@@ -166,11 +166,92 @@ def test_search_context_includes_offending_source_line(
     runner.invoke(app, ["index"])
 
     result = runner.invoke(
-        app, ["search", "injection sql", "--path", "app/db.py", "--context", "--json"]
+        app, ["findings", "injection sql", "--path", "app/db.py", "--context", "--json"]
     )
 
     hits = json.loads(result.output)
     assert "cursor.execute" in hits[0]["context"]
+
+
+def test_search_renders_ccc_format_with_findings_blocks(
+    fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cccf search` répond « de la même manière » que ccc : même format de
+    résultats, enrichi d'un bloc findings sous les résultats concernés, le
+    finding ERROR faisant remonter app/db.py devant app/other.py."""
+    monkeypatch.chdir(tmp_path)
+    from cccf.models import Finding
+    from cccf.store import Store
+
+    finding = Finding(
+        id="cli-search-finding",
+        rule_id="custom.sql-fstring",
+        severity="ERROR",
+        message="Une requête SQL construite par f-string permet une injection SQL.",
+        path="app/db.py",
+        start_line=6,
+        end_line=6,
+        snippet="cursor.execute(query)",
+        fix=None,
+        cwe=["CWE-89"],
+        owasp=[],
+    )
+    with Store(tmp_path) as store:
+        store.replace_findings_for_files(["app/db.py"], [finding])
+
+    result = runner.invoke(app, ["search", "user authentication flow"])
+
+    assert result.exit_code == 0
+    # score affiché = score sémantique brut de ccc (0.850) ; le boost ERROR
+    # n'affecte que l'ordre, pas la valeur rapportée
+    assert "--- Result 1 (score: 0.850) ---" in result.output
+    assert "File: app/db.py:6-6 [python]" in result.output
+    assert "findings (max: ERROR)" in result.output
+    assert "custom.sql-fstring" in result.output
+    # le résultat sans finding est rendu sans bloc findings, après le boosté
+    assert result.output.index("app/db.py:6-6") < result.output.index("app/other.py:1-1")
+
+
+def test_search_json_returns_stable_code_search_result_schema(
+    fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from cccf.store import Store
+
+    with Store(tmp_path):
+        pass  # index findings vide mais présent
+
+    result = runner.invoke(app, ["search", "auth", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert set(data.keys()) == {"results", "findings_only_fallback", "warning"}
+    assert len(data["results"]) == 2
+    assert {"path", "start_line", "end_line", "language", "score", "content",
+            "findings", "max_severity"} <= set(data["results"][0].keys())
+
+
+def test_search_without_findings_index_warns_but_shows_code_results(
+    fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["search", "auth"])
+
+    assert result.exit_code == 0
+    assert "index findings absent" in result.output
+    assert "--- Result 1" in result.output
+
+
+def test_search_without_ccc_nor_index_fails_with_message_and_code_2(
+    no_ccc_on_path: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["search", "auth"])
+
+    assert result.exit_code == 2
+    assert "Index absent. Lancez d'abord: cccf index" in result.output
 
 
 @pytest.mark.integration

@@ -72,8 +72,45 @@ Indexe le projet (findings Semgrep).
 - `.cccf/config.yml` absent ou invalide : message d'erreur sur stderr, code de
   sortie 1.
 
-### `cccf search "<requête>" [options]`
-Recherche en langage naturel dans les findings indexés.
+### `cccf search "<requête>" [--limit N] [--json]`
+Recherche sémantique de code — **sur-ensemble de `ccc search`** : mêmes
+résultats (mêmes extraits, même format d'affichage), chaque résultat enrichi
+des findings Semgrep qui le recouvrent, et classé en tenant compte de leur
+sévérité (voir §3, `rank_by_severity`). C'est la commande principale :
+`ccc search "user authentication flow"` décrit le flux, `cccf search "user
+authentication flow"` décrit le même flux **et** remonte sa dette sécurité.
+
+Rendu texte — format identique à `ccc search`, plus un bloc findings sous
+chaque résultat concerné :
+```
+--- Result 1 (score: 0.850) ---
+File: src/auth.py:12-34 [python]
+def login(user, password):
+    ...
+
+  ⚠ findings (max: ERROR):
+  [ERROR] custom.sql-fstring  src/auth.py:18-18
+    Une requête SQL construite par f-string permet une injection SQL.
+```
+Le `score` affiché reste la pertinence sémantique brute de `ccc` ; le boost
+par sévérité n'affecte que l'ordre.
+
+Rendu `--json` : objet `CodeSearchResult` (schéma unique et stable, voir §3).
+
+Dégradations :
+- **`ccc` indisponible** (absent du PATH, ou en erreur) : repli sur la
+  recherche findings seule — avertissement sur stderr, résultats au format
+  `cccf findings`. Nécessite l'index `cccf` ; sans lui non plus, message
+  `Index absent. Lancez d'abord: cccf index` sur stderr, code de sortie 2.
+- **Index findings absent** (mais `ccc` disponible) : résultats de code
+  bruts, précédés de l'avertissement
+  `index findings absent (lancez: cccf index) : résultats sans findings`,
+  code de sortie 0.
+
+### `cccf findings "<requête>" [options]`
+Recherche en langage naturel dans les findings indexés **seuls** (sans
+recherche de code) — l'ancienne `cccf search`, renommée quand `search` est
+devenue le sur-ensemble de `ccc search`.
 
 | Option | Effet |
 |---|---|
@@ -95,8 +132,9 @@ Avec `--context`, le bloc de code numéroté est ajouté à la suite (format
 la dernière indexation, le finding reste affiché et le contexte est signalé
 comme indisponible pour ce résultat uniquement.
 
-Rendu `--json` : liste d'objets — **contrat stable** (`FindingHit`,
-`render.py`), consommé aussi par le serveur MCP (`search_findings`) :
+Rendu `--json` de `cccf findings` : liste d'objets — **contrat stable**
+(`FindingHit`, `render.py`), consommé aussi par le serveur MCP
+(`search_findings`) :
 ```json
 {
   "id": "...", "rule_id": "...", "severity": "...", "message": "...",
@@ -128,7 +166,7 @@ Rendu `--json` :
 }
 ```
 
-Mêmes règles d'index absent que `search` (message identique, code 2).
+Mêmes règles d'index absent que `findings` (message identique, code 2).
 
 ### `cccf mcp`
 Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
@@ -152,15 +190,15 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 
 | Tool | Type de retour | Rôle | Notes |
 |---|---|---|---|
-| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Recherche en langage naturel — même contrat que `cccf search --json` | Pas de pagination (`offset`) côté MCP |
+| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Recherche en langage naturel — même contrat que `cccf findings --json` | Pas de pagination (`offset`) côté MCP |
 | `findings_summary()` | `FindingsSummary` | Vue agrégée à faible coût | Même structure que `cccf summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
-| `search_code_with_findings(query, limit=5)` | `CodeSearchResult` | Recherche de code (via `ccc`) annotée des findings qui recouvrent chaque résultat | Voir schéma de fallback ci-dessous |
+| `search_code_with_findings(query, limit=5)` | `CodeSearchResult` | Recherche de code (via `ccc`) annotée des findings qui recouvrent chaque résultat — même comportement que la CLI `cccf search` (implémentation partagée, `code_search.py`) | Voir schéma de fallback ci-dessous |
 
 `search_code_with_findings` ajoute à chaque résultat de code :
 - `findings` : liste des findings dont `path` est identique et dont la plage
   `[start_line, end_line]` chevauche celle du résultat de code (chevauchement
-  inclusif — une seule ligne commune suffit) — même contrat que `search`,
+  inclusif — une seule ligne commune suffit) — même contrat que `findings`,
   sans le champ `context`.
 - `max_severity` : la sévérité la plus haute parmi les findings joints, ou
   `null` si aucun.
@@ -173,16 +211,20 @@ boost additif à `score` selon `max_severity` (`ERROR` +0.15, `WARNING` +0.05,
 résultat juste hors du top `limit` de `ccc`, l'appel sous-jacent sur-demande
 (`overfetch_limit` : `limit × 3`, plafonné à 50) avant de trier et tronquer.
 
-`CodeSearchResult` a un schéma **unique et stable**, y compris quand `ccc` est
-indisponible (`CccUnavailable`) — pas de forme alternative selon le cas, pour
-que l'`outputSchema` reste valide dans les deux branches :
+`CodeSearchResult` a un schéma **unique et stable**, quel que soit le mode
+(nominal, `ccc` indisponible, index findings absent) — pas de forme
+alternative selon le cas, pour que l'`outputSchema` reste valide dans toutes
+les branches :
 ```json
 {
-  "results": [...],                 // vide si ccc indisponible
+  "results": [...],                 // vide si ccc indisponible ; sans findings si index absent
   "findings_only_fallback": [...],  // FindingHit[] ; vide si ccc disponible
-  "warning": null                   // string explicative si repli sur findings_only_fallback
+  "warning": null                   // string explicative en mode dégradé, null sinon
 }
 ```
+Si `ccc` **et** l'index findings sont tous deux indisponibles : exception
+(`Index absent. Lancez d'abord: cccf index`) → `isError: true` côté MCP,
+code de sortie 2 côté CLI.
 
 ## 4. Skill Claude Code (distribué séparément — `~/cocoindex-ext-skill/SKILL.md`)
 
@@ -214,7 +256,7 @@ existants plutôt que bloquer inutilement.
 | Pas de config Semgrep détectée et pas de `--rules` | `cccf init` | repli sur `p/security-audit`, message informatif stdout + code 0 |
 | `.cccf/config.yml` déjà existant | `cccf init` | stderr + code 1, fichier non modifié |
 | Semgrep échoue ou dépasse le timeout | `cccf index` | stderr + code 2, base inchangée |
-| `.cccf/findings.db` absent | `cccf search` / `cccf summary` | stderr (message exact) + code 2 |
-| Embeddings incompatibles avec la requête | `cccf search` | stderr actionnable + code 2 |
+| `.cccf/findings.db` absent | `cccf findings` / `cccf summary` (et `cccf search` si `ccc` est aussi indisponible) | stderr (message exact) + code 2 |
+| Embeddings incompatibles avec la requête | `cccf findings` (ou repli findings de `cccf search`) | stderr actionnable + code 2 |
 | Toute exception | tools MCP | remonte telle quelle → `ToolError` FastMCP → `isError: true` côté protocole ; le serveur reste utilisable pour l'appel suivant |
 | `ccc` absent ou en erreur | `search_code_with_findings` | pas une erreur : repli sur `findings_only_fallback` (recherche findings seule) + `warning` explicatif, `results` vide |

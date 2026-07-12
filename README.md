@@ -37,9 +37,12 @@ scanner.py"]
 sentence-transformers"]
         EMB --> FDB[("findings.db
 SQLite + sqlite-vec")]
-        FDB --> FSEARCH["cccf search
+        FDB --> FFIND["cccf findings
 langage naturel"]
-        FSEARCH --> FMCP["cccf mcp"]
+        FDB --> FSEARCH["cccf search
+code + findings"]
+        FFIND --> FMCP["cccf mcp"]
+        FSEARCH --> FMCP
     end
 
     FSEARCH -. "ccc_bridge.py: subprocess + parse texte (ADR-10)" .-> CSEARCH
@@ -93,17 +96,22 @@ pipx install semgrep
 ```bash
 cccf init                       # détecte une config Semgrep, sinon utilise p/security-audit
 cccf index                      # scan Semgrep incrémental + embeddings
-cccf search "injection sql"     # recherche en langage naturel
+cccf search "user auth flow"    # recherche de code (via ccc) + findings qui la recouvrent
+cccf findings "injection sql"   # recherche en langage naturel dans les findings seuls
 cccf summary                    # vue agrégée (sévérités, top règles, top répertoires)
 ```
+
+`cccf search` est un **sur-ensemble de `ccc search`** : mêmes résultats, même
+format, chaque résultat enrichi des findings Semgrep qui le recouvrent et
+classé en tenant compte de leur sévérité.
 
 Exemple avec des règles explicites et un scan complet :
 
 ```bash
 cccf init --rules rules/rules.yml
 cccf index --full
-cccf search "injection sql" --severity ERROR --path "app/*" --limit 5 --context
-cccf search "injection sql" --json
+cccf findings "injection sql" --severity ERROR --path "app/*" --limit 5 --context
+cccf search "user auth flow" --json
 ```
 
 ## Développement (dans ce repo)

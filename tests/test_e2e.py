@@ -34,9 +34,9 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
         f"cccf index n'a pas trouvé les 4 findings attendus : {index_result.output}"
     )
 
-    search_result = runner.invoke(app, ["search", "injection sql", "--json"])
+    search_result = runner.invoke(app, ["findings", "injection sql", "--json"])
     assert search_result.exit_code == 0, (
-        f"cccf search a échoué : {search_result.output}"
+        f"cccf findings a échoué : {search_result.output}"
     )
     hits = json.loads(search_result.output)
     sql_hit = next((h for h in hits if h["path"] == "app/db.py"), None)
@@ -63,10 +63,10 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
     )
 
     search_after_fix = runner.invoke(
-        app, ["search", "injection sql", "--path", "app/db.py", "--json"]
+        app, ["findings", "injection sql", "--path", "app/db.py", "--json"]
     )
     assert search_after_fix.exit_code == 0, (
-        f"cccf search (après correction) a échoué : {search_after_fix.output}"
+        f"cccf findings (après correction) a échoué : {search_after_fix.output}"
     )
     hits_after_fix = json.loads(search_after_fix.output)
     assert hits_after_fix == [], (

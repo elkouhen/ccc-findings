@@ -483,3 +483,43 @@ volumétrie). L'idée de traduction finding → `ccc grep` reste ouverte mais
 hors scope : voir `archive/BACKLOG-6.md` pour le compte-rendu de faisabilité,
 à reprendre uniquement restreinte aux règles sans ellipsis si elle est un
 jour priorisée.
+
+---
+
+## ADR-20 — `cccf search` = sur-ensemble de `ccc search` ; la recherche findings devient `cccf findings`
+
+**Statut** : Acté.
+
+**Contexte** : depuis la V1, `cccf search` cherchait *dans les findings*
+(embeddings des findings Semgrep), et la composition code + findings n'était
+exposée que côté MCP (`search_code_with_findings`). Ce positionnement ne
+correspondait pas à l'intention produit : `cccf` doit **étendre** `ccc` —
+même question, même genre de réponse. Attendu : `ccc search "user
+authentication flow"` décrit le flux ; `cccf search "user authentication
+flow"` décrit le même flux **et** remonte les findings Semgrep dessus.
+
+**Décision** : `cccf search` devient la recherche code + findings —
+l'orchestration (sur-fetch `ccc`, annotation, classement par sévérité, modes
+dégradés), auparavant dans `mcp_server.py`, est extraite dans
+`code_search.py` et partagée par la CLI et le tool MCP (comportements
+garantis identiques). Le rendu texte reproduit **exactement** le format de
+`ccc search` (`--- Result N (score) --- / File: path:l1-l2 [lang]`), suivi
+d'un bloc findings sous chaque résultat concerné — un utilisateur de `ccc`
+garde ses repères, `cccf` ajoute la couche findings. Le parseur de
+`ccc_bridge` capture désormais le langage pour reproduire la ligne `File:` à
+l'identique. L'ancienne recherche findings-only déménage telle quelle
+(mêmes flags, même contrat JSON) sous `cccf findings`.
+
+**Modes dégradés** (schéma `CodeSearchResult` unique dans tous les cas) :
+`ccc` indisponible → repli findings-only avec avertissement ; index findings
+absent → résultats `ccc` bruts avec avertissement (plutôt que des findings
+silencieusement vides, et sans créer `.cccf/` par effet de bord dans un repo
+non initialisé) ; les deux absents → erreur actionnable (`Index absent...`).
+
+**Conséquences** : rupture du contrat CLI (`cccf search` change de
+sémantique ; les usages findings-only doivent migrer vers `cccf findings`) —
+acceptée, le package n'étant pas encore distribué au-delà de ce poste. Les
+tools MCP sont inchangés (`search_findings` = `cccf findings`,
+`search_code_with_findings` = `cccf search`). Au passage, les fixtures de
+faux `ccc` sont mutualisées dans `tests/conftest.py` (première étape de N2,
+`archive/BACKLOG-2.md`).

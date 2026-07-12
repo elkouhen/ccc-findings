@@ -44,11 +44,12 @@ class FindingRef(TypedDict):
 
 
 class CodeHitWithFindings(TypedDict):
-    """Shape returned by the `search_code_with_findings` MCP tool."""
+    """Shape returned by `cccf search` (--json) and the `search_code_with_findings` MCP tool."""
 
     path: str
     start_line: int
     end_line: int
+    language: str
     score: float
     content: str
     findings: list[FindingRef]
@@ -60,7 +61,7 @@ class CodeHitWithFindings(TypedDict):
 # File: src/mailer.py:1-6 [python]
 # <contenu...>
 _RESULT_HEADER_RE = re.compile(r"^--- Result \d+ \(score: ([\d.]+)\) ---$")
-_FILE_LINE_RE = re.compile(r"^File: (.+):(\d+)-(\d+) \[[^\]]*\]$")
+_FILE_LINE_RE = re.compile(r"^File: (.+):(\d+)-(\d+) \[([^\]]*)\]$")
 
 
 class CccUnavailable(Exception):
@@ -72,6 +73,7 @@ class CodeHit:
     path: str
     start_line: int
     end_line: int
+    language: str
     score: float
     content: str
 
@@ -96,6 +98,7 @@ def _parse_ccc_search_output(raw: str) -> list[CodeHit]:
                 path=file_match.group(1),
                 start_line=int(file_match.group(2)),
                 end_line=int(file_match.group(3)),
+                language=file_match.group(4),
                 score=float(header_match.group(1)),
                 content="\n".join(lines[2:]),
             )
@@ -164,6 +167,7 @@ def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeH
                 path=hit.path,
                 start_line=hit.start_line,
                 end_line=hit.end_line,
+                language=hit.language,
                 score=hit.score,
                 content=hit.content,
                 findings=[_finding_to_ref(f) for f in matched],
@@ -171,6 +175,23 @@ def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeH
             )
         )
     return results
+
+
+def without_findings(code_hits: list[CodeHit]) -> list[CodeHitWithFindings]:
+    """Wrap raw ccc hits when no findings index exists to join against."""
+    return [
+        CodeHitWithFindings(
+            path=hit.path,
+            start_line=hit.start_line,
+            end_line=hit.end_line,
+            language=hit.language,
+            score=hit.score,
+            content=hit.content,
+            findings=[],
+            max_severity=None,
+        )
+        for hit in code_hits
+    ]
 
 
 def rank_by_severity(

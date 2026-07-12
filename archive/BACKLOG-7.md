@@ -27,6 +27,34 @@
   4. `docs/SPEC-FONC.md` documente le mécanisme et les poids.
   5. `uv run pytest` et `uv run ruff check .` passent.
 
+### [x] C2 — `cccf search` = sur-ensemble de `ccc search` ; findings-only → `cccf findings`
+- **Fichiers** : `src/cccf/code_search.py` (nouveau), `src/cccf/ccc_bridge.py`,
+  `src/cccf/render.py`, `src/cccf/cli.py`, `src/cccf/mcp_server.py`,
+  `tests/conftest.py` (nouveau), `tests/test_cli.py`, `tests/test_ccc_bridge.py`,
+  `tests/test_e2e.py`, `docs/SPEC-FONC.md`, `docs/SPEC-TECH.md`, `docs/ADR.md`,
+  `README.md`, `archive/BACKLOG-7.md`
+- **Description** : repositionnement CLI (ADR-20). `cccf search` répond « de
+  la même manière » que `ccc search` (même format de résultats, langage
+  capturé par le parseur pour reproduire la ligne `File:`), enrichi d'un bloc
+  findings par résultat et classé par sévérité (C1). Orchestration extraite
+  dans `code_search.py`, partagée CLI/MCP. Ancienne recherche findings-only
+  déplacée telle quelle sous `cccf findings`. Modes dégradés explicites
+  (ccc absent → repli findings + warning ; index absent → code brut +
+  warning ; les deux → erreur actionnable). Fixtures faux-`ccc` mutualisées
+  dans `tests/conftest.py` (première étape de N2, BACKLOG-2).
+- **CA** :
+  1. `cccf search "<q>"` affiche le format `--- Result N (score) --- / File:
+     path:l1-l2 [lang]` de `ccc`, avec bloc findings sous les résultats
+     concernés, ordre boosté par sévérité, score affiché = score brut ccc.
+  2. `cccf search --json` retourne le schéma `CodeSearchResult` stable.
+  3. `cccf findings` conserve exactement l'ancien contrat (flags, JSON,
+     messages d'erreur, code 2 sans index).
+  4. Les trois modes dégradés sont testés (fake ccc, PATH sans ccc, index
+     absent).
+  5. `docs/SPEC-FONC.md`, `SPEC-TECH.md`, `README.md` (dont diagramme, rendu
+     vérifié via mermaid-cli) à jour ; ADR-20 documente la décision.
+  6. `uv run pytest` (72 tests) et `uv run ruff check .` passent.
+
 ## Piste évaluée et écartée pour l'instant
 
 **Traduire un finding en pattern `ccc grep`** pour trouver des occurrences

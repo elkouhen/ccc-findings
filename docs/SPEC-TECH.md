@@ -17,10 +17,11 @@
 | `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding) | `config`, `scanner`, `store`, `embedder` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
-| `render.py` | Sérialisation texte/JSON des résultats de recherche et du résumé | `search` |
-| `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings` | `models`, `store` |
-| `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `summary`, `mcp`) | tous les modules ci-dessus |
-| `mcp_server.py` | Serveur `FastMCP` stdio, 4 tools | `cli` (factory embedder), `ccc_bridge`, `config`, `indexer`, `render`, `search`, `store` |
+| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings) et du résumé | `search`, `ccc_bridge` |
+| `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
+| `code_search.py` | `search_code_with_findings` : orchestration code (via `ccc`) + findings + classement + modes dégradés — implémentation partagée CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
+| `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `findings`, `summary`, `mcp`) | tous les modules ci-dessus |
+| `mcp_server.py` | Serveur `FastMCP` stdio, 4 tools | `code_search`, `config`, `embedder`, `indexer`, `render`, `search`, `store` |
 
 Le sens des dépendances est globalement `cli.py`/`mcp_server.py` → logique
 métier → `store.py`. La factory publique d'embedder vit dans `embedder.py` et
