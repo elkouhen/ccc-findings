@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=1.26",
     "sentence-transformers>=3.0",
     "mcp>=1.0",
+    "sqlite-vec>=0.1.9",
 ]
 
 [project.scripts]

@@ -7,6 +7,67 @@ SQLite `.cccf/findings.db`), les rend interrogeables en langage naturel
 (recherche par embeddings) et les joint aux résultats de recherche de code
 de `ccc` à la requête.
 
+## Architecture — comment `cccf` étend `ccc`
+
+`cccf` est un **package compagnon**, pas un fork : aucun import du code
+interne de `ccc` (ADR-1). Les deux outils indexent des choses différentes,
+dans des bases SQLite séparées mais construites sur la même techno
+(SQLite + extension `sqlite-vec`, ADR-17), et ne se rencontrent qu'à deux
+endroits : un appel subprocess à la requête, et la couche MCP consommée par
+l'agent.
+
+```mermaid
+flowchart LR
+    subgraph ccc["ccc · cocoindex-code — indexe le CODE"]
+        direction TB
+        CODE["fichiers source"] --> CIDX["ccc index
+chunks AST + embeddings"]
+        CIDX --> CDB[("target_sqlite.db
+SQLite + sqlite-vec")]
+        CDB --> CSEARCH["ccc search
+sémantique + structurel"]
+        CSEARCH --> CMCP["ccc mcp"]
+    end
+
+    subgraph cccf["cccf · ccc-findings — indexe les FINDINGS Semgrep"]
+        direction TB
+        REPO["mêmes fichiers source"] --> SCAN["semgrep scan
+scanner.py"]
+        SCAN --> EMB["embedder.py
+sentence-transformers"]
+        EMB --> FDB[("findings.db
+SQLite + sqlite-vec")]
+        FDB --> FSEARCH["cccf search
+langage naturel"]
+        FSEARCH --> FMCP["cccf mcp"]
+    end
+
+    FSEARCH -. "ccc_bridge.py: subprocess + parse texte (ADR-10)" .-> CSEARCH
+    FMCP == "search_code_with_findings: jointure fichier + lignes" ==> CMCP
+
+    CMCP --> AGENT["Claude Code
+skill + client MCP"]
+    FMCP --> AGENT
+```
+
+Points clés :
+
+- **Pas de couplage de code** — la seule dépendance amont est un binaire
+  (`ccc`) appelé en subprocess et du texte parsé (`ccc_bridge.py`), jamais une
+  API Python interne. `ccc` peut changer sans casser `cccf` (ADR-1, ADR-10).
+- **Deux index, une seule techno de stockage** — chacun garde son propre
+  fichier SQLite (`target_sqlite.db` pour les chunks de code, `findings.db`
+  pour les findings), mais tous deux via `sqlite-vec`/`vec0` pour la
+  recherche vectorielle (ADR-17), et le même modèle d'embedding par défaut
+  (`Snowflake/snowflake-arctic-embed-xs`, ADR-3).
+- **La jointure se fait à la requête, pas à l'indexation** — l'outil MCP
+  `search_code_with_findings` prend les résultats de `ccc search` et surligne
+  les findings Semgrep dont la plage de lignes chevauche le extrait de code
+  retourné, sans jamais fusionner les deux bases.
+- **L'agent (Claude Code) est le point de convergence** — via les deux
+  serveurs MCP (`ccc mcp`, `cccf mcp`) et le skill, qui orchestre recherche de
+  code, recherche de findings et boucle de correction.
+
 ## Documentation
 
 - [`AGENT.md`](AGENT.md) — pour tout agent contribuant à ce repo : carte des documents et règle « tout changement se documente dans un BACKLOG ».

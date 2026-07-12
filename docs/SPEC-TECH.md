@@ -56,7 +56,7 @@ décale dans le fichier.
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
--- clés utilisées : schema_version ("1"), embedding_model,
+-- clés utilisées : schema_version ("2"), embedding_model,
 -- embedding_signature, embedding_dim
 
 CREATE TABLE files (
@@ -67,18 +67,34 @@ CREATE TABLE findings (
     id TEXT PRIMARY KEY, rule_id TEXT, severity TEXT, message TEXT,
     path TEXT, start_line INTEGER, end_line INTEGER, snippet TEXT,
     fix TEXT, cwe TEXT,      -- JSON-sérialisé
-    owasp TEXT,               -- JSON-sérialisé
-    embedding BLOB             -- float32.tobytes(), NULL tant que non embeddé
+    owasp TEXT               -- JSON-sérialisé
 );
 CREATE INDEX idx_findings_path ON findings(path);
 CREATE INDEX idx_findings_severity ON findings(severity);
+
+-- Table virtuelle vec0 (extension sqlite-vec), créée paresseusement au
+-- premier set_embedding() une fois la dimension connue ; recréée si la
+-- dimension change (changement de modèle, ADR-16/ADR-17). meta.embedding_dim
+-- fait double emploi : dimension courante ET "la table existe".
+CREATE VIRTUAL TABLE vec_findings USING vec0(
+    embedding float[N] distance_metric=cosine,
+    +finding_id TEXT   -- colonne auxiliaire, pas indexée par le KNN
+);
 ```
 
-`Store` est un context manager : ouverture = connexion + création de schéma
-si absent ; sortie = `commit()` si aucune exception n'a été levée dans le
-bloc, sinon la connexion est fermée sans commit (rollback SQLite implicite —
-c'est le mécanisme qui garantit NF5 : un `SemgrepError` en cours d'indexation
-laisse la base dans son état d'avant l'appel).
+`Store` est un context manager : ouverture = connexion + chargement de
+l'extension `sqlite-vec` (`sqlite_vec.load`) + création de schéma si absent ;
+sortie = `commit()` si aucune exception n'a été levée dans le bloc, sinon la
+connexion est fermée sans commit (rollback SQLite implicite — c'est le
+mécanisme qui garantit NF5 : un `SemgrepError` en cours d'indexation laisse
+la base dans son état d'avant l'appel).
+
+**Migration schema v1 → v2** (ADR-17) : à l'ouverture, si `findings.embedding`
+(colonne `BLOB`, ancien format) existe encore, `Store` la supprime
+(`ALTER TABLE ... DROP COLUMN`), efface `embedding_signature`/`embedding_dim`
+de `meta` et passe `schema_version` à `2`. Le prochain `cccf index` détecte la
+signature manquante et ré-embedde tout automatiquement (§3 étape 5) — aucune
+commande de migration séparée.
 
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
@@ -165,18 +181,24 @@ processus, ce qui évite de recharger le modèle à chaque appel MCP. Chaque
 embedder expose une `signature` stockée dans `meta.embedding_signature`; la
 dimension vectorielle est stockée dans `meta.embedding_dim`.
 
-`search.search_findings` :
+`search.search_findings` (depuis ADR-17, délègue le calcul de similarité à
+`sqlite-vec` au lieu d'un brute-force NumPy) :
 1. Filtre d'abord en SQL/Python (`store.all_findings(severity_at_least, rule_id,
-   path_glob)`).
-2. Charge tous les embeddings de la base (`store.iter_embeddings()`), pas
-   seulement ceux des candidats filtrés (défaut connu — coût, voir
-   `archive/BACKLOG-2.md`).
-3. Vérifie que chaque vecteur candidat a la même dimension que le vecteur de
-   requête ; une incompatibilité lève `EmbeddingError` avec un message demandant
-   de réindexer.
-4. Calcule le cosinus par produit scalaire (`vector @ query_vec`, vecteurs
-   déjà normalisés L2 des deux côtés).
-5. Trie décroissant, pagine (`offset`, `limit`).
+   path_glob)`) → ensemble de candidats.
+2. Vérifie que le vecteur de requête a la même dimension que
+   `meta.embedding_dim` ; une incompatibilité lève `EmbeddingError` avec un
+   message demandant de réindexer.
+3. `store.knn_search(query_vec, top_k=store.embedding_count())` — une seule
+   requête `SELECT finding_id, distance FROM vec_findings WHERE embedding
+   MATCH ? AND k = ? ORDER BY distance` sur **toute** la table vec0 (pas
+   seulement les candidats filtrés : `vec0` n'expose pas de filtrage par
+   métadonnée arbitraire côté WHERE, donc le filtre sévérité/règle/chemin est
+   appliqué en Python *après* le tri, en s'arrêtant dès que `offset + limit`
+   résultats appartenant à l'ensemble filtré ont été trouvés).
+4. Le score retourné est `1 - distance_cosinus` (la table vec0 est déclarée
+   `distance_metric=cosine`), donc équivalent au produit scalaire de l'ancien
+   brute-force sur des vecteurs normalisés L2.
+5. Pagine (`offset`, `limit`) sur les résultats déjà triés.
 
 `search.summary` : `by_severity`/`top_rules` via `Store.counts_by` (SQL
 `GROUP BY`), `by_top_level_dir` calculé côté Python sur

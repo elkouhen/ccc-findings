@@ -29,7 +29,8 @@ en contrepartie, la jointure dépend du format de sortie **texte** de `ccc`
 
 ## ADR-2 — Store SQLite unique, cosinus brute-force
 
-**Statut** : Acté.
+**Statut** : Superseded par ADR-17 (le stockage reste SQLite unique, mais le
+calcul de similarité n'est plus du brute-force NumPy).
 
 **Contexte** : un repo compte au plus quelques milliers de findings.
 
@@ -350,3 +351,47 @@ vérifie explicitement la dimension des vecteurs avant le produit scalaire.
 actionnable demandant une réindexation complète, au lieu d'un traceback brut ou
 de scores incohérents. Le fake embedder reste disponible pour les tests, mais sa
 signature distincte empêche de le confondre avec le modèle de production.
+
+---
+
+## ADR-17 — Recherche vectorielle via `sqlite-vec` (`vec0`), plus de brute-force NumPy
+
+**Statut** : Acté. Supersede ADR-2.
+
+**Contexte** : `ccc` (cocoindex-code) — dont `cccf` réutilise déjà le modèle
+d'embedding par défaut (ADR-3) — stocke son propre index dans
+`.cocoindex_code/target_sqlite.db` via le connector `cocoindex.connectors.sqlite`,
+qui s'appuie sur l'extension `sqlite-vec` (tables virtuelles `vec0`, distance
+SIMD) plutôt que sur un calcul brute-force. `cccf` restait sur du SQLite
+« nu » avec cosinus calculé en Python/NumPy (ADR-2) : correct à l'échelle
+cible mais incohérent avec l'outil dont il hérite déjà le choix de format
+d'embedding, et moins performant sans bénéfice de simplicité additionnel
+(`sqlite-vec` est déjà une dépendance transitive de l'écosystème `ccc`).
+
+**Décision** : les embeddings ne sont plus stockés en `BLOB` dans la table
+`findings`, mais dans une table virtuelle `vec0` dédiée (`vec_findings`,
+colonne `embedding float[N] distance_metric=cosine`, colonne auxiliaire
+`+finding_id TEXT` pour la jointure retour). `Store.knn_search` délègue le
+calcul de similarité à `sqlite-vec` (`... WHERE embedding MATCH ? AND k = ?`)
+au lieu d'itérer en Python. Comme `vec0` ne supporte ni `ALTER TABLE` ni clé
+primaire arbitraire, la dimension du vecteur double comme signal de
+recréation de table (`meta.embedding_dim`), et le filtrage par
+sévérité/règle/chemin reste fait en amont côté SQL classique sur `findings`
+(le filtrage post-KNN se fait ensuite en Python sur l'ensemble trié renvoyé
+par `vec0`, sans borne artificielle puisque `k` = nombre total de vecteurs).
+
+**Migration** : à l'ouverture d'une base créée par une version antérieure de
+`cccf` (`schema_version` = 1, colonne `findings.embedding` présente), `Store`
+supprime cette colonne (`ALTER TABLE ... DROP COLUMN`), efface
+`embedding_signature`/`embedding_dim` de `meta`, et passe `schema_version` à
+2. Le prochain `cccf index` détecte la signature manquante et ré-embedde
+automatiquement — aucune commande de migration dédiée n'est nécessaire, mais
+un premier `cccf index` (potentiellement complet) est requis après mise à
+jour.
+
+**Conséquences** : format de stockage aligné avec `ccc`, calcul de similarité
+accéléré SIMD au lieu d'une boucle Python, mais une dépendance de plus
+(`sqlite-vec`, déjà présente transitivement dans l'écosystème `ccc`). Le
+choix de conserver SQLite comme unique backend (plutôt que Postgres/pgvector
+ou un store vectoriel dédié) reste celui d'ADR-2 : la cible V1 (quelques
+milliers de findings par repo) ne justifie pas une dépendance externe.

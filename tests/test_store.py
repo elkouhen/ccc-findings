@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +79,48 @@ def test_set_and_iter_embeddings(tmp_path: Path) -> None:
 
 def test_reopening_existing_database_reads_schema_version(tmp_path: Path) -> None:
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "1"
+        assert store.get_meta("schema_version") == "2"
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "1"
+        assert store.get_meta("schema_version") == "2"
+
+
+def _make_legacy_v1_db(tmp_path: Path) -> None:
+    """Simulate a pre-migration store: schema v1, embedding as a BLOB column."""
+    db_path = tmp_path / ".cccf" / "findings.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, indexed_at TEXT NOT NULL);
+        CREATE TABLE findings (
+            id TEXT PRIMARY KEY, rule_id TEXT, severity TEXT, message TEXT, path TEXT,
+            start_line INTEGER, end_line INTEGER, snippet TEXT, fix TEXT, cwe TEXT,
+            owasp TEXT, embedding BLOB
+        );
+        INSERT INTO meta VALUES ('schema_version', '1');
+        INSERT INTO meta VALUES ('embedding_signature', 'sentence-transformers:old-model');
+        INSERT INTO meta VALUES ('embedding_dim', '384');
+        INSERT INTO findings VALUES
+            ('abc123', 'r1', 'ERROR', 'msg', 'app/db.py', 1, 1, 'snip', NULL, '[]', '[]', X'0000');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
+    tmp_path: Path,
+) -> None:
+    _make_legacy_v1_db(tmp_path)
+
+    with Store(tmp_path) as store:
+        assert store.get_meta("schema_version") == "2"
+        # signature/dim cleared -> next `cccf index` re-embeds everything
+        assert store.get_meta("embedding_signature") is None
+        assert store.get_embedding_dim() is None
+        # findings themselves survive the migration
+        assert [f.id for f in store.all_findings()] == ["abc123"]
+        cols = {row["name"] for row in store.conn.execute("PRAGMA table_info(findings)")}
+        assert "embedding" not in cols

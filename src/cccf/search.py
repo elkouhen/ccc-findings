@@ -50,23 +50,27 @@ def search_findings(
             f"requête={query_signature}. Relancez: cccf index --full"
         )
 
-    embeddings = dict(store.iter_embeddings())
     query_vec = embedder.embed_query(query)
+    stored_dim = store.get_embedding_dim()
+    if stored_dim is not None and query_vec.shape[0] != stored_dim:
+        raise EmbeddingError(
+            f"Dimension d'embedding incompatible : index={stored_dim}, "
+            f"requête={query_vec.shape[0]}. Relancez: cccf index --full"
+        )
 
-    hits = []
-    for finding in candidates:
-        vector = embeddings.get(finding.id)
-        if vector is None:
+    total_vectors = store.embedding_count()
+    if total_vectors == 0:
+        return []
+
+    by_id = {finding.id: finding for finding in candidates}
+    hits: list[SearchHit] = []
+    for finding_id, score in store.knn_search(query_vec, top_k=total_vectors):
+        finding = by_id.get(finding_id)
+        if finding is None:
             continue
-        if vector.shape != query_vec.shape:
-            raise EmbeddingError(
-                f"Dimension d'embedding incompatible pour {finding.id}: "
-                f"index={vector.shape[0]}, requête={query_vec.shape[0]}. "
-                "Relancez: cccf index --full"
-            )
-        hits.append(SearchHit(finding=finding, score=float(vector @ query_vec)))
-
-    hits.sort(key=lambda hit: hit.score, reverse=True)
+        hits.append(SearchHit(finding=finding, score=score))
+        if len(hits) >= offset + limit:
+            break
     return hits[offset : offset + limit]
 
 
