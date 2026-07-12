@@ -2,11 +2,39 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from cccf.models import Finding
 from cccf.store import Store
 
 _SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
+
+
+class FindingRef(TypedDict):
+    """A finding attached to a code hit — no `score`, that belongs to the code match."""
+
+    id: str
+    rule_id: str
+    severity: str
+    message: str
+    path: str
+    start_line: int
+    end_line: int
+    fix: str | None
+    cwe: list[str]
+    owasp: list[str]
+
+
+class CodeHitWithFindings(TypedDict):
+    """Shape returned by the `search_code_with_findings` MCP tool."""
+
+    path: str
+    start_line: int
+    end_line: int
+    score: float
+    content: str
+    findings: list[FindingRef]
+    max_severity: str | None
 
 # Sortie réelle de `ccc search` (cette version n'expose pas de flag --json) :
 #
@@ -77,27 +105,27 @@ def search_code(repo_root: Path, query: str, limit: int = 5) -> list[CodeHit]:
     return _parse_ccc_search_output(proc.stdout)
 
 
-def _finding_to_dict(finding: Finding) -> dict:
-    return {
-        "id": finding.id,
-        "rule_id": finding.rule_id,
-        "severity": finding.severity,
-        "message": finding.message,
-        "path": finding.path,
-        "start_line": finding.start_line,
-        "end_line": finding.end_line,
-        "fix": finding.fix,
-        "cwe": finding.cwe,
-        "owasp": finding.owasp,
-    }
+def _finding_to_ref(finding: Finding) -> FindingRef:
+    return FindingRef(
+        id=finding.id,
+        rule_id=finding.rule_id,
+        severity=finding.severity,
+        message=finding.message,
+        path=finding.path,
+        start_line=finding.start_line,
+        end_line=finding.end_line,
+        fix=finding.fix,
+        cwe=finding.cwe,
+        owasp=finding.owasp,
+    )
 
 
-def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[dict]:
+def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeHitWithFindings]:
     findings_by_path: dict[str, list[Finding]] = {}
     for finding in store.all_findings():
         findings_by_path.setdefault(finding.path, []).append(finding)
 
-    results = []
+    results: list[CodeHitWithFindings] = []
     for hit in code_hits:
         matched = [
             f
@@ -110,14 +138,14 @@ def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[dict]
             else None
         )
         results.append(
-            {
-                "path": hit.path,
-                "start_line": hit.start_line,
-                "end_line": hit.end_line,
-                "score": hit.score,
-                "content": hit.content,
-                "findings": [_finding_to_dict(f) for f in matched],
-                "max_severity": max_severity,
-            }
+            CodeHitWithFindings(
+                path=hit.path,
+                start_line=hit.start_line,
+                end_line=hit.end_line,
+                score=hit.score,
+                content=hit.content,
+                findings=[_finding_to_ref(f) for f in matched],
+                max_severity=max_severity,
+            )
         )
     return results

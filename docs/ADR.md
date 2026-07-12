@@ -395,3 +395,51 @@ accéléré SIMD au lieu d'une boucle Python, mais une dépendance de plus
 choix de conserver SQLite comme unique backend (plutôt que Postgres/pgvector
 ou un store vectoriel dédié) reste celui d'ADR-2 : la cible V1 (quelques
 milliers de findings par repo) ne justifie pas une dépendance externe.
+
+---
+
+## ADR-18 — Sortie MCP structurée (`TypedDict`/dataclass), erreurs via exception
+
+**Statut** : Acté.
+
+**Contexte** : les 4 tools de `mcp_server.py` étaient annotés `-> str` et
+renvoyaient `json.dumps(...)`. FastMCP dérive pourtant un `outputSchema` de
+l'annotation de retour même dans ce cas (`str` → type primitif, wrappé) : les
+4 tools annonçaient `{"result": {"type": "string"}}` — un schema qui promet
+une structure sans en fournir une, vérifié empiriquement via
+`mcp.list_tools()`. `ccc` (cocoindex-code), à titre de comparaison, retourne
+un vrai `pydantic.BaseModel` (`SearchResultModel`) pour son tool `search`,
+avec un schema par champ. Séparément, les 4 tools interceptaient toute
+exception et la transformaient en `{"error": "<message>"}` — un résultat
+renvoyé comme un succès, sans signal protocolaire permettant à un client de
+distinguer un échec d'une réponse valide sans convention ad hoc.
+
+**Décision** : chaque tool est annoté avec son vrai type de retour —
+`TypedDict` (`FindingHit`, `FindingsSummary`, `CodeSearchResult`, définis
+dans `render.py`/`ccc_bridge.py`/`mcp_server.py`) ou dataclass existante
+(`IndexReport`, réutilisée telle quelle depuis `indexer.py`, sans
+duplication). FastMCP en dérive un `outputSchema` par champ et renvoie à la
+fois le texte JSON habituel (`content`, pour les clients qui l'ignorent) et
+le contenu structuré (`structuredContent`) — additif, aucune régression pour
+un client existant. Les `try/except Exception` qui avalaient les erreurs sont
+supprimés : une exception remonte telle quelle, FastMCP la convertit en
+`ToolError`, exposé au client comme `isError: true`. Le cas `ccc`
+indisponible dans `search_code_with_findings` (`CccUnavailable`) reste un
+repli **volontaire**, pas une erreur : plutôt qu'une forme
+`{"error": ..., "fallback": ...}` distincte du cas succès, `CodeSearchResult`
+a un schema unique et stable (`results`, `findings_only_fallback`,
+`warning`), rempli différemment selon le cas — l'`outputSchema` reste valide
+dans les deux branches.
+
+**Conséquences** : les 4 tools sont maintenant symétriques avec `ccc mcp` sur
+la forme de sortie (schema riche, pas de string à re-parser), sans ajouter de
+dépendance directe (`pydantic` est déjà transitif via `mcp`, mais `TypedDict`
+suffit ici — pas de validation runtime nécessaire côté `cccf`, qui contrôle
+déjà les deux bouts). Effet de bord positif : `search_findings`,
+`findings_summary` et `search_code_with_findings` ne dupliquent plus
+manuellement la sérialisation `Finding → dict` (voir N3 dans
+`archive/BACKLOG-2.md`, désormais partagée via les `TypedDict` de
+`render.py`/`ccc_bridge.py` plutôt que des dicts construits inline). Le
+skill (`~/ccc-findings-skill/SKILL.md`) ne dépend d'aucun parsing strict de
+la clé `"error"` — vérifié avant ce changement — donc aucune mise à jour n'y
+était nécessaire.

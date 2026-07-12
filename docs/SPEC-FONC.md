@@ -95,17 +95,20 @@ Avec `--context`, le bloc de code numéroté est ajouté à la suite (format
 la dernière indexation, le finding reste affiché et le contexte est signalé
 comme indisponible pour ce résultat uniquement.
 
-Rendu `--json` : liste d'objets — **contrat stable**, consommé aussi par le
-serveur MCP (`search_findings`) :
+Rendu `--json` : liste d'objets — **contrat stable** (`FindingHit`,
+`render.py`), consommé aussi par le serveur MCP (`search_findings`) :
 ```json
 {
   "id": "...", "rule_id": "...", "severity": "...", "message": "...",
   "path": "...", "start_line": 0, "end_line": 0, "score": 0.0,
   "fix": null, "cwe": [], "owasp": [],
-  "context": "...", // présent seulement si --context ; null si indisponible
-  "context_error": "..."  // présent seulement si --context et contexte indisponible
+  "context": null,        // toujours présent ; string si --context a réussi
+  "context_error": null   // toujours présent ; string si --context a échoué
 }
 ```
+`context`/`context_error` sont toujours présents (valeur `null` par défaut) —
+schéma stable, plutôt que des clés apparaissant/disparaissant selon `--context`
+(nécessaire pour un `outputSchema` MCP correct, voir §3).
 
 Si l'index n'existe pas (`.cccf/findings.db` absent) : message exact sur
 stderr `Index absent. Lancez d'abord: cccf index`, code de sortie 2.
@@ -136,16 +139,23 @@ Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 
 ## 3. Serveur MCP
 
-Quatre tools, tous retournant une chaîne JSON (jamais d'exception qui remonte
-au client — toute erreur devient `{"error": "<message>"}`, le serveur reste
-utilisable pour l'appel suivant) :
+Quatre tools, chacun annoté avec un type de retour concret (`TypedDict` ou
+dataclass, jamais `str`) — FastMCP en dérive un `outputSchema` par champ,
+exposé aux clients MCP en plus du texte JSON habituel (`structuredContent`
+*et* `content` texte, les deux dans la même réponse ; un client qui ignore le
+premier retombe sur le second, aucune régression pour les clients existants).
+Une exception levée dans un tool **n'est plus interceptée** : elle remonte
+telle quelle, FastMCP la convertit en `ToolError` puis en `isError: true`
+côté protocole — le signal standard qu'un client MCP peut détecter sans
+parser le texte de réponse (avant : `{"error": "<message>"}` retourné comme
+un résultat normal, indiscernable d'un succès sans convention côté client).
 
-| Tool | Rôle | Notes |
-|---|---|---|
-| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | Recherche en langage naturel — même contrat JSON que `cccf search --json` | Pas de pagination (`offset`) côté MCP |
-| `findings_summary()` | Vue agrégée à faible coût | Même structure que `cccf summary --json` |
-| `reindex_findings()` | Réindexation incrémentale | Retourne `{scanned, skipped, findings_added, findings_removed, deleted_files}` |
-| `search_code_with_findings(query, limit=5)` | Recherche de code (via `ccc`) annotée des findings qui recouvrent chaque résultat | Si `ccc` indisponible : `{"error": "ccc non disponible", "fallback": <résultat de search_findings>}` |
+| Tool | Type de retour | Rôle | Notes |
+|---|---|---|---|
+| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Recherche en langage naturel — même contrat que `cccf search --json` | Pas de pagination (`offset`) côté MCP |
+| `findings_summary()` | `FindingsSummary` | Vue agrégée à faible coût | Même structure que `cccf summary --json` |
+| `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
+| `search_code_with_findings(query, limit=5)` | `CodeSearchResult` | Recherche de code (via `ccc`) annotée des findings qui recouvrent chaque résultat | Voir schéma de fallback ci-dessous |
 
 `search_code_with_findings` ajoute à chaque résultat de code :
 - `findings` : liste des findings dont `path` est identique et dont la plage
@@ -154,6 +164,17 @@ utilisable pour l'appel suivant) :
   sans le champ `context`.
 - `max_severity` : la sévérité la plus haute parmi les findings joints, ou
   `null` si aucun.
+
+`CodeSearchResult` a un schéma **unique et stable**, y compris quand `ccc` est
+indisponible (`CccUnavailable`) — pas de forme alternative selon le cas, pour
+que l'`outputSchema` reste valide dans les deux branches :
+```json
+{
+  "results": [...],                 // vide si ccc indisponible
+  "findings_only_fallback": [...],  // FindingHit[] ; vide si ccc disponible
+  "warning": null                   // string explicative si repli sur findings_only_fallback
+}
+```
 
 ## 4. Skill Claude Code (distribué séparément — `~/cocoindex-ext-skill/SKILL.md`)
 
@@ -187,5 +208,5 @@ existants plutôt que bloquer inutilement.
 | Semgrep échoue ou dépasse le timeout | `cccf index` | stderr + code 2, base inchangée |
 | `.cccf/findings.db` absent | `cccf search` / `cccf summary` | stderr (message exact) + code 2 |
 | Embeddings incompatibles avec la requête | `cccf search` | stderr actionnable + code 2 |
-| Toute exception | tools MCP | `{"error": "<message>"}`, jamais de crash serveur |
-| `ccc` absent ou en erreur | `search_code_with_findings` | fallback sur `search_findings`, jamais d'échec sec |
+| Toute exception | tools MCP | remonte telle quelle → `ToolError` FastMCP → `isError: true` côté protocole ; le serveur reste utilisable pour l'appel suivant |
+| `ccc` absent ou en erreur | `search_code_with_findings` | pas une erreur : repli sur `findings_only_fallback` (recherche findings seule) + `warning` explicatif, `results` vide |

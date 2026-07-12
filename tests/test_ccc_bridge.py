@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import stat
@@ -135,8 +134,9 @@ def test_mcp_tool_falls_back_when_ccc_unavailable(
 
     from cccf.mcp_server import search_code_with_findings
 
-    result = json.loads(search_code_with_findings("injection sql"))
+    result = search_code_with_findings("injection sql")
 
-    assert result["error"] == "ccc non disponible"
-    assert isinstance(result["fallback"], list)
-    assert len(result["fallback"]) == 4
+    assert result["results"] == []
+    assert result["warning"] == "ccc indisponible : recherche restreinte aux findings Semgrep"
+    assert isinstance(result["findings_only_fallback"], list)
+    assert len(result["findings_only_fallback"]) == 4
