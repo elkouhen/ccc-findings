@@ -6,15 +6,18 @@ from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
 from cccf.config import load_config
 from cccf.embedder import make_embedder
+from cccf.flow import trace_flow
 from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
 from cccf.indexer import IndexReport, index_repo
 from cccf.render import (
     EndpointHit,
     FindingHit,
     FindingsSummary,
+    FlowResultInfo,
     GraphResult,
     WorkspaceResult,
     render_endpoints_json,
+    render_flow_json,
     render_graph_json,
     render_search_json,
     render_summary_json,
@@ -182,3 +185,36 @@ def list_workspace_services(root: str) -> WorkspaceResult:
     services = discover_maven_services(Path(root))
     federation = load_federation(services)
     return render_workspace_json(services, federation)
+
+
+@mcp.tool()
+def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowResultInfo:
+    """Résout `query` en topic Kafka ou route REST (nom exact, sinon
+    sous-chaîne non ambiguë parmi les endpoints indexés, BACKLOG-10 K5) et
+    liste tous ses sites (producteurs/consommateurs Kafka, ou
+    serveurs/appelants REST) avec les findings Semgrep qui les recouvrent.
+    Utiliser pour comprendre qui produit/consomme un topic donné, ou qui
+    appelle une route donnée, avant de plonger dans le code. Sans
+    `workspace_root`, ne cherche que dans le projet courant ; avec, fédère
+    les autres microservices du répertoire (BACKLOG-11 A2, lecture seule)
+    pour un flux qui traverse plusieurs services. Requête sans
+    correspondance, ou ambiguë, lève une erreur explicite plutôt que de
+    deviner un topic au hasard.
+    """
+    repo_root = _repo_root()
+    warnings: list[str] = []
+
+    if workspace_root is None:
+        _require_index(repo_root)
+        with Store(repo_root) as store:
+            endpoints_by_service: dict[str | None, list] = {None: store.all_endpoints()}
+            findings_by_service: dict[str | None, list] = {None: store.all_findings()}
+    else:
+        services = discover_maven_services(Path(workspace_root))
+        federation = load_federation(services)
+        endpoints_by_service = dict(federation.endpoints_by_service)
+        findings_by_service = dict(federation.findings_by_service)
+        warnings = federation.warnings
+
+    result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
+    return render_flow_json(result)

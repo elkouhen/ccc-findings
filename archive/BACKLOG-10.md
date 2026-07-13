@@ -233,7 +233,7 @@ l'ordre :
   **Reste à couvrir** : schéma lié (K4, non livré) — absent du rendu tant
   que K4 n'existe pas.
 
-### [ ] K6 — Tool MCP `trace_message_flow` + mise à jour du skill
+### [x] K6 — Tool MCP `trace_message_flow` + mise à jour du skill
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/mcp_server.py`, `tests/test_mcp_server.py`,
   `docs/SPEC-FONC.md` ; repo `ccc-findings-skill` : `skills/cccf/SKILL.md`
@@ -245,6 +245,21 @@ l'ordre :
   1. Tool listé par `cccf mcp`, sortie structurée testée.
   2. Topic inconnu → `ToolError` explicite.
   3. `SKILL.md` mis à jour dans le repo skill (commit séparé là-bas).
+- **Statut** : livré. `trace_message_flow(query, workspace_root=None) ->
+  FlowResultInfo` dans `mcp_server.py` — même logique que la CLI `cccf
+  flow` (K5) : sans `workspace_root`, `_require_index` puis endpoints/
+  findings du projet courant (`service: null`) ; avec, fédère via
+  `discover_maven_services`/`load_federation` (A2). `FlowError` (requête
+  introuvable ou ambiguë) et l'erreur d'index absent ne sont pas
+  interceptées : elles remontent telles quelles, FastMCP les convertit en
+  `ToolError`/`isError: true` (CA2, même mécanique que les 7 autres tools,
+  ADR-18/22). Testé dans `tests/test_mcp_server.py` : sites avec finding
+  recouvrant (fonction nue), `ToolError` sur index absent et sur requête
+  inconnue (via `mcp.call_tool`), et un flux fédéré de bout en bout sur la
+  fixture `kafka_workspace` (producteur `order-service` → consommateur
+  `payment-service`, deux services indexés séparément). `SKILL.md` mis à
+  jour côté skill (workflow étendu avec `flow`, commit séparé — voir
+  `ccc-findings-skill`).
 
 ### [x] K7 — Workspace multi-dépôts (fédération read-only)
 - **Priorité** : HAUTE (prérequis de K12 : sans fédération, pas de cycle

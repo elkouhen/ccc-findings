@@ -7,6 +7,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from typer.testing import CliRunner
 
 from cccf.cli import app
+from cccf.flow import FlowError
 from cccf.mcp_server import (
     findings_summary,
     graph,
@@ -15,8 +16,9 @@ from cccf.mcp_server import (
     mcp,
     reindex_findings,
     search_findings,
+    trace_message_flow,
 )
-from cccf.models import MessageEndpoint, compute_endpoint_id
+from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
 from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -250,3 +252,113 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
     }
     assert len(result["hotspots"]) >= 1
     assert result["note"] == ""
+
+
+def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    produce = MessageEndpoint(
+        id=compute_endpoint_id("produce", "orders.created", "app/Producer.java", 10, 10),
+        role="produce",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Producer.java",
+        start_line=10,
+        end_line=10,
+        snippet="",
+    )
+    consume = MessageEndpoint(
+        id=compute_endpoint_id("consume", "orders.created", "app/Consumer.java", 5, 7),
+        role="consume",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Consumer.java",
+        start_line=5,
+        end_line=7,
+        snippet="",
+    )
+    finding = Finding(
+        id="finding-1",
+        rule_id="cccf.demo.fire-and-forget",
+        severity="WARNING",
+        message="message",
+        path="app/Producer.java",
+        start_line=10,
+        end_line=10,
+        snippet="",
+        fix=None,
+        cwe=[],
+        owasp=[],
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Producer.java", "app/Consumer.java"], [produce, consume])
+        store.replace_findings_for_files(["app/Producer.java"], [finding])
+
+    result = trace_message_flow("orders.created")
+
+    assert result["resolved_topic"] == "orders.created"
+    by_path = {site["path"]: site for site in result["sites"]}
+    assert by_path["app/Producer.java"]["finding_rule_ids"] == ["cccf.demo.fire-and-forget"]
+    assert by_path["app/Consumer.java"]["finding_rule_ids"] == []
+    assert result["warnings"] == []
+
+
+def test_trace_message_flow_tool_unknown_query_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+
+    with pytest.raises(FlowError):
+        trace_message_flow("does-not-exist")
+
+
+def test_trace_message_flow_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ToolError, match="Index absent"):
+        asyncio.run(mcp.call_tool("trace_message_flow", {"query": "orders.created"}))
+
+
+def test_trace_message_flow_tool_unknown_query_surfaces_as_mcp_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+
+    with pytest.raises(ToolError):
+        asyncio.run(mcp.call_tool("trace_message_flow", {"query": "does-not-exist"}))
+
+
+@pytest.mark.integration
+def test_trace_message_flow_tool_with_workspace_root_traces_across_services(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-10 K6 : trace_message_flow(workspace_root=...) relie un
+    producteur et un consommateur fédérés depuis deux services indexés
+    séparément (même fixture que tests/test_k5_flow_e2e.py, côté CLI)."""
+    kafka_workspace = FIXTURES_DIR / "kafka_workspace"
+    dest = tmp_path / "kafka_workspace"
+    shutil.copytree(kafka_workspace, dest)
+    for service in ("order-service", "payment-service"):
+        monkeypatch.chdir(dest / service)
+        runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
+        index_result = runner.invoke(app, ["index"])
+        assert index_result.exit_code == 0
+
+    monkeypatch.chdir(dest / "order-service")
+    result = trace_message_flow("orders.created", workspace_root=str(dest))
+
+    services = {site["service"] for site in result["sites"]}
+    assert services == {"order-service", "payment-service"}

@@ -363,7 +363,7 @@ Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 
 ## 3. Serveur MCP
 
-Sept tools, chacun annoté avec un type de retour concret (`TypedDict` ou
+Huit tools, chacun annoté avec un type de retour concret (`TypedDict` ou
 dataclass, jamais `str`) — FastMCP en dérive un `outputSchema` par champ,
 exposé aux clients MCP en plus du texte JSON habituel (`structuredContent`
 *et* `content` texte, les deux dans la même réponse ; un client qui ignore le
@@ -383,6 +383,7 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Liste filtrable des endpoints REST/Kafka indexés — équivalent à la CLI `cccf endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
 | `graph(workspace_root=None)` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph`/`cccf graph --workspace` | `cycles`/`hotspots` vides sans `workspace_root` (ADR-27) ; réels sinon (fédération A2) |
 | `list_workspace_services(root)` | `WorkspaceResult` | Découverte de modules Maven + comptage endpoints/findings par service — équivalent à la CLI `cccf workspace` | Lecture seule (ADR-30) ; BACKLOG-11 A2 |
+| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Résout un topic/route et liste ses sites (producteurs/consommateurs, ou serveurs/appelants) avec les findings qui les recouvrent — équivalent à la CLI `cccf flow`/`cccf flow --workspace` | Requête sans correspondance ou ambiguë → `ToolError` (BACKLOG-10 K5/K6) |
 
 `search` ajoute à chaque résultat de code :
 - `findings` : liste des findings dont `path` est identique et dont la plage
