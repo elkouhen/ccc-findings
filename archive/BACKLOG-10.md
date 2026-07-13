@@ -143,9 +143,34 @@ l'ordre :
   `cccf endpoints`/`cccf graph` (CLI + MCP) — voir A1 dans
   `archive/BACKLOG-11.md`. Depuis J4 (`archive/BACKLOG-12.md`), la résolution
   Spring est cacheée, orientée module source, et couvre aussi les variantes
-  `application-*.yml` / `bootstrap*`. Restent à couvrir : suivi d'une variable
-  alimentée par `@Value(...)` ailleurs dans la classe, `confluent-kafka`
-  (API bas niveau hors Spring).
+  `application-*.yml` / `bootstrap*`.
+
+  **Reliquat livré** : une variable alimentée par `@Value("${...}")` ailleurs
+  dans la classe (`@KafkaListener(topics = ordersTopic)`,
+  `kafkaTemplate.send(ordersTopic, ...)`) est désormais suivie —
+  `_BARE_TOPIC_VAR_RE` isole le nom de variable sur la première ligne du
+  snippet quand aucun littéral n'est trouvé, `_resolve_value_annotated_variable`
+  cherche une déclaration `@Value("${clé}") ... ordersTopic;` dans le même
+  fichier source (`_VALUE_FIELD_RE`, regex sur le texte — pas d'AST Java,
+  pas de suivi inter-fichiers), puis résout la clé trouvée comme un
+  placeholder normal (`resolve_spring_property`). `confluent-kafka` (API bas
+  niveau, hors Spring) : produire via `new ProducerRecord(...)` était déjà
+  couvert (même classe, Spring ou non) ; consommer via
+  `KafkaConsumer.subscribe(...)` ne l'était pas — nouvelle règle
+  `cccf.kafka.java.consume-raw`, restreinte à
+  `subscribe(Collections.singletonList(...)/Arrays.asList(...)/List.of(...))`
+  pour ne jamais confondre avec un `.subscribe(...)` non-Kafka (RxJava/
+  Reactor prennent un lambda/`Observer`, jamais une `Collection<String>`
+  construite par ces helpers — vérifié empiriquement sans faux positif sur
+  un exemple Reactor `Flux.subscribe(value -> ...)`). Testé dans
+  `tests/test_kafka_endpoints.py` (nouvelles fixtures
+  `ValueAnnotatedConsumer.java`, `RawKafkaConsumer.java`).
+
+  **Reste à couvrir** : `subscribe(Pattern.compile(...))` (abonnement Kafka
+  par motif de nom, sémantiquement différent d'un topic littéral, pas
+  distingué), et la résolution `@Value` reste locale au fichier source (pas
+  de suivi si le champ est hérité d'une classe parente ou injecté par un
+  setter dans un autre fichier).
 
 ### [x] K3 — Pipeline d'indexation des endpoints + embeddings
 - **Priorité** : HAUTE

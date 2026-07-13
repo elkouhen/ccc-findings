@@ -126,6 +126,21 @@ _QUOTED_STRING_RE = re.compile(r"f?[\"']([^\"']*)[\"']")
 _PROPERTY_PLACEHOLDER_RE = re.compile(r"^\$\{([^}]+)\}$")
 _MULTI_SLASH_RE = re.compile(r"/{2,}")
 
+# BACKLOG-10 K2 (reliquat) : `@KafkaListener(topics = someVar)` ou
+# `kafkaTemplate.send(someVar, ...)` où `someVar` n'est pas un littéral mais
+# une variable alimentée ailleurs dans la classe par `@Value("${...}")` —
+# retrouver le nom de variable en jeu (pas son contenu, absent du snippet)
+# avant de la résoudre contre les champs `@Value` du fichier source.
+_BARE_TOPIC_VAR_RE = re.compile(
+    r"(?:topics\s*=\s*|\.send\(\s*|ProducerRecord\(\s*)([A-Za-z_]\w*)\s*[,)]"
+)
+_VALUE_FIELD_RE = re.compile(
+    r'@Value\(\s*"\$\{([^}]+)\}"\s*\)\s*'
+    r"(?:private\s+|protected\s+|public\s+|final\s+|static\s+)*"
+    r"[\w.<>\[\],\s]+?\s+"
+    r"(\w+)\s*[;=]"
+)
+
 _SPRING_BASE_FILENAMES = (
     "application.yml",
     "application.yaml",
@@ -280,6 +295,30 @@ def resolve_spring_property(
     return default or None
 
 
+@lru_cache(maxsize=512)
+def _load_value_annotated_fields(path_str: str) -> dict[str, str]:
+    """Champs `@Value("${clé}")` d'un fichier source Java — variable ->
+    clé de propriété (avec éventuel `:défaut`, laissé tel quel pour
+    `resolve_spring_property`). Best-effort par regex sur le texte source,
+    même esprit que le reste de l'extraction (ADR-26) : pas d'AST Java."""
+    path = Path(path_str)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return {match.group(2): match.group(1) for match in _VALUE_FIELD_RE.finditer(text)}
+
+
+def _resolve_value_annotated_variable(
+    repo_root: Path, source_path: str, var_name: str
+) -> str | None:
+    fields = _load_value_annotated_fields(str(repo_root / source_path))
+    property_key = fields.get(var_name)
+    if property_key is None:
+        return None
+    return resolve_spring_property(repo_root, property_key, source_path)
+
+
 def _extract_kafka_topic(
     snippet: str, repo_root: Path, source_path: str | None = None
 ) -> tuple[str, bool]:
@@ -287,9 +326,21 @@ def _extract_kafka_topic(
     (placeholder Spring, ex. `@KafkaListener(topics = "${app.kafka.topics.
     orders}")`) n'est pas un nom de topic mais une clé de configuration :
     tentative de résolution via `resolve_spring_property` avant de retomber
-    sur dynamique si la clé est introuvable — jamais résolu au hasard."""
+    sur dynamique si la clé est introuvable — jamais résolu au hasard. Une
+    variable (pas de littéral du tout, ex. `topics = ordersTopic`) est
+    tentée contre les champs `@Value("${...}")` du même fichier source
+    (`_resolve_value_annotated_variable`) avant d'abandonner en dynamique."""
     literal, dynamic = _find_first_literal(snippet)
     if literal is None:
+        if source_path is not None:
+            first_line = snippet.splitlines()[0] if snippet else ""
+            var_match = _BARE_TOPIC_VAR_RE.search(first_line)
+            if var_match is not None:
+                resolved = _resolve_value_annotated_variable(
+                    repo_root, source_path, var_match.group(1)
+                )
+                if resolved is not None:
+                    return resolved, False
         return "<dynamic>", True
 
     placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)

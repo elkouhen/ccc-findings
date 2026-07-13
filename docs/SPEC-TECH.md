@@ -298,6 +298,31 @@ source_path)` plutôt que traité comme un nom de topic littéral (ADR-28).
 Résolu → `topic_dynamic=False`, `topic` = la valeur résolue ; non résolu →
 le placeholder est conservé tel quel, `topic_dynamic=True`.
 
+**Variable alimentée par `@Value` (BACKLOG-10 K2, reliquat)** : quand
+`_find_first_literal` ne trouve aucun littéral du tout (ex.
+`@KafkaListener(topics = ordersTopic)`, `kafkaTemplate.send(ordersTopic,
+...)`), `_extract_kafka_topic` tente `_BARE_TOPIC_VAR_RE` sur la première
+ligne du snippet pour isoler le nom de la variable (après `topics = `,
+`.send(` ou `ProducerRecord(`), puis `_resolve_value_annotated_variable
+(repo_root, source_path, var_name)` : cherche dans le **même fichier
+source** une déclaration `@Value("${clé}") ... var_name;`
+(`_VALUE_FIELD_RE`, regex sur le texte — pas d'AST Java, pas de suivi
+inter-fichiers ni de résolution d'héritage) via `_load_value_annotated_fields`
+(caché par fichier, `lru_cache`), puis résout la clé trouvée comme un
+placeholder normal (`resolve_spring_property`). Variable absente des champs
+`@Value` du fichier → `<dynamic>`, comme avant cette tâche.
+
+**API bas niveau `kafka-clients` (BACKLOG-10 K2, reliquat)** : produire via
+`new ProducerRecord(...)` était déjà couvert avant cette tâche (même classe
+`org.apache.kafka.clients.producer.ProducerRecord`, Spring ou non).
+Consommer via l'API bas niveau ne l'était pas : `cccf.kafka.java.consume-raw`
+(côté skill) capte `$CONSUMER.subscribe(Collections.singletonList(...))`/
+`Arrays.asList(...)`/`List.of(...)` — restreint à ces trois formes pour ne
+jamais confondre avec un `.subscribe(...)` non-Kafka (RxJava/Reactor
+prennent un lambda/`Observer`, jamais une `Collection<String>` construite
+par ces helpers). `subscribe(Pattern.compile(...))` (abonnement par motif
+de nom) n'est pas couvert — documenté, pas traité en silence.
+
 `resolve_spring_property(repo_root, property_key, source_path=None)` :
 `property_key` accepte la syntaxe Spring `prop` ou `prop:défaut`. Cherche la
 clé (aplatie en notation pointée pour le YAML imbriqué) dans les configs

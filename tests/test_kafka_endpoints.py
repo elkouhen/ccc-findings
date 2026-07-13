@@ -117,10 +117,71 @@ def test_kafka_produce_single_arg_send_of_producer_record_is_not_double_counted(
 
 
 @pytest.mark.integration
+def test_kafka_listener_resolves_value_annotated_field_variable() -> None:
+    """`@KafkaListener(topics = ordersTopic)` où `ordersTopic` n'est pas un
+    littéral mais un champ `@Value("${...}")` — résolu contre ce champ,
+    puis contre application.yml, sans jamais deviner (BACKLOG-10 K2)."""
+    endpoints = run_semgrep_endpoints(
+        KAFKA_REPO, make_config(), files=["app/java/ValueAnnotatedConsumer.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    resolved = by_line[24]  # topics = ordersTopic -> @Value("${app.kafka.topics.orders}")
+    assert resolved.topic == "orders.created"
+    assert resolved.topic_dynamic is False
+
+
+@pytest.mark.integration
+def test_kafka_send_resolves_value_annotated_field_with_default() -> None:
+    endpoints = run_semgrep_endpoints(
+        KAFKA_REPO, make_config(), files=["app/java/ValueAnnotatedConsumer.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    # send(fallbackTopic, payload) -> @Value("${app.kafka.topics.missing:orders.fallback}")
+    defaulted = by_line[29]
+    assert defaulted.topic == "orders.fallback"
+    assert defaulted.topic_dynamic is False
+
+
+@pytest.mark.integration
+def test_kafka_send_keeps_value_annotated_field_dynamic_when_unresolvable() -> None:
+    endpoints = run_semgrep_endpoints(
+        KAFKA_REPO, make_config(), files=["app/java/ValueAnnotatedConsumer.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    # send(unresolvableTopic, payload) -> @Value("${app.kafka.topics.unresolvable}"),
+    # clé absente d'application.yml et pas de défaut : jamais résolu au hasard.
+    unresolved = by_line[33]
+    assert unresolved.topic == "<dynamic>"
+    assert unresolved.topic_dynamic is True
+
+
+@pytest.mark.integration
+def test_kafka_raw_consumer_subscribe_extracts_literal_topic() -> None:
+    """API bas niveau (confluent-kafka / kafka-clients, hors Spring) :
+    KafkaConsumer.subscribe(Collections.singletonList("...")) (BACKLOG-10 K2)."""
+    endpoints = run_semgrep_endpoints(
+        KAFKA_REPO, make_config(), files=["app/java/RawKafkaConsumer.java"]
+    )
+
+    assert len(endpoints) == 1
+    endpoint = endpoints[0]
+    assert endpoint.role == "consume"
+    assert endpoint.system == "kafka"
+    assert endpoint.framework == "kafka-clients"
+    assert endpoint.topic == "orders.created"
+    assert endpoint.topic_dynamic is False
+
+
+@pytest.mark.integration
 def test_kafka_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(KAFKA_REPO, make_config())
 
-    assert len(endpoints) == 8  # 4 consume + 4 produce
+    # OrderConsumer/OrderProducer : 4 consume + 4 produce ; ValueAnnotatedConsumer :
+    # 1 consume + 2 produce ; RawKafkaConsumer : 1 consume (kafka-clients)
+    assert len(endpoints) == 12
     assert {e.role for e in endpoints} == {"consume", "produce"}
     assert {e.system for e in endpoints} == {"kafka"}
 

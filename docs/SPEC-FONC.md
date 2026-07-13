@@ -561,7 +561,8 @@ skill).
 |---|---|---|
 | `cccf.kafka.java.consume` | `consume` | Méthode `@KafkaListener(topics = "...")` |
 | `cccf.kafka.java.produce-template` | `produce` | `KafkaTemplate.send(topic, valeur, ...)` (au moins 2 arguments — exclut `send(ProducerRecord)`, déjà couvert ci-dessous) ou `KafkaTemplate.sendDefault(...)` (topic implicite, toujours dynamique) |
-| `cccf.kafka.java.produce-record` | `produce` | `new ProducerRecord(topic, ...)` |
+| `cccf.kafka.java.produce-record` | `produce` | `new ProducerRecord(topic, ...)` (API bas niveau `kafka-clients` **et** Spring, mêmes classes) |
+| `cccf.kafka.java.consume-raw` | `consume` | `KafkaConsumer.subscribe(Collections.singletonList(...))`/`Arrays.asList(...)`/`List.of(...)` — API bas niveau (confluent-kafka), hors `@KafkaListener` |
 
 Le topic est extrait comme pour REST (`extra.metadata.role`, pas de
 `http_method` ici), avec un cas supplémentaire propre à Kafka/Spring : un
@@ -574,10 +575,24 @@ support de la syntaxe de défaut Spring `${prop:défaut}`) via
 `resolve_spring_property` — voir ADR-28. Résolu → `topic_dynamic=False`,
 topic = la valeur trouvée (ou le défaut) ; introuvable et sans défaut →
 `topic_dynamic=True`, le placeholder est conservé tel quel (jamais résolu
-au hasard). Une variable alimentée par un `@Value("${...}")` ailleurs dans
-la classe n'est pas suivie (pas d'analyse de flux de données entre
-statements) : seul le placeholder textuel dans l'annotation/l'appel est
-résolu.
+au hasard).
+
+Une variable alimentée par un `@Value("${...}")` ailleurs dans la classe
+(`@KafkaListener(topics = ordersTopic)`, `kafkaTemplate.send(ordersTopic,
+...)`) **est** désormais suivie, best-effort : `_extract_kafka_topic`
+retrouve le nom de la variable dans le snippet, puis cherche une
+déclaration de champ `@Value("${clé}") ... ordersTopic;` dans le même
+fichier source (regex sur le texte, pas d'AST Java ni d'analyse de flux de
+données entre statements — même esprit ADR-26) ; la clé trouvée est
+résolue comme un placeholder normal (`resolve_spring_property`). Variable
+non alimentée par un `@Value` dans le même fichier (paramètre de méthode,
+champ initialisé autrement) → toujours `<dynamic>`, jamais résolu au
+hasard. `KafkaConsumer.subscribe(...)` est volontairement restreint aux
+trois formes de collection usuelles (`Collections.singletonList`/
+`Arrays.asList`/`List.of`) pour ne jamais confondre un `.subscribe(...)`
+RxJava/Reactor (lambda/Observer, jamais une `Collection<String>`) avec un
+abonnement Kafka — `subscribe(Pattern.compile(...))` (abonnement par motif
+de nom) n'est pas couvert.
 
 ## 9. Pack de règles sécurité Kafka (BACKLOG-10 K8, volet sécurité)
 

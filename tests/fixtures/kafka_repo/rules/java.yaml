@@ -42,3 +42,23 @@ rules:
       - pattern-either:
           - pattern: new ProducerRecord($TOPIC, $KEY, $VAL)
           - pattern: new ProducerRecord($TOPIC, $VAL)
+
+  # API bas niveau (confluent-kafka / kafka-clients, hors Spring) :
+  # KafkaConsumer.subscribe(...) — restreint aux formes de collection
+  # usuelles pour éviter tout faux positif avec un .subscribe(...) non-Kafka
+  # (RxJava/Reactor prennent un lambda/Observer, jamais une Collection<String>
+  # construite par ces trois helpers).
+  - id: cccf.kafka.java.consume-raw
+    languages: [java]
+    severity: INFO
+    message: Consommation Kafka (API bas niveau, KafkaConsumer.subscribe).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: consume
+      framework: kafka-clients
+    patterns:
+      - pattern-either:
+          - pattern: $CONSUMER.subscribe(Collections.singletonList(...))
+          - pattern: $CONSUMER.subscribe(Arrays.asList(...))
+          - pattern: $CONSUMER.subscribe(List.of(...))
