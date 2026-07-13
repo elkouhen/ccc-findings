@@ -13,6 +13,8 @@ from cccf.graph import find_outbound_calls_in_consumers
 from cccf.indexer import index_repo
 from cccf.render import (
     render_code_search_text,
+    render_endpoints_json,
+    render_endpoints_text,
     render_fallback_findings_text,
     render_graph_json,
     render_graph_text,
@@ -116,7 +118,8 @@ def index_cmd(
 
     typer.echo(
         f"scanned={report.scanned} skipped={report.skipped} "
-        f"+findings={report.findings_added} -findings={report.findings_removed}"
+        f"+findings={report.findings_added} -findings={report.findings_removed} "
+        f"+endpoints={report.endpoints_added} -endpoints={report.endpoints_removed}"
     )
 
 
@@ -217,6 +220,31 @@ def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(json.dumps(render_summary_json(result)))
     else:
         typer.echo(render_summary_text(result))
+
+
+@app.command(name="endpoints")
+def endpoints_cmd(
+    system: Optional[str] = typer.Option(None, "--system"),  # noqa: UP007
+    role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
+    topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
+    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1),
+    filtrable par système, rôle, topic exact ou motif de chemin.
+    """
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints(
+            system=system, role=role, topic=topic, path_glob=path
+        )
+
+    if json_output:
+        typer.echo(json.dumps(render_endpoints_json(endpoints)))
+    else:
+        typer.echo(render_endpoints_text(endpoints))
 
 
 @app.command(name="graph")

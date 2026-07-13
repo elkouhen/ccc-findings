@@ -51,29 +51,38 @@ Crée `.cccf/config.yml`.
   fichier existant n'est jamais écrasé.
 
 ### `cccf index [--full] [--engine manual|cocoindex]`
-Indexe le projet (findings Semgrep).
+Indexe le projet (findings Semgrep **et** endpoints REST/Kafka —
+BACKLOG-11 A1).
 
 - Par défaut : incrémental — ne re-scanne que les fichiers ajoutés ou
   modifiés depuis la dernière indexation (hash SHA-256 par fichier) ; les
-  fichiers supprimés du disque voient leurs findings purgés.
+  fichiers supprimés du disque voient leurs findings et endpoints purgés.
 - `--full` : force un scan complet, comme si tous les fichiers étaient
   modifiés (les fichiers supprimés du disque sont quand même purgés).
-- `--engine manual` (défaut) : indexe uniquement les findings, avec le moteur
-  incrémental historique.
+- `--engine manual` (défaut) : indexe les findings et les endpoints, avec le
+  moteur incrémental historique.
 - `--engine cocoindex` : mode expérimental inspiré de CocoIndex. Il indexe les
-  mêmes findings et ajoute un index local de chunks de code (`code_chunks` +
-  embeddings) utilisé ensuite par `cccf search` avant de retomber sur `ccc`.
+  mêmes findings et endpoints, et ajoute un index local de chunks de code
+  (`code_chunks` + embeddings) utilisé ensuite par `cccf search` avant de
+  retomber sur `ccc`.
+- Un seul scan Semgrep par indexation : `config.rules` peut mélanger règles
+  de findings (`default`, `liveness`) et règles d'inventaire d'endpoints
+  (`rest`, `kafka`, `metadata.category: endpoint-inventory`) — chacune
+  finit dans la bonne table, sans se marcher dessus (voir
+  `docs/SPEC-TECH.md#3-pipeline-dindexation-indexerindex_repo`). Les règles
+  d'inventaire ne sont pas filtrées par `min_severity`.
 - Sortie sur une ligne :
-  `scanned=<N> skipped=<N> +findings=<N> -findings=<N>`
+  `scanned=<N> skipped=<N> +findings=<N> -findings=<N> +endpoints=<N> -endpoints=<N>`
   - `scanned` : nombre de fichiers (re)scannés.
   - `skipped` : nombre de fichiers inchangés, non re-scannés.
-  - `+findings` : nombre de findings (ré)insérés pour les fichiers scannés.
-  - `-findings` : nombre de findings supprimés (fichiers scannés dont un
-    finding a disparu, ou fichiers supprimés du disque).
+  - `+findings`/`-findings` : findings (ré)insérés / supprimés pour les
+    fichiers scannés ou supprimés du disque.
+  - `+endpoints`/`-endpoints` : endpoints (ré)insérés / supprimés, même
+    logique.
 - Code de sortie 0 en cas de succès.
 - Échec Semgrep (timeout, crash, code retour inattendu) : message d'erreur sur
   stderr, **code de sortie 2**, la base `.cccf/findings.db` reste inchangée
-  (aucune écriture partielle).
+  (aucune écriture partielle, findings et endpoints compris).
 - `.cccf/config.yml` absent ou invalide : message d'erreur sur stderr, code de
   sortie 1.
 
@@ -190,6 +199,26 @@ Rendu `--json` :
 
 Mêmes règles d'index absent que `findings` (message identique, code 2).
 
+### `cccf endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--json]`
+Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1).
+Filtres optionnels combinables :
+
+| Option | Effet |
+|---|---|
+| `--system` | `rest` ou `kafka` |
+| `--role` | `serve`/`call` (rest) ou `produce`/`consume` (kafka) |
+| `--topic` | égalité exacte sur `topic` (ex. `"GET /orders/{id}"`, `"orders.created"`) |
+| `--path` | motif de chemin (`fnmatch`), même style que `cccf search --path` |
+
+Rendu texte, une ligne par endpoint :
+`[<system>/<role>] <topic>[ (dynamique)]  <path>:<start>-<end>`
+
+Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
+`topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`).
+
+Mêmes règles d'index absent que `findings` (message identique, code 2) —
+`endpoints` vit dans la même base que `findings`.
+
 ### `cccf graph [--json]`
 Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12) :
 appels REST synchrones détectés dans un handler de consommation Kafka (même
@@ -226,7 +255,7 @@ Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 
 ## 3. Serveur MCP
 
-Cinq tools, chacun annoté avec un type de retour concret (`TypedDict` ou
+Six tools, chacun annoté avec un type de retour concret (`TypedDict` ou
 dataclass, jamais `str`) — FastMCP en dérive un `outputSchema` par champ,
 exposé aux clients MCP en plus du texte JSON habituel (`structuredContent`
 *et* `content` texte, les deux dans la même réponse ; un client qui ignore le
@@ -243,6 +272,7 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 | `findings_summary()` | `FindingsSummary` | Vue agrégée à faible coût | Même structure que `cccf summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Recherche de code annotée des findings qui recouvrent chaque résultat — même nom de tool, mêmes paramètres et même comportement que le `search` de ccc, et équivalent à la CLI `cccf search` (implémentation partagée, `code_search.py`) | Utilise l'index code expérimental s'il existe, sinon `ccc` |
+| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Liste filtrable des endpoints REST/Kafka indexés — équivalent à la CLI `cccf endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
 | `graph()` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph` | `cycles`/`hotspots` vides tant que K7 (fédération) n'est pas livré (ADR-27) |
 
 `search` ajoute à chaque résultat de code :

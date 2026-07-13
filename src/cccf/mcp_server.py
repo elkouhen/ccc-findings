@@ -9,9 +9,11 @@ from cccf.embedder import make_embedder
 from cccf.graph import find_outbound_calls_in_consumers
 from cccf.indexer import IndexReport, index_repo
 from cccf.render import (
+    EndpointHit,
     FindingHit,
     FindingsSummary,
     GraphResult,
+    render_endpoints_json,
     render_graph_json,
     render_search_json,
     render_summary_json,
@@ -107,6 +109,27 @@ def search(
     return run_code_search(
         _repo_root(), query, limit=limit, offset=offset, lang=lang, path=path, refresh=refresh
     )
+
+
+@mcp.tool()
+def list_endpoints(
+    system: str | None = None,
+    role: str | None = None,
+    topic: str | None = None,
+    path_glob: str | None = None,
+) -> list[EndpointHit]:
+    """Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1),
+    filtrable par système (rest/kafka), rôle (serve/call/produce/consume),
+    topic exact ou motif de chemin. Utiliser pour explorer l'inventaire des
+    échanges entre services avant d'appeler `graph`.
+    """
+    repo_root = _repo_root()
+    _require_index(repo_root)
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints(
+            system=system, role=role, topic=topic, path_glob=path_glob
+        )
+    return render_endpoints_json(endpoints)
 
 
 @mcp.tool()

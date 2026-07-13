@@ -14,7 +14,7 @@
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
 | `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` → `MessageEndpoint` (règles `metadata.category: endpoint-inventory`, REST K11 + Kafka K2) ; `resolve_spring_property` (K2, ADR-28) | `models`, `config` |
 | `store.py` | `Store` : persistance SQLite (findings, endpoints, chunks de code expérimentaux, hashs de fichiers, meta, embeddings) | `models` |
-| `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding ; peut aussi indexer des chunks de code) | `config`, `scanner`, `store`, `embedder` |
+| `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → findings + endpoints (A1) → embedding ; peut aussi indexer des chunks de code) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Adaptateur expérimental `--engine cocoindex` : findings + chunks de code comme états cibles typés | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
@@ -165,19 +165,29 @@ vide jusqu'au premier `replace_endpoints_for_files`.
    calculer leur sha256.
 2. Comparer aux hashs stockés (table files) → deleted / changed / unchanged.
    Si full=True : changed = tous les fichiers actuels.
-3. store.remove_files(deleted)  — purge fichiers + findings associés.
+3. store.remove_files(deleted)  — purge fichiers + findings + endpoints
+   associés (K1).
 4. Si changed non vide :
-     run_semgrep(repo_root, config, files=changed)
+     raw = invoke_semgrep_raw(repo_root, config, files=changed)  — UN SEUL
+       scan Semgrep, que config.rules mélange règles de findings et règles
+       d'inventaire d'endpoints (BACKLOG-11 A1) ou non.
+     findings = parse_semgrep_json(raw, repo_root), filtré par min_severity
+       (le filtre vivait dans run_semgrep, maintenant appliqué ici pour
+       partager `raw` avec les endpoints sans rescanner).
+     endpoints = parse_semgrep_endpoints(raw, repo_root)  — pas de filtre
+       min_severity (K8 CA2 : ce ne sont pas des findings).
      store.replace_findings_for_files(changed, findings)  — DELETE puis INSERT,
        unique mécanisme de mise à jour (gère nativement les findings corrigés).
+     store.replace_endpoints_for_files(changed, endpoints)  — même mécanique.
      set_file_hash pour chaque fichier de changed.
 5. Embedding (voir §5) :
        si meta.embedding_signature != signature de l'embedder courant :
          ré-embedder TOUT store.all_findings() et mettre à jour meta.
      sinon : n'embedder que les findings de `changed` dont l'id n'a pas déjà
        un embedding en base (iter_embeddings()).
+     Les endpoints ne sont pas embeddés (ADR-25 : hors périmètre K1).
 6. Retourner IndexReport(scanned, skipped, findings_added, findings_removed,
-   deleted_files).
+   deleted_files, endpoints_added, endpoints_removed).
 ```
 
 Avec `index_code_chunks=True` (utilisé par `coco_indexer.index_repo_with_cocoindex`) :

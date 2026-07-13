@@ -1,0 +1,34 @@
+rules:
+  - id: custom.system-out-println
+    languages: [java]
+    severity: WARNING
+    message: Ne pas utiliser System.out.println en production.
+    patterns:
+      - pattern: System.out.println(...)
+
+  - id: cccf.kafka.java.consume
+    languages: [java]
+    severity: INFO
+    message: Consommation Kafka (@KafkaListener).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: consume
+      framework: spring-kafka
+    patterns:
+      - pattern: |
+          @KafkaListener(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.call-post
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (POST).
+    metadata:
+      category: endpoint-inventory
+      system: rest
+      role: call
+      http_method: POST
+      framework: resttemplate
+    patterns:
+      - pattern: $REST.postForObject(...)

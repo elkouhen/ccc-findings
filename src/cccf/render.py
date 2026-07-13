@@ -233,3 +233,50 @@ def render_graph_text(result: GraphResult) -> str:
         lines.append("Aucun appel REST détecté dans un handler Kafka.")
     lines.append(result["note"])
     return "\n".join(lines)
+
+
+class EndpointHit(TypedDict):
+    """Shape returned by `cccf endpoints --json` and the `list_endpoints`
+    MCP tool (BACKLOG-11 A1)."""
+
+    id: str
+    role: str
+    system: str
+    topic: str
+    topic_dynamic: bool
+    source: str
+    framework: str | None
+    path: str
+    start_line: int
+    end_line: int
+
+
+def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]:
+    return [
+        EndpointHit(
+            id=e.id,
+            role=e.role,
+            system=e.system,
+            topic=e.topic,
+            topic_dynamic=e.topic_dynamic,
+            source=e.source,
+            framework=e.framework,
+            path=e.path,
+            start_line=e.start_line,
+            end_line=e.end_line,
+        )
+        for e in endpoints
+    ]
+
+
+def render_endpoints_text(endpoints: list[MessageEndpoint]) -> str:
+    if not endpoints:
+        return "Aucun endpoint indexé."
+    lines = []
+    for e in endpoints:
+        dynamic_marker = " (dynamique)" if e.topic_dynamic else ""
+        lines.append(
+            f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}  "
+            f"{e.path}:{e.start_line}-{e.end_line}"
+        )
+    return "\n".join(lines)

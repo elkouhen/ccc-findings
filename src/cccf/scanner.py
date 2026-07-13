@@ -87,8 +87,15 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
                 f"Sortie Semgrep JSON invalide : champ manquant ({exc})"
             ) from exc
 
-        snippet = _read_snippet(repo_root, path, start_line, end_line)
         metadata = extra.get("metadata") or {}
+        if metadata.get("category") == "endpoint-inventory":
+            # Règle d'inventaire d'endpoints (K2/K11) : ce n'est pas un
+            # finding, même si elle a tourné dans le même scan Semgrep que
+            # les règles de findings (cccf index les exécute ensemble) —
+            # voir parse_semgrep_endpoints.
+            continue
+
+        snippet = _read_snippet(repo_root, path, start_line, end_line)
         findings.append(
             Finding(
                 id=compute_finding_id(rule_id, path, snippet, start_line, end_line),
@@ -297,9 +304,14 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
     return endpoints
 
 
-def _invoke_semgrep(
+def invoke_semgrep_raw(
     repo_root: Path, config: Config, files: list[str] | None = None
 ) -> str:
+    """Sortie JSON brute d'un seul scan Semgrep sur `config.rules` (findings
+    et règles d'inventaire d'endpoints mélangées — `parse_semgrep_json` et
+    `parse_semgrep_endpoints` filtrent chacun ce qui les concerne sur la
+    même sortie). Public : `indexer.index_repo` (BACKLOG-11 A1) l'appelle
+    une seule fois par indexation plutôt que de scanner deux fois."""
     cmd = [
         "semgrep",
         "scan",
@@ -324,7 +336,7 @@ def _invoke_semgrep(
 def run_semgrep(
     repo_root: Path, config: Config, files: list[str] | None = None
 ) -> list[Finding]:
-    raw = _invoke_semgrep(repo_root, config, files)
+    raw = invoke_semgrep_raw(repo_root, config, files)
     findings = parse_semgrep_json(raw, repo_root)
     min_index = SEVERITY_ORDER.index(config.min_severity)
     return [f for f in findings if SEVERITY_ORDER.index(f.severity) >= min_index]
@@ -336,5 +348,5 @@ def run_semgrep_endpoints(
     """Comme `run_semgrep`, mais pour les règles d'inventaire d'endpoints
     (BACKLOG-10 K11) — pas de filtre `min_severity` : ce ne sont pas des
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
-    raw = _invoke_semgrep(repo_root, config, files)
+    raw = invoke_semgrep_raw(repo_root, config, files)
     return parse_semgrep_endpoints(raw, repo_root)

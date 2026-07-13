@@ -139,11 +139,12 @@ l'ordre :
   dans `scanner.py` (même fonction que K11, désormais partagée entre REST
   et Kafka via `metadata.system`), testés dans `tests/test_kafka_endpoints.
   py` (fixtures réelles incluant un `application.yml`, + tests unitaires de
-  `resolve_spring_property`). Pas encore branché dans `cccf index` ni dans
-  une commande CLI/MCP (K3 — voir A1 dans `archive/BACKLOG-11.md`). Restent
-  à couvrir : profils Spring (`application-prod.yml`), suivi d'une variable
-  alimentée par `@Value(...)` ailleurs dans la classe, `confluent-kafka`
-  (API bas niveau hors Spring).
+  `resolve_spring_property`). Branché dans `cccf index` et exposé via
+  `cccf endpoints`/`cccf graph` (CLI + MCP) — voir A1 dans
+  `archive/BACKLOG-11.md`. Restent à couvrir : profils Spring
+  (`application-prod.yml`), suivi d'une variable alimentée par
+  `@Value(...)` ailleurs dans la classe, `confluent-kafka` (API bas niveau
+  hors Spring).
 
 ### [ ] K3 — Pipeline d'indexation des endpoints + embeddings
 - **Priorité** : HAUTE
@@ -378,8 +379,8 @@ l'ordre :
   pour ce qui n'est pas un littéral. `parse_semgrep_endpoints`/
   `run_semgrep_endpoints` dans `scanner.py`, testés dans
   `tests/test_rest_endpoints.py` (fixtures réelles + fixtures JSON pour les
-  cas d'erreur). Pas encore branché dans `cccf index` ni dans une commande
-  CLI/MCP (K3, K5/K6 — voir A1 dans `archive/BACKLOG-11.md`). Reste à
+  cas d'erreur). Branché dans `cccf index` et exposé via `cccf endpoints`/
+  `cccf graph` (CLI + MCP) — voir A1 dans `archive/BACKLOG-11.md`. Reste à
   couvrir : `@RequestMapping` méthodes non-GET, `WebClient`/Feign.
 
 ### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)

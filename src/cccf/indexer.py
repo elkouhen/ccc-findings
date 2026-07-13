@@ -8,8 +8,13 @@ import numpy as np
 
 from cccf.config import Config
 from cccf.embedder import EmbeddingError, finding_to_text
-from cccf.models import Finding
-from cccf.scanner import run_semgrep
+from cccf.models import Finding, MessageEndpoint
+from cccf.scanner import (
+    SEVERITY_ORDER,
+    invoke_semgrep_raw,
+    parse_semgrep_endpoints,
+    parse_semgrep_json,
+)
 from cccf.store import CodeChunk, Store
 
 
@@ -24,6 +29,8 @@ class IndexReport:
     findings_added: int
     findings_removed: int
     deleted_files: int
+    endpoints_added: int = 0
+    endpoints_removed: int = 0
 
 
 def _sha256_file(path: Path) -> str:
@@ -172,16 +179,33 @@ def index_repo(
     unchanged = current_paths - set(changed)
 
     findings_removed = sum(len(store.all_findings(path_glob=p)) for p in deleted)
-    store.remove_files(deleted)
+    endpoints_removed = sum(len(store.all_endpoints(path_glob=p)) for p in deleted)
+    store.remove_files(deleted)  # purge aussi les endpoints (K1)
 
     findings_added = 0
+    endpoints_added = 0
     findings: list[Finding] = []
     if changed:
         findings_removed += sum(len(store.all_findings(path_glob=p)) for p in changed)
+        endpoints_removed += sum(len(store.all_endpoints(path_glob=p)) for p in changed)
 
-        findings = run_semgrep(repo_root, config, files=changed)
+        # Un seul scan Semgrep pour findings (K8/`default`) et règles
+        # d'inventaire d'endpoints (K2/K11) mélangées dans config.rules ;
+        # chaque parseur filtre ce qui le concerne sur la même sortie
+        # (BACKLOG-11 A1) — pas de min_severity pour les endpoints (K8 CA2).
+        raw = invoke_semgrep_raw(repo_root, config, files=changed)
+        min_index = SEVERITY_ORDER.index(config.min_severity)
+        findings = [
+            f
+            for f in parse_semgrep_json(raw, repo_root)
+            if SEVERITY_ORDER.index(f.severity) >= min_index
+        ]
+        endpoints: list[MessageEndpoint] = parse_semgrep_endpoints(raw, repo_root)
+
         store.replace_findings_for_files(changed, findings)
+        store.replace_endpoints_for_files(changed, endpoints)
         findings_added = len(findings)
+        endpoints_added = len(endpoints)
 
         for path in changed:
             store.set_file_hash(path, current_hashes[path])
@@ -221,4 +245,6 @@ def index_repo(
         findings_added=findings_added,
         findings_removed=findings_removed,
         deleted_files=len(deleted),
+        endpoints_added=endpoints_added,
+        endpoints_removed=endpoints_removed,
     )

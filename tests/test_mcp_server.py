@@ -7,7 +7,14 @@ from mcp.server.fastmcp.exceptions import ToolError
 from typer.testing import CliRunner
 
 from cccf.cli import app
-from cccf.mcp_server import findings_summary, graph, mcp, reindex_findings, search_findings
+from cccf.mcp_server import (
+    findings_summary,
+    graph,
+    list_endpoints,
+    mcp,
+    reindex_findings,
+    search_findings,
+)
 from cccf.models import MessageEndpoint, compute_endpoint_id
 from cccf.store import Store
 
@@ -147,3 +154,51 @@ def test_graph_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
 
     with pytest.raises(ToolError, match="Index absent"):
         asyncio.run(mcp.call_tool("graph", {}))
+
+
+def test_list_endpoints_tool_filters_by_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    consume = MessageEndpoint(
+        id=compute_endpoint_id("consume", "orders.created", "app/Consumer.java", 7, 9),
+        role="consume",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Consumer.java",
+        start_line=7,
+        end_line=9,
+        snippet="",
+    )
+    call = MessageEndpoint(
+        id=compute_endpoint_id("call", "POST /payments", "app/Consumer.java", 20, 20),
+        role="call",
+        system="rest",
+        topic="POST /payments",
+        topic_dynamic=False,
+        source="code",
+        framework="resttemplate",
+        path="app/Consumer.java",
+        start_line=20,
+        end_line=20,
+        snippet="",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Consumer.java"], [consume, call])
+
+    result = list_endpoints(role="consume")
+
+    assert len(result) == 1
+    assert result[0]["topic"] == "orders.created"
+
+
+def test_list_endpoints_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ToolError, match="Index absent"):
+        asyncio.run(mcp.call_tool("list_endpoints", {}))

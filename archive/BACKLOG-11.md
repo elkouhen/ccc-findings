@@ -19,7 +19,7 @@ et exécution robuste sur grands volumes.
 
 ## Tâches
 
-### [ ] A1 — Brancher l'inventaire d'endpoints dans `cccf index`
+### [x] A1 — Brancher l'inventaire d'endpoints dans `cccf index`
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/indexer.py`, `src/cccf/scanner.py`,
   `src/cccf/store.py`, `src/cccf/cli.py`, `src/cccf/mcp_server.py`,
@@ -40,30 +40,52 @@ et exécution robuste sur grands volumes.
   4. `cccf graph` retourne des résultats issus d'une indexation standard, sans
      fixture injectée directement dans le store.
   5. Les docs décrivent le comportement observable et le pipeline interne.
+- **Statut** : livré. `indexer.index_repo` fait un seul scan Semgrep
+  (`scanner.invoke_semgrep_raw`, ADR-29) partagé entre `parse_semgrep_json`
+  (findings, désormais filtre les résultats `category: endpoint-inventory`)
+  et `parse_semgrep_endpoints` (endpoints, pas de filtre `min_severity`,
+  CA2) — `store.replace_endpoints_for_files` par fichier changé,
+  `store.remove_files` purge aussi les endpoints (déjà vrai depuis K1).
+  `IndexReport` gagne `endpoints_added`/`endpoints_removed`. CLI `cccf
+  endpoints` et tool MCP `list_endpoints` (CA3), filtrables `system`/`role`/
+  `topic`/`path`. CA4 testé de bout en bout (`cccf init` + `cccf index` +
+  `cccf graph`/`cccf endpoints` sur `tests/fixtures/endpoint_index_repo/`,
+  sans rien injecter dans le store à la main) : un `@KafkaListener`
+  contenant un appel `RestTemplate` ressort correctement de `cccf graph`.
+  Docs à jour (`docs/SPEC-FONC.md`, `docs/SPEC-TECH.md`, ADR-29).
 
-### [ ] A2 — Fédérer plusieurs repos/services pour le graphe distribué
+### [ ] A2 — Fédérer un répertoire multi-services pour le graphe distribué
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/graph.py`, `src/cccf/store.py`,
   `src/cccf/cli.py`, `src/cccf/mcp_server.py`, `src/cccf/render.py`,
   `tests/test_graph.py`, `tests/test_cli.py`, `tests/test_mcp_server.py`,
   `docs/SPEC-FONC.md`, `docs/SPEC-TECH.md`, `docs/ADR.md`
-- **Description** : permettre à `cccf` de lire plusieurs bases `.cccf/findings.db`
-  en lecture seule, chacune associée à un nom de service, pour construire des
-  arêtes REST/Kafka inter-services, détecter des cycles et classer les hotspots
-  par findings recouvrants. La fédération reste locale-first : pas de serveur
-  central, pas de broker ou registry interrogé au runtime.
+- **Description** : permettre à `cccf` d'analyser un répertoire parent contenant
+  tous les microservices et des composants partagés (modules Maven communs),
+  puis de lire les index `.cccf/findings.db` des sous-projets en lecture seule,
+  chacun associé à un nom de service ou de module. L'objectif est de construire
+  des arêtes REST/Kafka inter-services, détecter des cycles et classer les
+  hotspots par findings recouvrants. La fédération reste locale-first : pas de
+  serveur central, pas de broker ou registry interrogé au runtime.
 - **CA** :
-  1. Une configuration ou option CLI déclare plusieurs services avec leur
-     chemin de repo et nom logique stable.
-  2. Le graphe REST relie un endpoint `call` d'un service à un endpoint `serve`
+  1. Une configuration ou option CLI déclare un répertoire racine à explorer et
+     permet d'identifier les sous-projets représentant des microservices ou des
+     modules Maven partagés.
+  2. Chaque sous-projet fédéré reçoit un nom logique stable, dérivé de sa
+     configuration Maven ou d'une configuration explicite quand la détection
+     automatique est ambiguë.
+  3. Le graphe REST relie un endpoint `call` d'un service à un endpoint `serve`
      d'un autre service quand méthode et chemin matchent.
-  3. Le graphe Kafka relie `produce` et `consume` sur topic identique entre
+  4. Le graphe Kafka relie `produce` et `consume` sur topic identique entre
      services distincts.
-  4. Les cycles inter-services sont rendus en JSON et texte avec les sites
+  5. Les modules partagés Maven sont distingués des microservices déployables :
+     ils peuvent porter des findings et du code appelé, mais ne sont pas traités
+     comme producteurs/consommateurs runtime sauf endpoint explicite.
+  6. Les cycles inter-services sont rendus en JSON et texte avec les sites
      fichier/lignes des deux extrémités.
-  5. Les hotspots croisent cycles et findings par service, fichier et lignes,
+  7. Les hotspots croisent cycles et findings par service, fichier et lignes,
      puis classent les résultats par sévérité.
-  6. Une base absente, non initialisée ou incompatible est signalée comme
+  8. Une base absente, non initialisée ou incompatible est signalée comme
      erreur explicite, pas ignorée silencieusement.
 
 ### [ ] A5 — Optimiser l'indexation et la recherche pour grands repos

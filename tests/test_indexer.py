@@ -12,6 +12,7 @@ from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
+ENDPOINT_INDEX_REPO = FIXTURES_DIR / "endpoint_index_repo"
 
 
 class FakeEmbedder:
@@ -216,3 +217,67 @@ def test_cocoindex_prototype_backfills_chunks_after_manual_index(repo_copy: Path
 
     assert report.scanned == 0
     assert {chunk.path for chunk in chunks} >= {"app/db.py", "app/shell.py"}
+
+
+# -- BACKLOG-11 A1 : endpoints indexés dans le même passage que les findings --
+
+
+@pytest.fixture
+def endpoint_repo_copy(tmp_path: Path) -> Path:
+    dest = tmp_path / "endpoint_index_repo"
+    shutil.copytree(ENDPOINT_INDEX_REPO, dest)
+    return dest
+
+
+@pytest.mark.integration
+def test_index_repo_populates_endpoints_and_findings_from_the_same_scan(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        report = index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        endpoints = store.all_endpoints()
+        findings = store.all_findings()
+
+    # 1 finding (System.out.println) + 2 endpoints (consume Kafka, call REST)
+    # issus du même scan Semgrep — aucune fuite d'un type vers l'autre.
+    assert report.findings_added == 1
+    assert report.endpoints_added == 2
+    assert len(findings) == 1
+    assert findings[0].rule_id == "rules.custom.system-out-println"
+    assert {e.role for e in endpoints} == {"consume", "call"}
+    assert {e.system for e in endpoints} == {"kafka", "rest"}
+
+
+@pytest.mark.integration
+def test_index_repo_second_run_without_changes_leaves_endpoints_untouched(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        report = index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        endpoints = store.all_endpoints()
+
+    assert report.scanned == 0
+    assert report.endpoints_added == 0
+    assert len(endpoints) == 2
+
+
+@pytest.mark.integration
+def test_index_repo_removes_endpoints_of_deleted_file(endpoint_repo_copy: Path) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+
+        (endpoint_repo_copy / "app" / "OrderConsumer.java").unlink()
+
+        report = index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        endpoints = store.all_endpoints()
+
+    assert report.deleted_files == 1
+    assert report.endpoints_removed == 2
+    assert endpoints == []

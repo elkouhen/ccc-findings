@@ -832,3 +832,38 @@ couvert. Les profils Spring (`application-prod.yml`) ne sont pas
 consultés — seul le fichier de base. `tests/test_kafka_endpoints.py` fixe
 le contrat : résolution YAML et `.properties`, valeur par défaut, clé
 introuvable, priorité YAML > `.properties` quand les deux existent.
+
+## ADR-29 — `cccf index` fait un seul scan Semgrep pour les findings et les
+endpoints, discriminés par `metadata.category`
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-11 A1 branche l'extraction d'endpoints (K2/K11) dans
+`cccf index`, jusque-là dédié aux findings (`run_semgrep`). Les deux types
+de règles (findings d'un côté, inventaire d'endpoints de l'autre) peuvent
+cohabiter dans `config.rules` (ex. `default.yaml` + `liveness.yaml` +
+`rest/java.yaml` + `kafka/java.yaml`). Lancer `run_semgrep` puis
+`run_semgrep_endpoints` séparément aurait scanné les mêmes fichiers deux
+fois avec Semgrep — le poste le plus coûteux du pipeline (NF2).
+
+**Décision** : `indexer.index_repo` appelle `scanner.invoke_semgrep_raw`
+(renommée depuis l'ancien `_invoke_semgrep` privé, désormais partagée)
+**une seule fois** par indexation, puis passe la même sortie JSON à
+`parse_semgrep_json` (findings) et `parse_semgrep_endpoints` (endpoints).
+Chaque parseur ignore ce qui ne le concerne pas via
+`extra.metadata.category` : `parse_semgrep_json` saute désormais les
+résultats `category: endpoint-inventory` (sinon ils deviendraient de faux
+findings INFO — contraire à K8 CA2, « traités comme des endpoints, pas
+comme des findings filtrés par `min_severity` ») ; `parse_semgrep_endpoints`
+ne garde que ceux-là. Le filtre `min_severity` (auparavant dans
+`run_semgrep`) est appliqué dans `index_repo` sur la liste de findings
+déjà parsée, pour ne pas dupliquer la logique dans les deux fonctions
+`run_semgrep`/`run_semgrep_endpoints` (conservées telles quelles, utilisées
+par les tests et un futur usage CLI direct hors indexation).
+
+**Conséquences** : `IndexReport` gagne `endpoints_added`/`endpoints_removed`
+(défauts à `0`, compatible avec toute construction positionnelle
+existante). `tests/test_indexer.py` fixe le contrat : un scan mélangeant
+une règle de finding et deux règles d'inventaire produit 1 finding et 2
+endpoints, sans fuite dans un sens ni dans l'autre ; suppression de fichier
+purge aussi les endpoints (déjà vrai depuis K1 via `Store.remove_files`).

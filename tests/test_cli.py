@@ -11,6 +11,7 @@ from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
+ENDPOINT_INDEX_REPO = FIXTURES_DIR / "endpoint_index_repo"
 
 runner = CliRunner()
 
@@ -380,3 +381,83 @@ def test_graph_text_reports_no_outbound_calls_when_none_found(
 
     assert result.exit_code == 0
     assert "Aucun appel REST détecté dans un handler Kafka." in result.output
+
+
+def test_endpoints_without_index_exits_with_code_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["endpoints"])
+
+    assert result.exit_code == 2
+    assert "Index absent" in result.output
+
+
+def test_endpoints_json_lists_and_filters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    consume = _make_endpoint("consume", "orders.created", "app/Consumer.java", 7, 9)
+    call = _make_endpoint("call", "POST /payments", "app/Consumer.java", 20, 20)
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Consumer.java"], [consume, call])
+
+    result_all = runner.invoke(app, ["endpoints", "--json"])
+    assert result_all.exit_code == 0
+    assert len(json.loads(result_all.output)) == 2
+
+    result_filtered = runner.invoke(app, ["endpoints", "--role", "consume", "--json"])
+    assert result_filtered.exit_code == 0
+    hits = json.loads(result_filtered.output)
+    assert len(hits) == 1
+    assert hits[0]["topic"] == "orders.created"
+
+
+def test_endpoints_text_reports_none_when_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+
+    result = runner.invoke(app, ["endpoints"])
+
+    assert result.exit_code == 0
+    assert "Aucun endpoint indexé." in result.output
+
+
+@pytest.mark.integration
+def test_graph_and_endpoints_reflect_a_real_cccf_index_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-11 A1 CA4 : cccf graph/endpoints reflètent une indexation
+    standard (init + index), sans fixture injectée directement dans le
+    store — le scénario de OrderConsumer.java (@KafkaListener contenant un
+    appel RestTemplate) doit ressortir de bout en bout."""
+    dest = tmp_path / "endpoint_index_repo"
+    shutil.copytree(ENDPOINT_INDEX_REPO, dest)
+    monkeypatch.chdir(dest)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+
+    runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+    index_result = runner.invoke(app, ["index"])
+    assert index_result.exit_code == 0
+
+    endpoints_result = runner.invoke(app, ["endpoints", "--json"])
+    assert endpoints_result.exit_code == 0
+    endpoints = json.loads(endpoints_result.output)
+    assert {e["role"] for e in endpoints} == {"consume", "call"}
+
+    graph_result = runner.invoke(app, ["graph", "--json"])
+    assert graph_result.exit_code == 0
+    data = json.loads(graph_result.output)
+    assert len(data["outbound_calls_in_consumers"]) == 1
+    hit = data["outbound_calls_in_consumers"][0]
+    assert hit["consumer"]["topic"] == "orders.created"
+    assert hit["call"]["topic"] == "POST http://payment-service/charge"
+
+    # le finding "ordinaire" (System.out.println) est bien resté un finding,
+    # pas un endpoint fuité dans la table findings (ni l'inverse) : 1 seul
+    # finding au total, les 2 résultats endpoint-inventory n'y apparaissent pas.
+    summary_result = runner.invoke(app, ["summary", "--json"])
+    assert summary_result.exit_code == 0
+    assert sum(json.loads(summary_result.output)["by_severity"].values()) == 1
