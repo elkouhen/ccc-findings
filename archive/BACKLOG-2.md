@@ -149,6 +149,12 @@
   → `render.finding_to_dict()` unique, importé partout ; MCP appelle
   `render_summary_json`.
 
+### [x] N4 — README sans commande de mise à jour de `cccf`
+- `## Installation` documente `uv tool install` mais aucune commande de mise
+  à jour (`uv tool upgrade`) — un utilisateur existant n'a aucune indication.
+  → ajouter `uv tool upgrade ccc-findings`/`uv tool upgrade --all` à côté de
+  l'install initiale.
+
 ## Notes hors backlog
 
 - **Transparence DoD** : `addopts = "-m 'not slow'"` (ajouté en F3.1 dans

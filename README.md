@@ -109,6 +109,13 @@ uv tool install cocoindex-code
 pipx install semgrep
 ```
 
+## Mise à jour
+
+```bash
+uv tool upgrade ccc-findings   # met à jour uniquement cccf
+uv tool upgrade --all          # met à jour tous les outils installés via uv (dont cocoindex-code)
+```
+
 ## Démarrage
 
 ```bash
