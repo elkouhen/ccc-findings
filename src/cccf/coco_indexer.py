@@ -32,8 +32,4 @@ def index_repo_with_cocoindex(
         index_code_chunks=True,
     )
     store.set_meta("index_engine", ENGINE_META_VALUE)
-    store.set_meta(
-        "code_embedding_signature",
-        str(getattr(embedder, "signature", config.embedding_model)),
-    )
     return report

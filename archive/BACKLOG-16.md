@@ -71,7 +71,7 @@
     `min_severity` dans `config.py`).
   - CA : exit code 2 + message explicite côté CLI ; erreur MCP propre.
 
-- [ ] **P5 — `code_embedding_signature` écrite mais jamais relue**
+- [x] **P5 — `code_embedding_signature` écrite mais jamais relue**
   - Fichiers : `src/cccf/coco_indexer.py`, `src/cccf/indexer.py`,
     `tests/test_indexer.py`
   - Description : au changement de modèle d'embedding, les findings et

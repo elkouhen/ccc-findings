@@ -272,6 +272,7 @@ def index_repo(
         chunk_paths = changed
         if not chunk_paths and store.code_chunk_embedding_count() == 0:
             chunk_paths = sorted(current_paths)
+        chunks: list[CodeChunk] = []
         if chunk_paths:
             chunks = [
                 chunk
@@ -279,6 +280,17 @@ def index_repo(
                 for chunk in _chunk_code_file(repo_root, path)
             ]
             store.replace_code_chunks_for_files(chunk_paths, chunks)
+
+        # BACKLOG-16 P5 : contrairement aux findings/endpoints (voir le
+        # bloc `embedding_signature` ci-dessous), les chunks n'étaient
+        # jamais ré-embeddés qu'au changement de *dimension* — un
+        # changement de modèle à dimension égale laissait silencieusement
+        # des vecteurs de modèles différents dans `vec_code_chunks`.
+        code_signature = _embedder_signature(embedder, config)
+        if store.get_meta("code_embedding_signature") != code_signature:
+            store.set_meta("code_embedding_signature", code_signature)
+            _embed_code_chunks(embedder, store, store.all_code_chunks())
+        elif chunks:
             _embed_code_chunks(embedder, store, chunks)
 
     signature = _embedder_signature(embedder, config)

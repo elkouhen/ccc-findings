@@ -271,9 +271,17 @@ initial.
 Avec `index_code_chunks=True` (utilisé par `coco_indexer.index_repo_with_cocoindex`) :
 après le scan des fichiers changés, chaque fichier est découpé en chunks de
 80 lignes maximum, typé par extension (`.py` → `python`, `.ts` →
-`typescript`, fallback `text`), stocké dans `code_chunks`, puis embeddé dans
-`vec_code_chunks`. Les fichiers supprimés passent par `Store.remove_files`, qui
-purge findings, chunks et embeddings associés.
+`typescript`, fallback `text`), stocké dans `code_chunks`. Le ré-embedding
+suit le même principe que pour les findings (BACKLOG-16 P5, comble un
+trou laissé par X3/BACKLOG-8) : si `meta.code_embedding_signature` diffère
+de la signature courante de l'embedder, **tous** les chunks existants
+(`store.all_code_chunks()`) sont ré-embeddés, pas seulement ceux des
+fichiers `changed` — sinon un changement de modèle à dimension égale (la
+seule condition qui recrée `vec_code_chunks`, voir §5) laisserait des
+vecteurs de modèles différents coexister silencieusement. Sinon, seuls
+les chunks des fichiers `changed` sont (ré-)embeddés. Les fichiers
+supprimés passent par `Store.remove_files`, qui purge findings, chunks et
+embeddings associés.
 
 `cccf index --engine cocoindex` appelle cet adaptateur expérimental et écrit
 `meta.index_engine = "cocoindex-prototype"`. Le moteur manuel reste le défaut et
