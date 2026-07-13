@@ -676,3 +676,47 @@ n'a pas d'infra de test propre ; la synchronisation entre les deux copies
 est manuelle, pas vérifiée automatiquement (les deux repos sont versionnés
 indépendamment). Si ça devient un point de friction, une vérification
 inter-repos ou un script de sync pourra être ajouté.
+
+## ADR-25 — `MessageEndpoint` : identité sans le snippet dans le hash,
+un endpoint par site plutôt qu'un flux
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K1 introduit `MessageEndpoint`, l'entité qui
+modélise un site statique d'échange entre services (production/consommation
+Kafka, exposition/appel REST — K2/K11), pour permettre à un agent de
+répondre à « qui produit/consomme ce topic ? » ou « qui appelle cette
+route ? » sans connexion runtime (principe directeur de BACKLOG-10).
+
+**Décision** :
+1. `compute_endpoint_id(role, topic, path, start_line, end_line)` — pas de
+   snippet dans le hash, contrairement à `compute_finding_id`. Un `Finding`
+   distingue deux occurrences du même problème par leur texte ; un endpoint
+   se distingue par *où* il est (site de code ou entrée de manifeste), la
+   forme exacte de l'appel important peu pour répondre à « qui parle à
+   qui ? ». Ça rend aussi l'identité insensible à un renommage de variable
+   qui ne change ni le topic/route ni la position.
+2. Un endpoint représente un **site**, pas un flux : deux appels
+   `producer.send("orders.created", ...)` à deux lignes différentes du même
+   fichier sont deux `MessageEndpoint` distincts (même topic, `path`
+   identique, `start_line`/`end_line` différents) — cohérent avec
+   `replace_endpoints_for_files` qui raisonne par fichier, comme
+   `replace_findings_for_files`.
+3. `source: code`/`manifest` (K10) coexistent pour le même topic sans champ
+   dédié dans le hash : leurs `path` diffèrent naturellement (fichier de
+   code vs `TOPICS.md`), donc leurs identités aussi. Pas besoin d'ajouter
+   `source` à la fonction de hash pour éviter une collision qui ne peut pas
+   se produire.
+4. Aucune table `vec0`/embedding associée à `endpoints` pour l'instant — K1
+   ne couvre que le modèle et le stockage ; la vectorisation (recherche NL
+   sur les endpoints, si un jour utile) resterait à spécifier séparément,
+   hors périmètre K1/K3.
+5. `remove_files` purge aussi `endpoints` (comme `findings` et
+   `code_chunks`) : un fichier supprimé du disque ne doit laisser aucun
+   endpoint fantôme.
+
+**Conséquences** : schema v3 → v4 (`docs/SPEC-TECH.md`), migration purement
+additive (`CREATE TABLE IF NOT EXISTS`, pas de table vectorielle à
+recréer). `tests/test_store.py` fixe le contrat : round-trip, remplacement
+par fichier, stabilité/variation de l'identité, coexistence code/manifeste,
+filtres (`system`/`role`/`topic`/`path_glob`), purge par `remove_files`.

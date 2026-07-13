@@ -9,9 +9,9 @@ from types import TracebackType
 import numpy as np
 import sqlite_vec
 
-from cccf.models import Finding
+from cccf.models import Finding, MessageEndpoint
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -105,6 +105,21 @@ class Store:
                 content TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_code_chunks_path ON code_chunks(path);
+            CREATE TABLE IF NOT EXISTS endpoints (
+                id TEXT PRIMARY KEY,
+                role TEXT NOT NULL,
+                system TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                topic_dynamic INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                framework TEXT,
+                path TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                snippet TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_endpoints_path ON endpoints(path);
+            CREATE INDEX IF NOT EXISTS idx_endpoints_topic ON endpoints(topic);
             """
         )
         self._migrate_legacy_embeddings()
@@ -169,6 +184,7 @@ class Store:
         self.conn.execute(f"DELETE FROM findings WHERE path IN ({placeholders})", paths)
         self._delete_embeddings(removed_ids)
         self.replace_code_chunks_for_files(paths, [])
+        self.replace_endpoints_for_files(paths, [])
 
     # -- findings --
 
@@ -287,6 +303,78 @@ class Store:
             if path_glob and not fnmatch.fnmatch(row["path"], path_glob):
                 continue
             results.append(_row_to_finding(row))
+        return results
+
+    # -- endpoints (message_endpoints, BACKLOG-10 K1) --
+
+    def _endpoint_ids_for_paths(self, paths: list[str]) -> list[str]:
+        placeholders = ",".join("?" for _ in paths)
+        cur = self.conn.execute(
+            f"SELECT id FROM endpoints WHERE path IN ({placeholders})", paths
+        )
+        return [row["id"] for row in cur.fetchall()]
+
+    def replace_endpoints_for_files(
+        self, paths: list[str], endpoints: list[MessageEndpoint]
+    ) -> None:
+        if paths:
+            placeholders = ",".join("?" for _ in paths)
+            self.conn.execute(
+                f"DELETE FROM endpoints WHERE path IN ({placeholders})", paths
+            )
+        for endpoint in endpoints:
+            self.conn.execute(
+                """
+                INSERT INTO endpoints
+                    (id, role, system, topic, topic_dynamic, source, framework,
+                     path, start_line, end_line, snippet)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    role = excluded.role,
+                    system = excluded.system,
+                    topic = excluded.topic,
+                    topic_dynamic = excluded.topic_dynamic,
+                    source = excluded.source,
+                    framework = excluded.framework,
+                    path = excluded.path,
+                    start_line = excluded.start_line,
+                    end_line = excluded.end_line,
+                    snippet = excluded.snippet
+                """,
+                (
+                    endpoint.id,
+                    endpoint.role,
+                    endpoint.system,
+                    endpoint.topic,
+                    int(endpoint.topic_dynamic),
+                    endpoint.source,
+                    endpoint.framework,
+                    endpoint.path,
+                    endpoint.start_line,
+                    endpoint.end_line,
+                    endpoint.snippet,
+                ),
+            )
+
+    def all_endpoints(
+        self,
+        system: str | None = None,
+        role: str | None = None,
+        topic: str | None = None,
+        path_glob: str | None = None,
+    ) -> list[MessageEndpoint]:
+        cur = self.conn.execute("SELECT * FROM endpoints")
+        results = []
+        for row in cur.fetchall():
+            if system and row["system"] != system:
+                continue
+            if role and row["role"] != role:
+                continue
+            if topic and row["topic"] != topic:
+                continue
+            if path_glob and not fnmatch.fnmatch(row["path"], path_glob):
+                continue
+            results.append(_row_to_endpoint(row))
         return results
 
     # -- embeddings --
@@ -468,4 +556,20 @@ def _row_to_code_chunk(row: sqlite3.Row) -> CodeChunk:
         end_line=row["end_line"],
         language=row["language"],
         content=row["content"],
+    )
+
+
+def _row_to_endpoint(row: sqlite3.Row) -> MessageEndpoint:
+    return MessageEndpoint(
+        id=row["id"],
+        role=row["role"],
+        system=row["system"],
+        topic=row["topic"],
+        topic_dynamic=bool(row["topic_dynamic"]),
+        source=row["source"],
+        framework=row["framework"],
+        path=row["path"],
+        start_line=row["start_line"],
+        end_line=row["end_line"],
+        snippet=row["snippet"],
     )

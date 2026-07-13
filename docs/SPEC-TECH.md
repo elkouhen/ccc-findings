@@ -54,11 +54,38 @@ La localisation rend deux occurrences identiques d'une même règle dans un mêm
 fichier distinctes ; le compromis est que l'identité change si le finding se
 décale dans le fichier.
 
+### `MessageEndpoint` (`models.py`, BACKLOG-10 K1)
+
+```python
+@dataclass(frozen=True)
+class MessageEndpoint:
+    id: str              # sha256(role|topic|path[|start:end])[:16]
+    role: str             # produce | consume (kafka) ; serve | call (rest)
+    system: str            # kafka | rest
+    topic: str              # nom de topic Kafka, ou "METHODE /chemin" (rest)
+    topic_dynamic: bool      # nom non résolvable statiquement (K2/K11)
+    source: str               # code | manifest (K10)
+    framework: str | None
+    path: str                  # fichier de code, ou TOPICS.md pour source=manifest
+    start_line: int
+    end_line: int
+    snippet: str
+```
+
+`compute_endpoint_id(role, topic, path, start_line, end_line)` :
+`sha256(f"{role}|{topic}|{path}|{start_line}:{end_line}")[:16]` — pas de
+snippet dans le hash (contrairement à `Finding`) : un endpoint est identifié
+par *où* il est, pas par le texte exact du site d'appel. Un endpoint
+`source: manifest` (K10) et un endpoint `source: code` (K2/K11) pour le même
+topic ont des identités différentes car leurs `path` diffèrent (`TOPICS.md`
+vs le fichier de code) — coexistence sans collision par construction, pas par
+un champ dédié dans le hash.
+
 ### Schéma SQLite (`.cccf/findings.db`, géré par `Store`)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
--- clés utilisées : schema_version ("3"), embedding_model,
+-- clés utilisées : schema_version ("4"), embedding_model,
 -- embedding_signature, embedding_dim, index_engine,
 -- code_embedding_signature, code_embedding_dim
 
@@ -80,6 +107,15 @@ CREATE TABLE code_chunks (
     language TEXT, content TEXT
 );
 CREATE INDEX idx_code_chunks_path ON code_chunks(path);
+
+CREATE TABLE endpoints (
+    id TEXT PRIMARY KEY, role TEXT NOT NULL, system TEXT NOT NULL,
+    topic TEXT NOT NULL, topic_dynamic INTEGER NOT NULL, source TEXT NOT NULL,
+    framework TEXT, path TEXT NOT NULL, start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL, snippet TEXT NOT NULL
+);
+CREATE INDEX idx_endpoints_path ON endpoints(path);
+CREATE INDEX idx_endpoints_topic ON endpoints(topic);
 
 -- Table virtuelle vec0 (extension sqlite-vec), créée paresseusement au
 -- premier set_embedding() une fois la dimension connue ; recréée si la
@@ -114,6 +150,12 @@ repos déjà indexés restent utilisables : l'index code expérimental reste vid
 tant qu'un `cccf index --engine cocoindex` n'a pas été exécuté. Le prochain
 `cccf index` manuel continue de fonctionner sans remplir `code_chunks`; aucune
 commande de migration séparée n'est requise.
+
+**Migration schema v3 → v4** (ADR-25) : `Store` crée `endpoints`
+(`CREATE TABLE IF NOT EXISTS`), purement additive — aucune donnée existante
+touchée, pas de table vectorielle associée (K1 ne fait pas d'embeddings, ça
+reste dans le périmètre de K3). Une base v3 rouverte gagne juste la table,
+vide jusqu'au premier `replace_endpoints_for_files`.
 
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
