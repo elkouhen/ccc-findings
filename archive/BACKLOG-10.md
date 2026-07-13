@@ -12,14 +12,17 @@
 ## Principe directeur
 
 L'idée clé qui respecte la philosophie existante : **les échanges de messages
-sont modélisés comme des *endpoints statiques* extraits du code** (un site de
-production ou de consommation d'un topic, avec fichier + lignes), pas comme
-des flux runtime. L'extraction réutilise le moteur déjà en place — Semgrep,
-avec des metavariables qui capturent le nom du topic — et le stockage réutilise
-le store existant (SQLite + `sqlite-vec`, embeddings du même modèle). La
-« vue distribuée » est une **jointure à la requête** entre endpoints, schémas
-d'événements, code et findings — exactement comme `search_code_with_findings`
-joint déjà code et findings par fichier + lignes (esprit ADR-19).
+sont modélisés comme des *endpoints statiques*** (un site de production ou de
+consommation d'un topic, avec fichier + lignes), pas comme des flux runtime —
+extraits soit du code (K2, moteur Semgrep déjà en place, metavariables sur le
+nom du topic), soit d'un manifeste déclaratif versionné (K10, `TOPICS.md`,
+pour les topics non résolvables statiquement ou documentés côté équipe). Les
+deux sources produisent la même entité (`source: code`|`manifest`, K1) et
+partagent le stockage existant (SQLite + `sqlite-vec`, embeddings du même
+modèle). La « vue distribuée » est une **jointure à la requête** entre
+endpoints (toutes sources), schémas d'événements, code et findings —
+exactement comme `search_code_with_findings` joint déjà code et findings par
+fichier + lignes (esprit ADR-19).
 
 ## Exclusions délibérées (philosophie ccc/cccf)
 
@@ -42,17 +45,22 @@ joint déjà code et findings par fichier + lignes (esprit ADR-19).
   `tests/test_store.py`, `docs/SPEC-TECH.md`, `docs/ADR.md`
 - **Description** : nouvelle entité `MessageEndpoint` — `role`
   (`produce`|`consume`), `system` (`kafka`), `topic`, `topic_dynamic` (bool),
-  `framework`, fichier, lignes, extrait, identité stable (même esprit
-  qu'ADR-5/ADR-15 : hash rôle + topic + chemin + localisation). Table SQLite
+  `source` (`code`|`manifest`, voir K10), `framework`, fichier, lignes,
+  extrait, identité stable (même esprit qu'ADR-5/ADR-15 : hash rôle + topic +
+  chemin + localisation ; pour `source: manifest`, la localisation est le
+  chemin du `TOPICS.md` et non une ligne de code — voir K10). Table SQLite
   dédiée avec remplacement incrémental par fichier (même mécanique que
   `replace_findings_for_files`). Nouvel ADR : « les échanges de messages sont
-  des endpoints statiques extraits du code ».
+  des endpoints statiques extraits du code ou déclarés en manifeste ».
 - **CA** :
   1. Schéma créé à l'init du store, migration transparente d'une base existante.
   2. Remplacement par fichier testé : réindexer un fichier remplace ses
      endpoints sans toucher aux autres.
   3. L'identité est stable à contenu identique, change si le topic ou la
      localisation change.
+  4. `source` distingue un endpoint extrait de code (K2) d'un endpoint
+     déclaré en manifeste (K10) ; les deux peuvent coexister pour le même
+     topic sans collision d'identité (chemins différents).
 
 ### [ ] K2 — Règles Semgrep d'extraction des endpoints Kafka
 - **Priorité** : HAUTE
@@ -91,6 +99,10 @@ joint déjà code et findings par fichier + lignes (esprit ADR-19).
   2. Incrémental : seul un fichier modifié est re-scanné pour ses endpoints.
   3. Échec/timeout du scan d'extraction → findings intacts, erreur signalée,
      code de sortie documenté.
+  4. Un topic présent à la fois côté code (K2) et côté manifeste (K10) donne
+     deux endpoints distincts (`source` différent) affichés ensemble par
+     `cccf flow` (K5) — pas de fusion silencieuse, pas de conflit qui bloque
+     l'indexation.
 
 ### [ ] K4 — Indexation des contrats d'événements locaux (schémas)
 - **Priorité** : MOYENNE
@@ -181,3 +193,68 @@ joint déjà code et findings par fichier + lignes (esprit ADR-19).
 - **CA** :
   1. Jeu d'éval exécutable sur les fixtures Kafka.
   2. Scores rapportés dans la sortie d'éval existante.
+
+### [ ] K10 — Endpoints déclarés via manifeste `TOPICS.md`
+- **Priorité** : HAUTE
+- **Fichiers** : `src/cccf/manifest.py` (nouveau), `src/cccf/indexer.py`,
+  `src/cccf/store.py`, `tests/fixtures/kafka-manifest/*`,
+  `tests/test_manifest.py`, `docs/SPEC-TECH.md`, `docs/SPEC-FONC.md`
+- **Description** : source d'endpoints complémentaire à K2, pour les topics
+  non résolvables statiquement dans le code (nom dynamique/config) ou
+  documentés côté équipe plutôt qu'inférés. Convention retenue :
+
+  - **Fichier** : `TOPICS.md` à la racine de chaque microservice (un par
+    service dans un monorepo), découvert par glob (`**/TOPICS.md`, mêmes
+    règles d'include/exclude que le scan Semgrep).
+  - **Format** : frontmatter YAML délimité par `---` (même convention que
+    les `SKILL.md`), suivi de Markdown libre non parsé (indexé comme chunk
+    de doc, comme tout `.md` aujourd'hui — pas utilisé pour l'extraction).
+    Parsing déterministe via `pyyaml` (`yaml.safe_load` du bloc frontmatter
+    uniquement), aucune tentative d'extraction depuis la prose (cohérent
+    ADR-4/ADR-8 : pas de parsing flou).
+  - **Champs** : `service` (optionnel, sinon nom du dossier), `system`
+    (optionnel, défaut `kafka`), `topics[]` avec par entrée : `topic`
+    (obligatoire), `mode` (obligatoire — `read` | `write` | `read-write`),
+    `pattern` (bool optionnel, motif de nom plutôt que nom exact — pendant
+    manifeste de `topic_dynamic`), `framework` (optionnel, informatif),
+    `schema` (optionnel, chemin relatif vers un fichier indexé par K4),
+    `description` (optionnel, texte libre).
+
+    ```markdown
+    ---
+    service: order-service
+    system: kafka
+    topics:
+      - topic: orders.created
+        mode: write
+        framework: kafka-python
+        schema: schemas/orders.created.avsc
+        description: "Émis à la création d'une commande."
+      - topic: orders.payment.requested
+        mode: read
+        description: "Consommé pour déclencher le paiement."
+      - topic: orders.status
+        mode: read-write
+        description: "Lu pour l'état courant, réécrit après transition."
+    ---
+    ```
+
+  - **Ingestion** : `mode: write` → 1 `MessageEndpoint(role=produce,
+    source=manifest)` ; `mode: read` → 1 `role=consume` ; `mode: read-write`
+    → 2 endpoints (`produce` + `consume`). Localisation = chemin du
+    `TOPICS.md` (+ ligne de l'entrée YAML, best-effort, hors identité).
+    `schema` relie l'endpoint au document indexé par K4 quand résolu.
+  - **Robustesse** : frontmatter absent/invalide → fichier ignoré avec
+    avertissement à l'indexation (`cccf index`), jamais d'échec global
+    (NF5) — même politique qu'un échec de scan Semgrep sur un fichier.
+
+- **CA** :
+  1. Fixture `TOPICS.md` avec les trois `mode` → nombre et rôles d'endpoints
+     attendus, `source: manifest` sur chacun.
+  2. `mode: read-write` produit bien deux endpoints distincts.
+  3. Frontmatter invalide (YAML cassé, `mode` hors énumération) → avertissement,
+     index existant intact, pas d'exception qui casse `cccf index`.
+  4. `schema` résolu relie l'endpoint au document K4 correspondant ; `schema`
+     absent ou introuvable → endpoint indexé quand même, lien absent.
+  5. Un topic déclaré en manifeste ET détecté en code (K2) apparaît comme
+     deux endpoints dans `cccf flow` (K5), pas de fusion silencieuse (CA K3.4).
