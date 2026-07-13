@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import TypedDict
 
 from cccf.ccc_bridge import CodeHitWithFindings
+from cccf.graph import OutboundCallInConsumer
+from cccf.models import MessageEndpoint
 from cccf.search import SearchHit, Summary, get_context
 
 
@@ -153,3 +155,81 @@ def render_summary_json(result: Summary) -> FindingsSummary:
         top_rules=[RuleCount(rule_id=r, count=c) for r, c in result.top_rules],
         by_top_level_dir=result.by_top_level_dir,
     )
+
+
+class GraphSite(TypedDict):
+    path: str
+    start_line: int
+    end_line: int
+    topic: str
+
+
+class OutboundCallHit(TypedDict):
+    """Un appel REST détecté à l'intérieur d'un handler de consommation
+    Kafka (BACKLOG-10 K12)."""
+
+    consumer: GraphSite
+    call: GraphSite
+
+
+class GraphResult(TypedDict):
+    """Shape returned by `cccf graph --json` and the `graph` MCP tool.
+
+    `cycles`/`hotspots` sont toujours vides pour un seul projet indexé : la
+    détection de cycles inter-services nécessite plusieurs projets (fédération
+    multi-dépôts, BACKLOG-10 K7, pas encore livré) — voir `note`.
+    """
+
+    outbound_calls_in_consumers: list[OutboundCallHit]
+    cycles: list[dict]
+    hotspots: list[dict]
+    note: str
+
+
+_K7_NOTE = (
+    "Cycles et hotspots inter-services nécessitent plusieurs projets indexés "
+    "(fédération multi-dépôts, BACKLOG-10 K7, pas encore livré) — seuls les "
+    "appels REST détectés dans un handler Kafka de ce projet sont remontés "
+    "pour l'instant."
+)
+
+
+def _endpoint_to_site(endpoint: MessageEndpoint) -> GraphSite:
+    return GraphSite(
+        path=endpoint.path,
+        start_line=endpoint.start_line,
+        end_line=endpoint.end_line,
+        topic=endpoint.topic,
+    )
+
+
+def render_graph_json(outbound_calls: list[OutboundCallInConsumer]) -> GraphResult:
+    return GraphResult(
+        outbound_calls_in_consumers=[
+            OutboundCallHit(
+                consumer=_endpoint_to_site(hit.consumer), call=_endpoint_to_site(hit.call)
+            )
+            for hit in outbound_calls
+        ],
+        cycles=[],
+        hotspots=[],
+        note=_K7_NOTE,
+    )
+
+
+def render_graph_text(result: GraphResult) -> str:
+    calls = result["outbound_calls_in_consumers"]
+    lines: list[str] = []
+    if calls:
+        lines.append(f"Appels REST dans un handler Kafka ({len(calls)}) :")
+        for hit in calls:
+            call, consumer = hit["call"], hit["consumer"]
+            lines.append(
+                f"  {call['path']}:{call['start_line']} {call['topic']}  "
+                f"(dans le handler {consumer['topic']}, "
+                f"{consumer['path']}:{consumer['start_line']}-{consumer['end_line']})"
+            )
+    else:
+        lines.append("Aucun appel REST détecté dans un handler Kafka.")
+    lines.append(result["note"])
+    return "\n".join(lines)

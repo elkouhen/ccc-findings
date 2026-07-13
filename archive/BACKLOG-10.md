@@ -377,3 +377,16 @@ l'ordre :
      absente, jamais d'erreur ni de fausse arête.
   5. Aucune table de graphe dans le schéma SQLite (dérivation pure à la
      requête).
+- **Statut** : `src/cccf/graph.py` livré — `build_graph`/`paths_match`
+  (appariement littéral↔template, best-effort, CA4), `find_cycles` (DFS,
+  déduplication par ensemble d'arêtes), `find_outbound_calls_in_consumers`
+  (CA2), `find_hotspots`/`rank_hotspots` (CA3) ; testés sur fixture 3
+  services avec cycle A→B→C→A (CA1), aucune table graphe en base (CA5,
+  ADR-27). `cccf graph`/tool MCP `graph` livrés (CLI + MCP), mais ne
+  rapportent aujourd'hui que CA2 (`find_outbound_calls_in_consumers`) : CA1/
+  CA3 (cycles, hotspots) demandent des endpoints de **plusieurs services**,
+  donc K7 (fédération multi-dépôts, non livré) — `cycles`/`hotspots` sont
+  vides dans la sortie réelle, avec une `note` explicite plutôt qu'un vide
+  silencieux. L'algorithme lui-même (testé en isolation avec des endpoints
+  multi-services construits à la main) est prêt à recevoir K7 sans
+  modification.

@@ -758,3 +758,38 @@ et testé tel quel (`tests/test_rest_endpoints.py`), cohérent avec le
 « best-effort » déjà assumé pour l'appariement de chemins en K12. Si Semgrep
 expose un jour les métavariables sans connexion (ou via un flag dédié),
 cette décision pourra être révisée pour une extraction exacte.
+
+## ADR-27 — Le graphe d'interactions est dérivé à la requête, jamais persisté
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K12 doit détecter des cycles d'appels
+inter-services et des hotspots (site sur un cycle + finding liveness K8) à
+partir des endpoints indexés (K1/K11). Une option aurait été de matérialiser
+le graphe (arêtes, cycles) dans des tables SQLite dédiées, recalculées à
+chaque `cccf index` — cohérent avec le reste du store (findings,
+code_chunks, endpoints).
+
+**Décision** : `src/cccf/graph.py` ne touche pas au schéma SQLite.
+`build_graph`/`find_cycles`/`find_outbound_calls_in_consumers`/
+`find_hotspots` sont des fonctions pures qui prennent des `MessageEndpoint`/
+`Finding` déjà en mémoire (lus du store par l'appelant) et retournent des
+structures en mémoire (`GraphEdge`, `Cycle`, `Hotspot`) — jamais écrites en
+base. Raisons :
+1. Le graphe dépend de **plusieurs projets** dès que K7 (fédération
+   multi-dépôts) est en jeu — il n'a pas de « propriétaire » naturel parmi
+   les stores SQLite d'un seul repo.
+2. C'est une vue dérivée bon marché à recalculer (quelques centaines
+   d'endpoints par projet, pas des millions) : pas de gain de performance
+   qui justifie la complexité d'un cache invalidé à chaque réindexation.
+3. Cohérent avec le principe directeur de BACKLOG-10 : « la vue distribuée
+   est une jointure à la requête », déjà appliqué à
+   `search_code_with_findings` (ADR-19) et à `cccf flow`/K10.
+
+**Conséquences** : `cccf graph` (CLI/MCP) ne peut aujourd'hui rapporter que
+`find_outbound_calls_in_consumers` (K1/K11 suffisent, un seul repo) ; les
+champs `cycles`/`hotspots` de sa sortie sont vides tant que K7 n'alimente
+pas `build_graph`/`find_hotspots` avec les endpoints/findings de plusieurs
+projets — la limitation est explicite dans la sortie (`note`), pas cachée.
+`tests/test_graph.py` vérifie qu'aucune table `*graph*`/`*cycle*` n'existe
+dans le schéma (CA5).

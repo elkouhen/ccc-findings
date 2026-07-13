@@ -6,6 +6,8 @@ import pytest
 from typer.testing import CliRunner
 
 from cccf.cli import app
+from cccf.models import MessageEndpoint, compute_endpoint_id
+from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -316,3 +318,65 @@ def test_summary_json_has_expected_structure(
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["by_severity"] == {"ERROR": 2, "WARNING": 2}
+
+
+def _make_endpoint(role: str, topic: str, path: str, start_line: int, end_line: int) -> MessageEndpoint:
+    return MessageEndpoint(
+        id=compute_endpoint_id(role, topic, path, start_line, end_line),
+        role=role,
+        system="kafka" if role in ("produce", "consume") else "rest",
+        topic=topic,
+        topic_dynamic=False,
+        source="code",
+        framework=None,
+        path=path,
+        start_line=start_line,
+        end_line=end_line,
+        snippet="",
+    )
+
+
+def test_graph_without_index_exits_with_code_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["graph"])
+
+    assert result.exit_code == 2
+    assert "Index absent" in result.output
+
+
+def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    consumer = _make_endpoint(
+        "consume", "orders.created", "app/OrderConsumer.java", 15, 25
+    )
+    call = _make_endpoint("call", "POST /payments", "app/OrderConsumer.java", 20, 20)
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/OrderConsumer.java"], [consumer, call])
+
+    result = runner.invoke(app, ["graph", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data["outbound_calls_in_consumers"]) == 1
+    hit = data["outbound_calls_in_consumers"][0]
+    assert hit["call"]["topic"] == "POST /payments"
+    assert hit["consumer"]["topic"] == "orders.created"
+    assert data["cycles"] == []
+    assert data["hotspots"] == []
+    assert "K7" in data["note"]
+
+
+def test_graph_text_reports_no_outbound_calls_when_none_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass  # crée .cccf/findings.db, vide
+
+    result = runner.invoke(app, ["graph"])
+
+    assert result.exit_code == 0
+    assert "Aucun appel REST détecté dans un handler Kafka." in result.output

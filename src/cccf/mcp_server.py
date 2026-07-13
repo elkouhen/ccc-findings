@@ -6,8 +6,16 @@ from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
 from cccf.config import load_config
 from cccf.embedder import make_embedder
+from cccf.graph import find_outbound_calls_in_consumers
 from cccf.indexer import IndexReport, index_repo
-from cccf.render import FindingHit, FindingsSummary, render_search_json, render_summary_json
+from cccf.render import (
+    FindingHit,
+    FindingsSummary,
+    GraphResult,
+    render_graph_json,
+    render_search_json,
+    render_summary_json,
+)
 from cccf.search import search_findings as run_search_findings
 from cccf.search import summary as compute_summary
 from cccf.store import Store
@@ -99,3 +107,20 @@ def search(
     return run_code_search(
         _repo_root(), query, limit=limit, offset=offset, lang=lang, path=path, refresh=refresh
     )
+
+
+@mcp.tool()
+def graph() -> GraphResult:
+    """Points de blocage probables à partir des endpoints indexés
+    (BACKLOG-10 K12) : appels REST synchrones dans un handler de
+    consommation Kafka. Utiliser pour localiser les endroits d'une
+    architecture distribuée susceptibles de causer un verrouillage
+    intermittent. `cycles`/`hotspots` restent vides tant qu'un seul projet
+    est indexé (fédération multi-dépôts K7, pas encore livrée) — voir
+    `note` dans la réponse.
+    """
+    repo_root = _repo_root()
+    _require_index(repo_root)
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints()
+    return render_graph_json(find_outbound_calls_in_consumers(endpoints))

@@ -18,7 +18,8 @@
 | `coco_indexer.py` | Adaptateur expérimental `--engine cocoindex` : findings + chunks de code comme états cibles typés | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
-| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings) et du résumé | `search`, `ccc_bridge` |
+| `graph.py` | Graphe d'interactions dérivé à la requête (BACKLOG-10 K12) : `build_graph`, `find_cycles`, `find_outbound_calls_in_consumers`, `find_hotspots`/`rank_hotspots`, `paths_match` | `models` |
+| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings), du résumé et du graphe | `search`, `ccc_bridge`, `graph` |
 | `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings` : orchestration code (via `ccc`) + findings + classement + modes dégradés — implémentation partagée CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
 | `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `findings`, `summary`, `mcp`) | tous les modules ci-dessus |
@@ -355,6 +356,47 @@ chemin puis chevauchement inclusif de plage
 — une seule ligne commune suffit). Sérialise chaque finding joint sans le
 champ `score` (absent du contrat F4.2 dans ce contexte, puisqu'aucune requête
 sémantique n'est faite sur les findings ici).
+
+### 6bis. Graphe d'interactions (`graph.py`, BACKLOG-10 K12)
+
+Fonctions pures, aucune écriture SQLite (ADR-27) :
+
+- `build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[GraphEdge]`
+  — arête `"rest"` quand un endpoint `role=call` d'un service s'apparie
+  (`paths_match`) à un endpoint `role=serve` d'un **autre** service ; arête
+  `"kafka"` quand un `role=produce` et un `role=consume` d'**autres**
+  services partagent le même `topic` (égalité stricte). Pas d'auto-arête
+  (même service des deux côtés, ignoré).
+- `paths_match(call_topic, serve_topic) -> bool` — `topic` a la forme
+  `"MÉTHODE /chemin"` (K11). Même méthode requise ; `<dynamic>` côté call ne
+  matche jamais ; sinon, segments de chemin (`/`-séparés) comparés un à un,
+  un segment `{...}` d'un côté ou de l'autre accepte tout, et le call peut
+  avoir **moins** de segments que la route exposée (préfixe littéral avant
+  concaténation, ADR-26) mais jamais plus. Best-effort assumé (K12 CA4) :
+  aucun match → aucune arête, jamais d'exception.
+- `find_cycles(edges) -> list[Cycle]` — cycles simples (DFS, chaque service
+  visité au plus une fois par cycle) sur le graphe services→services induit
+  par `edges` ; dédoublonnés par l'ensemble des arêtes qui les composent
+  (`frozenset(id(edge) ...)`), indépendamment du service de départ du
+  parcours. `Cycle.has_synchronous_rest` : au moins une arête `"rest"` dans
+  le cycle (toutes les arêtes REST actuelles sont des appels bloquants —
+  `RestTemplate`/`requests`, pas de client async dans le pack K11).
+- `find_outbound_calls_in_consumers(endpoints) -> list[OutboundCallInConsumer]`
+  — pour un **seul** service (fichier/lignes non comparables entre repos) :
+  un `call` dont `start_line` tombe dans `[consume.start_line,
+  consume.end_line]` du même fichier. Ne dépend pas du graphe multi-service
+  — fonctionne dès qu'un seul projet est indexé (K1/K11 suffisent).
+- `find_hotspots(cycles, findings_by_service) -> list[Hotspot]` /
+  `rank_hotspots(hotspots) -> list[Hotspot]` — pour chaque extrémité de
+  chaque arête d'un cycle, jointure fichier+lignes avec les findings **du
+  même service** (même chevauchement inclusif qu'en §6) ; tri par sévérité
+  décroissante (`INFO < WARNING < ERROR`), tri stable.
+
+`endpoints_by_service`/`findings_by_service` : un dict à une seule clé pour
+un projet unique (usage actuel, CLI/MCP), plusieurs clés pour un scénario
+multi-services (tests, et futur K7). Le graphe et les cycles ne dépendent
+pas de la fédération elle-même, seulement d'avoir plusieurs jeux
+d'endpoints à comparer — `cccf graph` aujourd'hui n'en fournit qu'un.
 
 ## 7. Contrat JSON (F4.2 — figé)
 

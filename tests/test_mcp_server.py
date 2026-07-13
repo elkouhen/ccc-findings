@@ -7,7 +7,9 @@ from mcp.server.fastmcp.exceptions import ToolError
 from typer.testing import CliRunner
 
 from cccf.cli import app
-from cccf.mcp_server import findings_summary, mcp, reindex_findings, search_findings
+from cccf.mcp_server import findings_summary, graph, mcp, reindex_findings, search_findings
+from cccf.models import MessageEndpoint, compute_endpoint_id
+from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -92,3 +94,56 @@ def test_search_tool_is_exposed_under_the_same_name_as_ccc(
     result = asyncio.run(mcp.call_tool("search", {"query": "auth"}))
 
     assert result[1]["results"]
+
+
+def test_graph_tool_returns_outbound_calls_in_kafka_consumer_handlers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    consumer = MessageEndpoint(
+        id=compute_endpoint_id(
+            "consume", "orders.created", "app/OrderConsumer.java", 15, 25
+        ),
+        role="consume",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework=None,
+        path="app/OrderConsumer.java",
+        start_line=15,
+        end_line=25,
+        snippet="",
+    )
+    call = MessageEndpoint(
+        id=compute_endpoint_id(
+            "call", "POST /payments", "app/OrderConsumer.java", 20, 20
+        ),
+        role="call",
+        system="rest",
+        topic="POST /payments",
+        topic_dynamic=False,
+        source="code",
+        framework="resttemplate",
+        path="app/OrderConsumer.java",
+        start_line=20,
+        end_line=20,
+        snippet="",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/OrderConsumer.java"], [consumer, call])
+
+    result = graph()
+
+    assert len(result["outbound_calls_in_consumers"]) == 1
+    assert result["outbound_calls_in_consumers"][0]["call"]["topic"] == "POST /payments"
+    assert result["cycles"] == []
+
+
+def test_graph_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ToolError, match="Index absent"):
+        asyncio.run(mcp.call_tool("graph", {}))

@@ -9,10 +9,13 @@ from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.coco_indexer import index_repo_with_cocoindex
+from cccf.graph import find_outbound_calls_in_consumers
 from cccf.indexer import index_repo
 from cccf.render import (
     render_code_search_text,
     render_fallback_findings_text,
+    render_graph_json,
+    render_graph_text,
     render_search_json,
     render_search_text,
     render_summary_json,
@@ -214,6 +217,29 @@ def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(json.dumps(render_summary_json(result)))
     else:
         typer.echo(render_summary_text(result))
+
+
+@app.command(name="graph")
+def graph_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
+    K12) : appels REST synchrones détectés dans un handler de consommation
+    Kafka. Les cycles d'appels inter-services et les hotspots nécessitent
+    plusieurs projets indexés (fédération multi-dépôts, K7, pas encore
+    livré) — cette commande ne les rapporte pas tant qu'un seul projet est
+    indexé.
+    """
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints()
+
+    outbound_calls = find_outbound_calls_in_consumers(endpoints)
+
+    if json_output:
+        typer.echo(json.dumps(render_graph_json(outbound_calls)))
+    else:
+        typer.echo(render_graph_text(render_graph_json(outbound_calls)))
 
 
 @app.command(name="mcp")
