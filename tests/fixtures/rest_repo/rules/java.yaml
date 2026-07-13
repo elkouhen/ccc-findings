@@ -1,0 +1,126 @@
+rules:
+  - id: cccf.rest.java.serve-get
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (GET).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: GET
+      framework: spring
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @GetMapping(...)
+              $RET $METHOD(...) { ... }
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.GET, ...)
+              $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.serve-post
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (POST).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: POST
+      framework: spring
+    patterns:
+      - pattern: |
+          @PostMapping(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.serve-put
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (PUT).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: PUT
+      framework: spring
+    patterns:
+      - pattern: |
+          @PutMapping(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.serve-delete
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: DELETE
+      framework: spring
+    patterns:
+      - pattern: |
+          @DeleteMapping(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.serve-patch
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (PATCH).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: PATCH
+      framework: spring
+    patterns:
+      - pattern: |
+          @PatchMapping(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.call-get
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (GET).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: GET
+      framework: resttemplate
+    patterns:
+      - pattern-either:
+          - pattern: $REST.getForObject(...)
+          - pattern: $REST.getForEntity(...)
+
+  - id: cccf.rest.java.call-post
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (POST).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: POST
+      framework: resttemplate
+    patterns:
+      - pattern-either:
+          - pattern: $REST.postForObject(...)
+          - pattern: $REST.postForEntity(...)
+
+  - id: cccf.rest.java.call-put
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (PUT).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PUT
+      framework: resttemplate
+    patterns:
+      - pattern: $REST.put(...)
+
+  - id: cccf.rest.java.call-delete
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: DELETE
+      framework: resttemplate
+    patterns:
+      - pattern: $REST.delete(...)

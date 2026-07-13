@@ -720,3 +720,41 @@ additive (`CREATE TABLE IF NOT EXISTS`, pas de table vectorielle à
 recréer). `tests/test_store.py` fixe le contrat : round-trip, remplacement
 par fichier, stabilité/variation de l'identité, coexistence code/manifeste,
 filtres (`system`/`role`/`topic`/`path_glob`), purge par `remove_files`.
+
+## ADR-26 — Extraction du chemin REST par regex sur le snippet, pas par
+métavariable Semgrep
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K11 doit extraire la méthode HTTP et le chemin
+d'une route/d'un appel REST capturés par une règle Semgrep (ex.
+`@GetMapping("/orders/{id}")`). L'approche naturelle serait de lire
+`extra.metavars` dans la sortie JSON de Semgrep (la valeur exacte capturée
+par une métavariable comme `$PATH`). En expérimentation (semgrep 1.168.0,
+CLI OSS non authentifié), `extra.metavars` est **absent** de la sortie JSON,
+et les champs `fingerprint`/`lines` sont remplacés par le texte littéral
+`"requires login"` — ce comportement ne dépend pas d'un flag `--metrics`,
+seulement (a priori) d'une session `semgrep login` active, ce qui violerait
+NF4 (local-first, aucune dépendance à un compte externe pour indexer).
+
+**Décision** : chaque règle d'inventaire fixe la méthode HTTP dans ses
+propres métadonnées (`metadata.http_method`, une règle = une méthode, ex.
+`@GetMapping`/`@PostMapping` sont deux règles distinctes plutôt qu'une seule
+avec une métavariable de méthode) ; seul le **chemin** varie et doit être
+extrait du texte. `cccf` relit déjà le snippet depuis le fichier source
+(ADR-8) — `_extract_rest_path` y cherche par regex le premier littéral entre
+guillemets de la première ligne. Si ce littéral est suivi d'une
+concaténation (`+ variable`) ou qu'aucun littéral n'existe, le chemin est
+marqué `topic_dynamic=True` (même politique que `topic_dynamic` en K2 :
+jamais résolu silencieusement). Une f-string Python (`f"...{id}..."`) est
+traitée comme littéral **résolu** : les accolades d'interpolation sont
+indiscernables, à l'extraction, d'un gabarit d'URI façon `{id}` — et se lisent
+d'ailleurs naturellement comme tel.
+
+**Conséquences** : extraction best-effort et non sémantique — une
+concaténation au milieu d'une expression (`base + "/orders/" + id`) peut
+faire remonter un fragment de chemin qui n'est pas le préfixe réel. Documenté
+et testé tel quel (`tests/test_rest_endpoints.py`), cohérent avec le
+« best-effort » déjà assumé pour l'appariement de chemins en K12. Si Semgrep
+expose un jour les métavariables sans connexion (ou via un flag dédié),
+cette décision pourra être révisée pour une extraction exacte.

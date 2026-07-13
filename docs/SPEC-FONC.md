@@ -321,3 +321,33 @@ Périmètre actuel : Python (`requests`/`httpx`, `kafka-python`,
 `@KafkaListener`, `synchronized`, `Future`/`CompletableFuture`). JS/TS reste
 à couvrir (voir K8 dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en
 clair, `PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.
+
+## 7. Pack de règles d'inventaire REST (BACKLOG-10 K11)
+
+Comme le pack liveness, vit dans `ccc-findings-skill`
+(`skills/cccf/rules/rest/{java,python}.yaml`, ADR-24) — copie de test dans
+`tests/fixtures/rest_repo/`. Contrairement aux packs liveness/`default`, ce
+pack n'est **pas un pack de findings** : `metadata.severity` (`INFO`) n'a
+pas de sens à seuiller, et `cccf` ne l'exécute pas encore automatiquement à
+`cccf init`/`cccf index` — K1/K11 livrent le modèle de données
+(`MessageEndpoint`) et l'extraction (`run_semgrep_endpoints`,
+`parse_semgrep_endpoints` dans `scanner.py`), pas encore le branchement dans
+le pipeline d'indexation ni une commande CLI/MCP (K3, K5/K6, non livrés).
+
+| Règle | Langage | Rôle | Détecte |
+|---|---|---|---|
+| `cccf.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Route Spring exposée (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, ou `@RequestMapping(method=...)` pour GET) |
+| `cccf.rest.java.call-{get,post,put,delete}` | Java | `call` | Appel `RestTemplate` (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
+| `cccf.rest.python.serve-{get,post,put,delete,patch}` | Python | `serve` | Route FastAPI (`@app.get`/etc.) ou Flask (`@app.route`, GET implicite) |
+| `cccf.rest.python.call-{get,post,put,delete,patch}` | Python | `call` | Appel `requests.{get,post,put,delete,patch}` |
+
+Chaque résultat porte `metadata.category: endpoint-inventory`,
+`metadata.role`, `metadata.http_method`, `metadata.framework` — le contrat
+que lit `parse_semgrep_endpoints` (voir `docs/SPEC-TECH.md#4bis-extraction-
+dendpoints-rest-run_semgrep_endpoints-backlog-10-k11`). Le chemin est
+extrait du texte du site (regex sur le snippet, pas de métavariable Semgrep
+— ADR-26) : un chemin non littéral, ou concaténé à une variable, est marqué
+`topic_dynamic=True` plutôt que résolu au hasard. `@RequestMapping` avec
+méthode explicite autre que GET, et Flask `methods=[...]` explicite, restent
+à couvrir. Périmètre actuel : Java et Python ; JS/TS (`fetch`/`axios`,
+Express) reste à couvrir, comme pour le pack liveness.

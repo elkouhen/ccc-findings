@@ -1,10 +1,11 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from cccf.config import Config
-from cccf.models import Finding, compute_finding_id
+from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 
@@ -105,9 +106,89 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
     return findings
 
 
-def run_semgrep(
+# BACKLOG-10 K11 : règles d'inventaire d'endpoints (`metadata.category:
+# endpoint-inventory`) — le rôle/système/méthode HTTP viennent des métadonnées
+# de la règle (fixes par construction, une règle = une méthode), le chemin
+# vient d'une extraction best-effort sur le snippet (métavariables Semgrep
+# indisponibles sans compte connecté, voir ADR-26).
+_QUOTED_STRING_RE = re.compile(r"f?[\"']([^\"']*)[\"']")
+
+
+def _extract_rest_path(snippet: str) -> tuple[str, bool]:
+    """Renvoie (chemin, dynamique). Cherche le premier littéral entre
+    guillemets sur la première ligne du snippet (annotation ou appel) ; si
+    ce littéral est suivi d'une concaténation (`+`) ou qu'aucun littéral
+    n'est trouvé, le chemin est marqué dynamique (jamais résolu
+    silencieusement, même esprit que `topic_dynamic` en K2)."""
+    first_line = snippet.splitlines()[0] if snippet else ""
+    match = _QUOTED_STRING_RE.search(first_line)
+    if match is None:
+        return "<dynamic>", True
+    path = match.group(1)
+    remainder = first_line[match.end() :].lstrip()
+    is_dynamic = remainder.startswith("+")
+    return path, is_dynamic
+
+
+def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SemgrepError(f"Sortie Semgrep JSON invalide : {exc}") from exc
+
+    try:
+        results = data["results"]
+    except (KeyError, TypeError) as exc:
+        raise SemgrepError(
+            f"Sortie Semgrep JSON invalide : champ 'results' manquant ({exc})"
+        ) from exc
+
+    endpoints: list[MessageEndpoint] = []
+    for result in results:
+        extra = result["extra"]
+        metadata = extra.get("metadata") or {}
+        if metadata.get("category") != "endpoint-inventory":
+            continue
+        if metadata.get("system", "rest") != "rest":
+            continue  # K2 (kafka) a sa propre extraction, hors périmètre K11
+
+        try:
+            path = _relative_path(result["path"], repo_root)
+            start_line = result["start"]["line"]
+            end_line = result["end"]["line"]
+            role = metadata["role"]
+            http_method = metadata["http_method"]
+        except (KeyError, TypeError) as exc:
+            raise SemgrepError(
+                f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
+            ) from exc
+
+        snippet = _read_snippet(repo_root, path, start_line, end_line)
+        route, dynamic = _extract_rest_path(snippet)
+        topic = f"{http_method} {route}"
+
+        endpoints.append(
+            MessageEndpoint(
+                id=compute_endpoint_id(role, topic, path, start_line, end_line),
+                role=role,
+                system="rest",
+                topic=topic,
+                topic_dynamic=dynamic,
+                source="code",
+                framework=metadata.get("framework"),
+                path=path,
+                start_line=start_line,
+                end_line=end_line,
+                snippet=snippet,
+            )
+        )
+
+    return endpoints
+
+
+def _invoke_semgrep(
     repo_root: Path, config: Config, files: list[str] | None = None
-) -> list[Finding]:
+) -> str:
     cmd = [
         "semgrep",
         "scan",
@@ -126,7 +207,23 @@ def run_semgrep(
         raise SemgrepError(
             f"Semgrep a échoué (code {proc.returncode}) : {proc.stderr.strip()}"
         )
+    return proc.stdout
 
-    findings = parse_semgrep_json(proc.stdout, repo_root)
+
+def run_semgrep(
+    repo_root: Path, config: Config, files: list[str] | None = None
+) -> list[Finding]:
+    raw = _invoke_semgrep(repo_root, config, files)
+    findings = parse_semgrep_json(raw, repo_root)
     min_index = SEVERITY_ORDER.index(config.min_severity)
     return [f for f in findings if SEVERITY_ORDER.index(f.severity) >= min_index]
+
+
+def run_semgrep_endpoints(
+    repo_root: Path, config: Config, files: list[str] | None = None
+) -> list[MessageEndpoint]:
+    """Comme `run_semgrep`, mais pour les règles d'inventaire d'endpoints
+    (BACKLOG-10 K11) — pas de filtre `min_severity` : ce ne sont pas des
+    findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
+    raw = _invoke_semgrep(repo_root, config, files)
+    return parse_semgrep_endpoints(raw, repo_root)

@@ -1,0 +1,134 @@
+rules:
+  - id: cccf.rest.python.serve-get
+    languages: [python]
+    severity: INFO
+    message: Route REST exposée (GET).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: GET
+      framework: fastapi
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @$APP.get(...)
+              def $FUNC(...): ...
+          - pattern: |
+              @$APP.route(...)
+              def $FUNC(...): ...
+
+  - id: cccf.rest.python.serve-post
+    languages: [python]
+    severity: INFO
+    message: Route REST exposée (POST).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: POST
+      framework: fastapi
+    patterns:
+      - pattern: |
+          @$APP.post(...)
+          def $FUNC(...): ...
+
+  - id: cccf.rest.python.serve-put
+    languages: [python]
+    severity: INFO
+    message: Route REST exposée (PUT).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: PUT
+      framework: fastapi
+    patterns:
+      - pattern: |
+          @$APP.put(...)
+          def $FUNC(...): ...
+
+  - id: cccf.rest.python.serve-delete
+    languages: [python]
+    severity: INFO
+    message: Route REST exposée (DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: DELETE
+      framework: fastapi
+    patterns:
+      - pattern: |
+          @$APP.delete(...)
+          def $FUNC(...): ...
+
+  - id: cccf.rest.python.serve-patch
+    languages: [python]
+    severity: INFO
+    message: Route REST exposée (PATCH).
+    metadata:
+      category: endpoint-inventory
+      role: serve
+      http_method: PATCH
+      framework: fastapi
+    patterns:
+      - pattern: |
+          @$APP.patch(...)
+          def $FUNC(...): ...
+
+  - id: cccf.rest.python.call-get
+    languages: [python]
+    severity: INFO
+    message: Appel REST client (GET).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: GET
+      framework: requests
+    patterns:
+      - pattern: requests.get(...)
+
+  - id: cccf.rest.python.call-post
+    languages: [python]
+    severity: INFO
+    message: Appel REST client (POST).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: POST
+      framework: requests
+    patterns:
+      - pattern: requests.post(...)
+
+  - id: cccf.rest.python.call-put
+    languages: [python]
+    severity: INFO
+    message: Appel REST client (PUT).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PUT
+      framework: requests
+    patterns:
+      - pattern: requests.put(...)
+
+  - id: cccf.rest.python.call-delete
+    languages: [python]
+    severity: INFO
+    message: Appel REST client (DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: DELETE
+      framework: requests
+    patterns:
+      - pattern: requests.delete(...)
+
+  - id: cccf.rest.python.call-patch
+    languages: [python]
+    severity: INFO
+    message: Appel REST client (PATCH).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PATCH
+      framework: requests
+    patterns:
+      - pattern: requests.patch(...)

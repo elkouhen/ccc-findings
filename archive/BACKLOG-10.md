@@ -333,6 +333,19 @@ l'ordre :
      (rôle, méthode, chemin, lignes).
   2. URL dynamique → endpoint présent, marqué dynamique, expression conservée.
   3. Parsing testé sur fixtures JSON (esprit ADR-8).
+- **Statut** : Java (Spring `@*Mapping`/`@RequestMapping` GET, `RestTemplate`)
+  et Python (FastAPI/Flask, `requests`) livrés — 9 règles Java, 10 règles
+  Python, `skills/cccf/rules/rest/{java,python}.yaml` côté skill. Extraction
+  par regex sur le snippet plutôt que par métavariable Semgrep : les
+  métavariables se sont révélées indisponibles sans session `semgrep login`
+  (ADR-26) — la méthode HTTP vient donc de `metadata.http_method` (une règle
+  = une méthode), seul le chemin est extrait du texte, avec le même principe
+  `topic_dynamic` que K2 pour ce qui n'est pas un littéral. `parse_semgrep_
+  endpoints`/`run_semgrep_endpoints` dans `scanner.py`, testés dans
+  `tests/test_rest_endpoints.py` (fixtures réelles + fixtures JSON pour les
+  cas d'erreur). Pas encore branché dans `cccf index` ni dans une commande
+  CLI/MCP (K3, K5/K6). Restent à couvrir : `@RequestMapping` méthodes non-GET,
+  `WebClient`/Feign, Flask `methods=[...]` explicite, Express/JS.
 
 ### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
 - **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les

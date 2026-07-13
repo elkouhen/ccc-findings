@@ -10,10 +10,10 @@
 
 | Module | Rôle | Dépend de |
 |---|---|---|
-| `models.py` | `Finding` (dataclass gelée) + `compute_finding_id` | — |
+| `models.py` | `Finding` (dataclass gelée) + `compute_finding_id` ; `MessageEndpoint` (BACKLOG-10 K1) + `compute_endpoint_id` | — |
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
-| `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` | `models`, `config` |
-| `store.py` | `Store` : persistance SQLite (findings, chunks de code expérimentaux, hashs de fichiers, meta, embeddings) | `models` |
+| `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` → `MessageEndpoint` (règles `metadata.category: endpoint-inventory`, K11) | `models`, `config` |
+| `store.py` | `Store` : persistance SQLite (findings, endpoints, chunks de code expérimentaux, hashs de fichiers, meta, embeddings) | `models` |
 | `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → embedding ; peut aussi indexer des chunks de code) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Adaptateur expérimental `--engine cocoindex` : findings + chunks de code comme états cibles typés | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
@@ -235,6 +235,33 @@ Le filtrage par `min_severity` est appliqué dans `run_semgrep` (après
 du scan uniquement** ; durcir `min_severity` en config n'affecte pas les
 findings déjà indexés tant que leur fichier n'est pas re-scanné (défaut connu
 R10).
+
+### 4bis. Extraction d'endpoints REST (`run_semgrep_endpoints`, BACKLOG-10 K11)
+
+Même exécution Semgrep que `run_semgrep` (factorisée dans `_invoke_semgrep`),
+mais sans filtre `min_severity` : les règles d'inventaire n'ont pas de
+sévérité pertinente. `parse_semgrep_endpoints(raw, repo_root)` ne garde que
+les résultats dont `extra.metadata.category == "endpoint-inventory"` (les
+autres résultats — findings de sécurité d'un pack lancé dans le même
+`cccf index` — sont ignorés silencieusement, pas une erreur) et
+`extra.metadata.system` absent ou `"rest"` (`"kafka"` est le périmètre K2,
+non traité ici). Pour chaque résultat retenu :
+
+- `role` et `http_method` viennent tels quels de `extra.metadata` — une
+  règle = une méthode HTTP fixe (`@GetMapping` et `@PostMapping` sont deux
+  règles distinctes), pas de métavariable de méthode.
+- `framework` (optionnel) vient aussi de `extra.metadata`.
+- Le **chemin** est extrait du snippet (relu depuis le fichier source, comme
+  `parse_semgrep_json`) par `_extract_rest_path` : premier littéral entre
+  guillemets de la première ligne du snippet. Absent, ou suivi d'une
+  concaténation (`+`) → `topic_dynamic=True`, chemin conservé tel quel
+  (préfixe littéral, ou `"<dynamic>"` si aucun littéral) — jamais résolu
+  silencieusement (ADR-26).
+- `topic = f"{http_method} {chemin}"` (ex. `"GET /orders/{id}"`).
+- `source = "code"`, `system = "rest"` toujours (pas de manifeste ici — K10).
+
+Champ manquant dans les métadonnées d'une règle d'inventoire (`role`/
+`http_method`) → `SemgrepError` explicite, comme un JSON malformé.
 
 ## 5. Embedding et recherche
 
