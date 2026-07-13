@@ -31,12 +31,16 @@ semgrep_timeout_s: 120
 - Tous les autres champs ont une valeur par défaut appliquée silencieusement
   si absents du fichier.
 - Indépendamment de `include`/`exclude` : tout fichier sous un répertoire
-  `src/<jeu-de-sources>` où `<jeu-de-sources> != "main"` (`test`,
-  `componentTest`, `contractTest`, `endToEndTest`, ... — convention
-  Maven/Gradle) est **toujours** exclu du scan, findings et endpoints
-  confondus (BACKLOG-15 H2, ADR-34) — ni configurable, ni contournable via
-  `include`. Un fichier déjà indexé qui devient exclu par cette règle est
-  purgé au prochain `cccf index`, comme un fichier supprimé du disque.
+  `src/<jeu-de-sources>` où `<jeu-de-sources>` suit la convention
+  Maven/Gradle de nommage des source sets de test (`test`, `componentTest`,
+  `contractTest`, `endToEndTest`, ... — nom égal à `test` ou terminant par
+  `Test`) est **toujours** exclu du scan, findings et endpoints confondus
+  (BACKLOG-15 H2, ADR-34 ; règle resserrée en BACKLOG-16 P1) — ni
+  configurable, ni contournable via `include`. Un layout `src/<package>`
+  générique (Python, JS, Rust, ...) n'est **pas** concerné : `<package>`
+  ne suit pas cette convention. Un fichier déjà indexé qui devient exclu
+  par cette règle est purgé au prochain `cccf index`, comme un fichier
+  supprimé du disque.
 
 ## 2. CLI `cccf`
 

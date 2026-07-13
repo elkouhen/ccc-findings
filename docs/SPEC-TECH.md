@@ -231,9 +231,12 @@ initial.
 
 ```
 1. Lister les fichiers du repo (rglob), en excluant d'abord tout fichier
-   sous un répertoire src/<jeu-de-sources> avec <jeu-de-sources> != "main"
-   (indexer._is_test_source, BACKLOG-15 H2, ADR-34 — revient sur ADR-14/R2,
-   décision explicite), puis matchant include/exclude (fnmatch),
+   sous un répertoire src/<jeu-de-sources> où <jeu-de-sources> suit la
+   convention Maven/Gradle de nommage des source sets de test ("test" ou
+   se terminant par "Test" — indexer._is_test_source, BACKLOG-15 H2,
+   ADR-34 — revient sur ADR-14/R2, décision explicite ; règle resserrée en
+   BACKLOG-16 P1 pour ne pas capturer un layout src/<package> générique
+   type Python/JS/Rust), puis matchant include/exclude (fnmatch),
    calculer leur sha256.
 2. Comparer aux hashs stockés (table files) → deleted / changed / unchanged.
    Un fichier exclu par _is_test_source qui était indexé avant cette

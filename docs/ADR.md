@@ -1099,15 +1099,15 @@ la seconde option en toute connaissance du compromis annoncé.
 
 **Décision** : `indexer._is_test_source(rel_path)` (BACKLOG-15 H2) exclut
 tout fichier sous un répertoire `src/<jeu-de-sources>` où `<jeu-de-
-sources> != "main"` (convention Maven/Gradle : `main` est le seul nom de
-source set universel ; `test`, `componentTest`, `contractTest`,
-`endToEndTest`, etc. sont tous des variantes de test) — appliqué dans
-`_list_repo_files`, en amont de `config.exclude`/`include`, donc jamais
-scanné du tout par Semgrep (findings **et** endpoints). Décision basée sur
-les segments du chemin plutôt qu'un pattern glob `fnmatch` : `*` ne
-respecte pas les frontières de répertoire dans ce projet (voir
-`indexer._matches_any`), ce qui confondrait un vrai jeu de sources de
-test avec un simple paquet nommé `testutils` sous `src/main`.
+sources>` suit la convention Maven/Gradle de nommage des source sets de
+test (`test`, `componentTest`, `contractTest`, `endToEndTest`, etc. — voir
+correctif ci-dessous) — appliqué dans `_list_repo_files`, en amont de
+`config.exclude`/`include`, donc jamais scanné du tout par Semgrep
+(findings **et** endpoints). Décision basée sur les segments du chemin
+plutôt qu'un pattern glob `fnmatch` : `*` ne respecte pas les frontières de
+répertoire dans ce projet (voir `indexer._matches_any`), ce qui
+confondrait un vrai jeu de sources de test avec un simple paquet nommé
+`testutils` sous `src/main`.
 
 **Conséquences** : une vulnérabilité qui n'existe que dans un helper de
 test redevient invisible sans aucun signal — exactement le risque
@@ -1115,3 +1115,12 @@ qu'ADR-14/R2 visait à éliminer, désormais accepté explicitement plutôt que
 subi silencieusement. Un fichier déjà indexé qui devient exclu par ce
 changement est purgé au prochain `cccf index` via le mécanisme existant
 `deleted = previous_paths - current_paths`, sans migration dédiée.
+
+**Correctif (BACKLOG-16 P1, 2026-07-13)** : la règle initiale (« tout
+`src/<x>` avec `x != "main"` ») excluait aussi tout layout Python/JS/Rust
+en `src/<package>` — dont `cccf` lui-même — puisque `<package>` n'est
+jamais `"main"`. `_is_test_source` ne reconnaît désormais un jeu de
+sources de test que si son nom suit la convention Maven/Gradle
+`test`/`<préfixe>Test` (`_is_maven_or_gradle_test_source_set`), ce qui
+préserve l'intention d'ADR-34 (exclure `src/test`, `src/componentTest`,
+...) sans capturer un layout `src/<package>` générique.

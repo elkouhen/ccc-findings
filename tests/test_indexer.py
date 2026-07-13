@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from cccf.config import Config
-from cccf.indexer import index_repo
+from cccf.indexer import _is_test_source, index_repo
 from cccf.coco_indexer import index_repo_with_cocoindex
 from cccf.store import Store
 
@@ -293,6 +293,26 @@ def test_index_repo_excludes_files_under_a_non_main_source_set(
     assert report.endpoints_added == 1
     assert [f.path for f in findings] == ["service/src/main/java/OrderConsumer.java"]
     assert [e.path for e in endpoints] == ["service/src/main/java/OrderConsumer.java"]
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "expected"),
+    [
+        # BACKLOG-16 P1 : un layout Python/JS/Rust en `src/<package>` n'est
+        # pas un jeu de sources de test Maven/Gradle.
+        ("src/cccf/store.py", False),
+        ("src/mypkg/api/views.py", False),
+        # Maven/Gradle : `main` n'est jamais du test, les variants suivant
+        # la convention `test`/`<prefixe>Test` le sont tous.
+        ("service/src/main/java/A.java", False),
+        ("service/src/test/java/T.java", True),
+        ("service/src/componentTest/java/T.java", True),
+        ("service/src/contractTest/java/T.java", True),
+        ("service/src/endToEndTest/java/T.java", True),
+    ],
+)
+def test_is_test_source(rel_path: str, expected: bool) -> None:
+    assert _is_test_source(rel_path) is expected
 
 
 @pytest.mark.integration

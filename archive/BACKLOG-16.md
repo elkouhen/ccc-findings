@@ -9,7 +9,7 @@
 
 ## Corrections (bugs confirmés)
 
-- [ ] **P1 — `_is_test_source` exclut tout layout `src/<pkg>` non-Java (CRITIQUE)**
+- [x] **P1 — `_is_test_source` exclut tout layout `src/<pkg>` non-Java (CRITIQUE)**
   - Fichiers : `src/cccf/indexer.py`, `tests/test_indexer.py`
   - Description : `_is_test_source("src/cccf/store.py")` renvoie `True` :
     tout repo Python/JS/Rust en layout `src/` (dont `cccf` lui-même) est
