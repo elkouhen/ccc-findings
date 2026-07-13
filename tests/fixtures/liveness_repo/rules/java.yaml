@@ -85,3 +85,50 @@ rules:
           - pattern: $REST.postForObject(...)
           - pattern: $REST.postForEntity(...)
           - pattern: $REST.exchange(...)
+
+  - id: cccf.liveness.java.mongo-lock-busy-wait-poll
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Verrou pessimiste MongoDB acquis par sondage bloquant (boucle
+      contenant un Thread.sleep autour d'un findAndModify/
+      findOneAndUpdate) : pas de timeout ni de backoff visibles, risque
+      d'attente indéfinie si le verrou n'est jamais libéré.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              while (...) {
+                ...
+                Thread.sleep(...);
+                ...
+              }
+          - pattern-inside: |
+              for (...; ...; ...) {
+                ...
+                Thread.sleep(...);
+                ...
+              }
+      - pattern-either:
+          - pattern: $MONGO.findAndModify(...)
+          - pattern: $COLLECTION.findOneAndUpdate(...)
+
+  - id: cccf.liveness.java.mongo-lock-inside-synchronized
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Acquisition d'un verrou pessimiste MongoDB (findAndModify/
+      findOneAndUpdate) à l'intérieur d'un bloc synchronized : le
+      round-trip réseau vers MongoDB se fait moniteur JVM tenu — si Mongo
+      répond lentement, tout autre thread qui attend ce moniteur se fige.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern-inside: |
+          synchronized (...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: $MONGO.findAndModify(...)
+          - pattern: $COLLECTION.findOneAndUpdate(...)

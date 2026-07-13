@@ -373,6 +373,8 @@ périmètre, pas un manque temporaire (voir « Périmètre » ci-dessous).
 | `cccf.liveness.java.blocking-future-get-no-timeout` | Java | WARNING | `.get()` sans argument sur une variable déclarée `Future<T>`/`CompletableFuture<T>` |
 | `cccf.liveness.java.rest-call-in-kafka-listener` | Java | ERROR | Appel `RestTemplate` dans une méthode `@KafkaListener` |
 | `cccf.liveness.java.network-call-inside-synchronized` | Java | ERROR | Appel `RestTemplate` à l'intérieur d'un bloc `synchronized` |
+| `cccf.liveness.java.mongo-lock-busy-wait-poll` | Java | ERROR | Verrou pessimiste MongoDB (`findAndModify`/`findOneAndUpdate`) acquis par sondage bloquant — boucle `while`/`for` contenant aussi un `Thread.sleep(...)` |
+| `cccf.liveness.java.mongo-lock-inside-synchronized` | Java | ERROR | Appel `findAndModify`/`findOneAndUpdate` (verrou pessimiste MongoDB) à l'intérieur d'un bloc `synchronized` |
 
 **Usage** : comme le pack `default`, le copier dans le repo cible
 (ex. `.cccf/rules/liveness/`) et le déclarer dans `rules:` — jamais de
@@ -384,10 +386,27 @@ rules:
 ```
 
 Périmètre : Java (`RestTemplate`, Spring Kafka `@KafkaListener`,
-`synchronized`, `Future`/`CompletableFuture`) — la stack cible de l'analyse
-est Java + Spring + Maven ; Python/JS/TS ne sont pas des cibles (voir K8
-dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair,
-`PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.
+`synchronized`, `Future`/`CompletableFuture`, verrous pessimistes MongoDB
+`findAndModify`/`findOneAndUpdate`) — la stack cible de l'analyse est Java +
+Spring + Maven ; Python/JS/TS ne sont pas des cibles (voir K8 dans
+`archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair, `PLAINTEXT`,
+désérialisation non sûre) n'est pas encore livré.
+
+**Verrous pessimistes MongoDB** — MongoDB n'a pas de verrou pessimiste
+natif façon `SELECT ... FOR UPDATE` ; le motif observé dans ce type de code
+est une écriture atomique (`findAndModify`/`findOneAndUpdate`) sur un champ
+« verrouillé », combinée à une boucle de sondage ou un moniteur JVM :
+- `mongo-lock-busy-wait-poll` flague l'appel Mongo dès lors qu'il vit dans
+  une boucle `while`/`for` qui contient aussi un `Thread.sleep(...)` —
+  co-occurrence structurelle (pas de dépendance au nom du champ de verrou),
+  signal fort d'un sondage sans timeout ni backoff visible.
+- `mongo-lock-inside-synchronized` flague le même appel Mongo à l'intérieur
+  d'un bloc `synchronized` — le round-trip réseau se fait moniteur JVM
+  tenu, même risque que `network-call-inside-synchronized`.
+- Les deux règles ne présument rien du nom du champ « verrouillé » (aucune
+  hypothèse `locked`/`lockedAt`/etc.) : c'est la structure (boucle+sleep, ou
+  synchronized) autour de l'écriture atomique qui signale l'usage en
+  verrou, pas une convention de nommage.
 
 ## 7. Pack de règles d'inventaire REST (BACKLOG-10 K11)
 

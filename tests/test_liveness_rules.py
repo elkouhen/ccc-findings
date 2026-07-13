@@ -84,17 +84,48 @@ def test_java_network_call_inside_synchronized_ignores_calls_made_before_the_blo
 
 
 @pytest.mark.integration
+def test_java_mongo_lock_busy_wait_poll_ignores_unrelated_retry_loop_and_single_shot() -> None:
+    findings = run_semgrep(
+        LIVENESS_REPO, make_config(), files=["app/java/MongoLockService.java"]
+    )
+
+    hits = [
+        f for f in findings if f.rule_id == "rules.cccf.liveness.java.mongo-lock-busy-wait-poll"
+    ]
+    # acquireLockBusyWaitBad (while+sleep) et acquireLockForLoopBad (for+sleep) ;
+    # ni acquireLockOnceGood (pas de boucle) ni unrelatedRetryLoopGood (boucle+
+    # sleep sans appel Mongo) ne doivent remonter.
+    assert {f.start_line for f in hits} == {23, 35}
+
+
+@pytest.mark.integration
+def test_java_mongo_lock_inside_synchronized_ignores_call_made_before_the_block() -> None:
+    findings = run_semgrep(
+        LIVENESS_REPO, make_config(), files=["app/java/MongoLockSynchronized.java"]
+    )
+
+    hits = [
+        f
+        for f in findings
+        if f.rule_id == "rules.cccf.liveness.java.mongo-lock-inside-synchronized"
+    ]
+    assert [f.start_line for f in hits] == [21]
+
+
+@pytest.mark.integration
 def test_liveness_pack_runs_standalone_on_a_plain_project() -> None:
     """K8 CA3 : le pack liveness fonctionne seul, sans dépendre d'aucune
     autre tâche du backlog (endpoints, graphe...) — juste le pipeline
     findings existant (scanner + config)."""
     findings = run_semgrep(LIVENESS_REPO, make_config())
 
-    assert len(findings) == 7
+    assert len(findings) == 10
     assert {f.rule_id for f in findings} == {
         "rules.cccf.liveness.java.new-resttemplate-no-timeout",
         "rules.cccf.liveness.java.blocking-join-no-timeout",
         "rules.cccf.liveness.java.blocking-future-get-no-timeout",
         "rules.cccf.liveness.java.rest-call-in-kafka-listener",
         "rules.cccf.liveness.java.network-call-inside-synchronized",
+        "rules.cccf.liveness.java.mongo-lock-busy-wait-poll",
+        "rules.cccf.liveness.java.mongo-lock-inside-synchronized",
     }

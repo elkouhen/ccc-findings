@@ -141,10 +141,11 @@ l'ordre :
   py` (fixtures réelles incluant un `application.yml`, + tests unitaires de
   `resolve_spring_property`). Branché dans `cccf index` et exposé via
   `cccf endpoints`/`cccf graph` (CLI + MCP) — voir A1 dans
-  `archive/BACKLOG-11.md`. Restent à couvrir : profils Spring
-  (`application-prod.yml`), suivi d'une variable alimentée par
-  `@Value(...)` ailleurs dans la classe, `confluent-kafka` (API bas niveau
-  hors Spring).
+  `archive/BACKLOG-11.md`. Depuis J4 (`archive/BACKLOG-12.md`), la résolution
+  Spring est cacheée, orientée module source, et couvre aussi les variantes
+  `application-*.yml` / `bootstrap*`. Restent à couvrir : suivi d'une variable
+  alimentée par `@Value(...)` ailleurs dans la classe, `confluent-kafka`
+  (API bas niveau hors Spring).
 
 ### [ ] K3 — Pipeline d'indexation des endpoints + embeddings
 - **Priorité** : HAUTE
@@ -166,6 +167,13 @@ l'ordre :
      deux endpoints distincts (`source` différent) affichés ensemble par
      `cccf flow` (K5) — pas de fusion silencieuse, pas de conflit qui bloque
      l'indexation.
+- **Statut** : **partiellement livré** via A1 (`archive/BACKLOG-11.md`) :
+  `cccf index` exécute bien les packs d'inventaire dans le pipeline normal,
+  remplace les endpoints incrémentalement par fichier, purge ceux des fichiers
+  supprimés, et laisse les findings intacts si le scan échoue (NF5 via la
+  transaction SQLite). Le sous-objectif encore ouvert de K3 est la
+  **vectorisation dédiée des endpoints** (table `vec0` spécifique) ; aujourd'hui
+  les endpoints sont stockés et consultables, mais non embeddés.
 
 ### [ ] K4 — Indexation des contrats d'événements locaux (schémas)
 - **Priorité** : BASSE (phase 4)
@@ -257,19 +265,22 @@ l'ordre :
      quel finding (`cccf findings "appel bloquant dans un consumer"`).
   3. Le pack liveness s'exécute sur un projet où aucune autre tâche K n'est
      livrée (indépendance vérifiée).
-- **Statut** : volet Java/Spring livré (5 règles : `new RestTemplate()` sans
+- **Statut** : volet Java/Spring livré (7 règles : `new RestTemplate()` sans
   timeout, `.join()`/`Future.get()` sans timeout, appel REST dans un
-  `@KafkaListener`, appel réseau sous `synchronized`). Un volet Python a été
-  livré puis retiré : la cible d'analyse est Java + Spring + Maven
-  uniquement (décision de périmètre, pas un manque temporaire — voir la
-  note en tête de ce fichier). Le pack ne vit plus dans `ccc-findings` — il
-  est distribué par `ccc-findings-skill` (`skills/cccf/rules/liveness/
-  java.yaml`, ADR-24), aux côtés du pack `default` déjà présent côté skill.
-  `ccc-findings` garde une copie de test (`tests/fixtures/liveness_repo/`,
-  `tests/test_liveness_rules.py`, `docs/SPEC-FONC.md#6-pack-de-règles-
-  liveness-backlog-10-k8`). Restent à faire : volet sécurité (SASL,
-  PLAINTEXT, désérialisation), configs consumer risquées
-  (`max.poll.interval.ms`), handler sans DLQ, retry sans backoff.
+  `@KafkaListener`, appel réseau sous `synchronized`, verrou pessimiste
+  MongoDB par sondage bloquant `while`/`for` + `Thread.sleep` autour d'un
+  `findAndModify`/`findOneAndUpdate`, même appel Mongo sous `synchronized`).
+  Un volet Python a été livré puis retiré : la cible d'analyse est Java +
+  Spring + Maven uniquement (décision de périmètre, pas un manque
+  temporaire — voir la note en tête de ce fichier). Le pack ne vit plus
+  dans `ccc-findings` — il est distribué par `ccc-findings-skill`
+  (`skills/cccf/rules/liveness/java.yaml`, ADR-24), aux côtés du pack
+  `default` déjà présent côté skill. `ccc-findings` garde une copie de test
+  (`tests/fixtures/liveness_repo/`, `tests/test_liveness_rules.py`,
+  `docs/SPEC-FONC.md#6-pack-de-règles-liveness-backlog-10-k8`). Restent à
+  faire : volet sécurité (SASL, PLAINTEXT, désérialisation), configs
+  consumer risquées (`max.poll.interval.ms`), handler sans DLQ, retry sans
+  backoff.
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
 - **Priorité** : BASSE
@@ -380,8 +391,11 @@ l'ordre :
   `run_semgrep_endpoints` dans `scanner.py`, testés dans
   `tests/test_rest_endpoints.py` (fixtures réelles + fixtures JSON pour les
   cas d'erreur). Branché dans `cccf index` et exposé via `cccf endpoints`/
-  `cccf graph` (CLI + MCP) — voir A1 dans `archive/BACKLOG-11.md`. Reste à
-  couvrir : `@RequestMapping` méthodes non-GET, `WebClient`/Feign.
+  `cccf graph` (CLI + MCP) — voir A1 dans `archive/BACKLOG-11.md`. Depuis J1
+  (`archive/BACKLOG-12.md`), les URLs absolues appelantes sont normalisées en
+  routes canoniques (`METHOD /path`) pour rester comparables aux routes
+  exposées dans le graphe. Reste à couvrir : `@RequestMapping` méthodes
+  non-GET, `WebClient`/Feign.
 
 ### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
 - **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les
