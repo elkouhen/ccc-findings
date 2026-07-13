@@ -11,6 +11,7 @@ from cccf.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from cccf.models import Finding, MessageEndpoint
 from cccf.scanner import (
     SEVERITY_ORDER,
+    clear_analysis_caches,
     invoke_semgrep_raw,
     parse_semgrep_endpoints,
     parse_semgrep_json,
@@ -207,6 +208,13 @@ def index_repo(
     full: bool = False,
     index_code_chunks: bool = False,
 ) -> IndexReport:
+    # BACKLOG-16 P2 : purge les lru_cache d'analyse best-effort (package
+    # Java, propriétés Spring, module Maven/Gradle) avant de relire le
+    # repo — nécessaire dans un process long-vivant (serveur MCP) où
+    # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
+    # pas tels qu'un `cccf index` précédent les avait mémorisés.
+    clear_analysis_caches()
+
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
 

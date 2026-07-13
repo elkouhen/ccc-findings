@@ -413,6 +413,16 @@ invalide → passe au suivant, jamais une erreur. Clé introuvable partout → l
 défaut Spring s'applique s'il est présent, sinon `None` (jamais résolu au
 hasard).
 
+`scanner.clear_analysis_caches()` (BACKLOG-16 P2) vide tous les `lru_cache`
+d'analyse best-effort par chemin (`_java_qualified_name`,
+`_load_flat_spring_properties`, `_load_value_annotated_fields`,
+`maven._cached_module_name`, `gradle._service_roots`) — appelé en tête de
+`indexer.index_repo`. Ces caches accélèrent une indexation en cours (un
+même `application.yml`/`pom.xml` lu plusieurs fois), mais un serveur MCP
+est un process long-vivant : sans purge à chaque indexation, une propriété
+Spring, un artifactId ou un package Java modifiés entre deux `cccf index`
+resteraient résolus avec leur ancienne valeur.
+
 ## 5. Embedding et recherche
 
 `embedder.finding_to_text(f)` — format exact (contrat figé, utilisé pour

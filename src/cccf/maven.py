@@ -38,6 +38,14 @@ def _cached_module_name(pom_path_str: str) -> str:
     return artifact_id or pom_path.parent.name
 
 
+def clear_caches() -> None:
+    """BACKLOG-16 P2 : à appeler en tête de chaque indexation dans un
+    process long-vivant (serveur MCP) — `_cached_module_name` est caché par
+    chemin de pom.xml pour toute la durée du process, un artifactId modifié
+    entre deux `cccf index` resterait sinon périmé."""
+    _cached_module_name.cache_clear()
+
+
 def module_name_for_path(repo_root: Path, rel_path: str) -> str | None:
     """Nom de module Maven (artifactId, repli sur le nom du répertoire) du
     plus proche `pom.xml` en remontant depuis le répertoire de `rel_path`

@@ -41,6 +41,12 @@ def _service_roots(repo_root_str: str) -> frozenset[str]:
     return frozenset(roots)
 
 
+def clear_caches() -> None:
+    """BACKLOG-16 P2 : voir `maven.clear_caches` — `_service_roots` est caché
+    par repo pour toute la durée du process."""
+    _service_roots.cache_clear()
+
+
 def gradle_service_for_path(repo_root: Path, rel_path: str) -> str | None:
     """Service Gradle (BACKLOG-15 H1) : premier segment de `rel_path` s'il
     correspond à un répertoire qui contient, quelque part dans son

@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 import yaml
 
 from cccf.config import Config
+from cccf import gradle as gradle_module
+from cccf import maven as maven_module
 from cccf.gradle import gradle_service_for_path
 from cccf.maven import module_name_for_path
 from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
@@ -508,3 +510,19 @@ def run_semgrep_endpoints(
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
     raw = invoke_semgrep_raw(repo_root, config, files)
     return parse_semgrep_endpoints(raw, repo_root)
+
+
+def clear_analysis_caches() -> None:
+    """BACKLOG-16 P2 : vide tous les `lru_cache` d'analyse best-effort
+    (package/qualified-name Java, propriétés Spring, champs `@Value`,
+    module Maven, service Gradle) — à appeler en tête de chaque
+    indexation. Ces caches accélèrent une indexation en cours (un même
+    fichier de config lu plusieurs fois), mais un serveur MCP est un
+    process long-vivant : sans purge, `reindex_findings` reservirait des
+    valeurs résolues avant la modification des fichiers qui a motivé la
+    réindexation."""
+    _java_qualified_name.cache_clear()
+    _load_flat_spring_properties.cache_clear()
+    _load_value_annotated_fields.cache_clear()
+    maven_module.clear_caches()
+    gradle_module.clear_caches()

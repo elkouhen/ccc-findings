@@ -28,7 +28,7 @@
     - `_is_test_source("svc/src/contractTest/java/T.java") is True` ;
     - `_is_test_source("src/main/java/A.java") is False`.
 
-- [ ] **P2 — Caches `lru_cache` périmés dans le serveur MCP long-vivant**
+- [x] **P2 — Caches `lru_cache` périmés dans le serveur MCP long-vivant**
   - Fichiers : `src/cccf/scanner.py`, `src/cccf/maven.py`, `src/cccf/gradle.py`,
     `src/cccf/indexer.py`, `tests/test_scanner.py`
   - Description : `_java_qualified_name`, `_load_flat_spring_properties`,

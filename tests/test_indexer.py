@@ -295,6 +295,42 @@ def test_index_repo_excludes_files_under_a_non_main_source_set(
     assert [e.path for e in endpoints] == ["service/src/main/java/OrderConsumer.java"]
 
 
+@pytest.mark.integration
+def test_index_repo_reresolves_spring_property_after_application_yml_change(
+    tmp_path: Path,
+) -> None:
+    """BACKLOG-16 P2 : `ValueAnnotatedConsumer.java:24`
+    (`@KafkaListener(topics = ordersTopic)`) résout son topic via le champ
+    `@Value("${app.kafka.topics.orders}")` puis `application.yml` — dans un
+    process long-vivant (serveur MCP), le cache d'analyse
+    (`_load_flat_spring_properties`) ne doit pas resservir l'ancienne
+    valeur de `application.yml` après modification. `full=True` force le
+    Java à être réanalysé (seul `application.yml` change de hash, le
+    fichier Java lui-même est intact)."""
+    dest = tmp_path / "kafka_repo"
+    shutil.copytree(FIXTURES_DIR / "kafka_repo", dest)
+    config = make_config(rules=["rules/java.yaml"])
+
+    def _resolved_topic(store: Store) -> str:
+        (endpoint,) = [
+            e
+            for e in store.all_endpoints()
+            if e.path == "app/java/ValueAnnotatedConsumer.java" and e.start_line == 24
+        ]
+        return endpoint.topic
+
+    with Store(dest) as store:
+        index_repo(dest, config, store, FakeEmbedder())
+        assert _resolved_topic(store) == "orders.created"
+
+    app_yml = dest / "src" / "main" / "resources" / "application.yml"
+    app_yml.write_text(app_yml.read_text().replace("orders.created", "orders.created.v2"))
+
+    with Store(dest) as store:
+        index_repo(dest, config, store, FakeEmbedder(), full=True)
+        assert _resolved_topic(store) == "orders.created.v2"
+
+
 @pytest.mark.parametrize(
     ("rel_path", "expected"),
     [
