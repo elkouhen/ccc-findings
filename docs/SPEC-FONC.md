@@ -281,32 +281,43 @@ existants plutôt que bloquer inutilement.
 | Toute exception | tools MCP | remonte telle quelle → `ToolError` FastMCP → `isError: true` côté protocole ; le serveur reste utilisable pour l'appel suivant |
 | `ccc` absent ou en erreur | `cccf search` / `search` (MCP) | stderr/exception explicite, code 2 côté CLI, `isError: true` côté MCP |
 
-## 6. Pack de règles fourni — liveness (BACKLOG-10 K8)
+## 6. Pack de règles liveness (BACKLOG-10 K8)
 
-`src/cccf/rules/liveness/rules.yml`, livré avec le package, cible les
-motifs de blocage les plus courants dans un ensemble de microservices REST
-+ Kafka (voir `archive/BACKLOG-10.md`) :
+Le pack de règles vit dans le repo skill, pas dans ce repo : voir
+[`ccc-findings-skill`](https://github.com/elkouhen/ccc-findings-skill)
+`skills/cccf/rules/liveness/{python,java}.yaml`, aux côtés du pack
+`plateforme-agree` déjà distribué par le skill (ADR-24). `cccf` lui-même
+ne livre plus aucun fichier de règles (`src/cccf/rules/` n'existe pas) —
+il ne fait qu'exécuter Semgrep avec les chemins déclarés dans `rules:`.
+Ce repo garde une copie de test dans
+`tests/fixtures/liveness_repo/rules/` (`tests/test_liveness_rules.py`),
+tenue à jour manuellement avec la copie du skill.
 
-| Règle | Sévérité | Détecte |
-|---|---|---|
-| `cccf.liveness.requests-no-timeout` | WARNING | Appel `requests.get/post/put/delete/patch/request` sans `timeout=` |
-| `cccf.liveness.thread-join-no-timeout` | WARNING | `Thread.join()` sans argument |
-| `cccf.liveness.future-result-no-timeout` | WARNING | `Future.result()` sans argument |
-| `cccf.liveness.http-call-in-kafka-python-consumer-loop` | ERROR | Appel `requests`/`httpx` dans une boucle `for message in consumer:` sur un `KafkaConsumer` (kafka-python) |
-| `cccf.liveness.network-call-inside-lock` | ERROR | Appel `requests`/`httpx` à l'intérieur d'un bloc `with lock:` |
+| Règle | Langage | Sévérité | Détecte |
+|---|---|---|---|
+| `cccf.liveness.requests-no-timeout` | Python | WARNING | Appel `requests.get/post/put/delete/patch/request` sans `timeout=` |
+| `cccf.liveness.thread-join-no-timeout` | Python | WARNING | `Thread.join()` sans argument |
+| `cccf.liveness.future-result-no-timeout` | Python | WARNING | `Future.result()` sans argument |
+| `cccf.liveness.http-call-in-kafka-python-consumer-loop` | Python | ERROR | Appel `requests`/`httpx` dans une boucle `for message in consumer:` sur un `KafkaConsumer` (kafka-python) |
+| `cccf.liveness.network-call-inside-lock` | Python | ERROR | Appel `requests`/`httpx` à l'intérieur d'un bloc `with lock:` |
+| `cccf.liveness.java.new-resttemplate-no-timeout` | Java | WARNING | `new RestTemplate()` sans configuration de timeout (vs `RestTemplateBuilder`) |
+| `cccf.liveness.java.blocking-join-no-timeout` | Java | WARNING | `.join()` sans argument (`Thread` ou `CompletableFuture`) |
+| `cccf.liveness.java.blocking-future-get-no-timeout` | Java | WARNING | `.get()` sans argument sur une variable déclarée `Future<T>`/`CompletableFuture<T>` |
+| `cccf.liveness.java.rest-call-in-kafka-listener` | Java | ERROR | Appel `RestTemplate` dans une méthode `@KafkaListener` |
+| `cccf.liveness.java.network-call-inside-synchronized` | Java | ERROR | Appel `RestTemplate` à l'intérieur d'un bloc `synchronized` |
 
-**Usage** : comme toute règle Semgrep locale (ADR-4), le pack n'est jamais
-référencé par un chemin absolu vers le package installé (l'identité de
-règle Semgrep dépend du chemin passé à `--config`, donc de la machine —
-voir `tests/test_liveness_rules.py`). Le copier dans le repo cible
-(ex. `.cccf/rules/liveness.yml`) et le déclarer dans `rules:` :
+**Usage** : comme le pack `plateforme-agree`, le copier dans le repo cible
+(ex. `.cccf/rules/liveness/`) et le déclarer dans `rules:` — jamais de
+chemin absolu vers le repo skill (ADR-24) :
 
 ```yaml
 rules:
-  - .cccf/rules/liveness.yml
+  - .cccf/rules/liveness/python.yaml
+  - .cccf/rules/liveness/java.yaml
 ```
 
 Périmètre actuel : Python (`requests`/`httpx`, `kafka-python`,
-`threading`/`concurrent.futures`). Java/Spring et JS/TS restent à couvrir
-(voir K8 dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair,
-`PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.
+`threading`/`concurrent.futures`) et Java (`RestTemplate`, Spring Kafka
+`@KafkaListener`, `synchronized`, `Future`/`CompletableFuture`). JS/TS reste
+à couvrir (voir K8 dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en
+clair, `PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.

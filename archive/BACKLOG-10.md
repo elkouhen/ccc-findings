@@ -93,7 +93,8 @@ l'ordre :
 
 ### [ ] K2 — Règles Semgrep d'extraction des endpoints Kafka
 - **Priorité** : HAUTE
-- **Fichiers** : `src/cccf/rules/kafka/` (nouveau, embarqué dans le package),
+- **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/kafka/`
+  (nouveau — ADR-24, jamais dans `ccc-findings`) ; ce repo :
   `tests/fixtures/kafka/*`, `tests/test_scanner.py`, `docs/SPEC-TECH.md`
 - **Description** : pack local de règles d'*inventaire* (pas des findings de
   sécurité) avec metavariables capturant le topic, couvrant les frameworks
@@ -202,8 +203,9 @@ l'ordre :
 ### [ ] K8 — Pack de règles liveness (+ sécurité) Kafka/REST (findings)
 - **Priorité** : HAUTE (phase 1 — le seul livrable sans aucune dépendance :
   le pipeline findings existant suffit)
-- **Fichiers** : `src/cccf/rules/liveness/`, `src/cccf/rules/kafka-security/`
-  (ou doc pointant un pack registry), fixtures de tests, `docs/SPEC-FONC.md`
+- **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/liveness/`,
+  `skills/cccf/rules/kafka-security/` (ADR-24, jamais dans `ccc-findings`) ;
+  ce repo : fixtures de test, `docs/SPEC-FONC.md`
 - **Description** : à la différence de K2/K11 (inventaire), de vraies règles
   de *findings*, recentrées sur l'objectif « points de blocage ». Volet
   **liveness** (prioritaire) : appel HTTP sans timeout (`requests`/`httpx`
@@ -222,13 +224,16 @@ l'ordre :
      quel finding (`cccf findings "appel bloquant dans un consumer"`).
   3. Le pack liveness s'exécute sur un projet où aucune autre tâche K n'est
      livrée (indépendance vérifiée).
-- **Statut** : volet liveness Python livré (5 règles : timeout HTTP manquant,
-  `Thread.join()`/`Future.result()` sans timeout, appel REST dans une boucle
-  de consommation kafka-python, appel réseau sous verrou — voir
-  `src/cccf/rules/liveness/rules.yml`, `tests/test_liveness_rules.py`,
-  `docs/SPEC-FONC.md#6-pack-de-règles-fourni--liveness-backlog-10-k8`,
-  ADR-24). Restent à faire : volet sécurité (SASL, PLAINTEXT,
-  désérialisation), Java/Spring et JS/TS, configs consumer risquées
+- **Statut** : volets liveness Python (5 règles) et Java/Spring (5 règles :
+  `new RestTemplate()` sans timeout, `.join()`/`Future.get()` sans timeout,
+  appel REST dans un `@KafkaListener`, appel réseau sous `synchronized`)
+  livrés. Le pack ne vit plus dans `ccc-findings` — il est distribué par
+  `ccc-findings-skill` (`skills/cccf/rules/liveness/{python,java}.yaml`,
+  ADR-24), aux côtés du pack `plateforme-agree` déjà présent côté skill.
+  `ccc-findings` garde une copie de test (`tests/fixtures/liveness_repo/`,
+  `tests/test_liveness_rules.py`, `docs/SPEC-FONC.md#6-pack-de-règles-
+  liveness-backlog-10-k8`). Restent à faire : volet sécurité (SASL,
+  PLAINTEXT, désérialisation), JS/TS, configs consumer risquées
   (`max.poll.interval.ms`), handler sans DLQ, retry sans backoff.
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
@@ -309,7 +314,8 @@ l'ordre :
 
 ### [ ] K11 — Règles Semgrep d'extraction des endpoints REST
 - **Priorité** : HAUTE (phase 2 — pendant REST de K2)
-- **Fichiers** : `src/cccf/rules/rest/` (nouveau, embarqué dans le package),
+- **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/rest/`
+  (nouveau — ADR-24, jamais dans `ccc-findings`) ; ce repo :
   `tests/fixtures/rest/*`, `tests/test_scanner.py`, `docs/SPEC-TECH.md`
 - **Description** : même mécanique que K2, pour les deux faces d'un appel
   REST. Côté **serveur** (`role: serve`) : routes exposées — Spring

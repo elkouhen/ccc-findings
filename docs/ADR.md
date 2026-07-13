@@ -631,35 +631,48 @@ MCP exposé change. Les tests et docs qui référençaient le tool par son ancie
 nom sont mis à jour (`tests/test_mcp_server.py`,
 `tests/test_ccc_bridge.py`).
 
-## ADR-24 — Les packs de règles livrés avec `cccf` ne sont jamais référencés
-par un chemin absolu vers le package installé
+## ADR-24 — Les packs de règles vivent dans le repo skill, jamais dans
+`cccf`, et ne sont jamais référencés par un chemin absolu
 
 **Statut** : Acté.
 
-**Contexte** : BACKLOG-10 K8 introduit `src/cccf/rules/liveness/rules.yml`,
-le premier pack de règles Semgrep livré *avec* le package `cccf` (jusque-là,
-`rules:` ne contenait que des chemins projet ou des packs registry — ADR-4,
-ADR-13). En expérimentant l'usage direct via `--config
-/chemin/absolu/vers/.venv/.../rules/liveness.yml`, le `check_id` Semgrep
-sorti (donc `Finding.rule_id`, et son identité — ADR-5/ADR-15) se révèle
-préfixé par les composants du chemin passé à `--config` tels quels : deux
-machines avec le paquet installé à des chemins différents (ou un dev
-checkout vs une install `uv tool`) obtiennent des `rule_id` différents pour
-la même règle.
+**Contexte** : BACKLOG-10 K8 a d'abord livré un premier pack (liveness
+Python) embarqué dans le package `cccf` lui-même
+(`src/cccf/rules/liveness/rules.yml`) — jusque-là, `rules:` ne contenait que
+des chemins projet ou des packs registry (ADR-4, ADR-13). En expérimentant
+l'usage direct via `--config /chemin/absolu/vers/.venv/.../rules/
+liveness.yml`, le `check_id` Semgrep sorti (donc `Finding.rule_id`, et son
+identité — ADR-5/ADR-15) se révèle préfixé par les composants du chemin
+passé à `--config` tels quels : deux machines avec le paquet installé à des
+chemins différents (ou un dev checkout vs une install `uv tool`) obtiennent
+des `rule_id` différents pour la même règle. Par ailleurs, le repo
+`ccc-findings-skill` s'est révélé être *déjà* le point de distribution
+naturel de ce type de contenu : il porte son propre pack de règles Java
+(`skills/cccf/rules/plateforme-agree/`, spécifique à la plateforme cible
+analysée), avec la même règle déjà énoncée dans `SKILL.md` — copier le
+pack dans le repo cible avant de le déclarer dans `rules:`.
 
-**Décision** : les packs livrés (comme `liveness/rules.yml`) sont documentés
-comme des fichiers de référence à **copier dans le repo cible** (ex.
-`.cccf/rules/liveness.yml`) et à déclarer dans `rules:` par un chemin
-**relatif au repo scanné** — exactement comme une règle locale ordinaire
-(ADR-4). Aucun mécanisme d'auto-découverte par chemin absolu
-(`importlib.resources` ou équivalent) n'est introduit pour l'instant.
+**Décision** :
+1. Les packs de règles ne sont **jamais embarqués dans `cccf`**
+   (`src/cccf/rules/` n'existe pas) — `cccf` reste un exécuteur de Semgrep
+   générique, agnostique du contenu des règles (cohérent ADR-1 : package
+   compagnon, pas de logique métier propre à une plateforme).
+2. Ils vivent dans `ccc-findings-skill` sous `skills/cccf/rules/<pack>/`
+   (ex. `liveness/{python,java}.yaml`, `plateforme-agree/*.yaml`), aux côtés
+   de la documentation d'usage dans `SKILL.md`.
+3. Ils sont documentés comme des fichiers de référence à **copier dans le
+   repo cible** (ex. `.cccf/rules/liveness/`) et à déclarer dans `rules:`
+   par un chemin **relatif au repo scanné** — jamais un chemin absolu vers
+   le repo skill ou vers un package installé, exactement comme une règle
+   locale ordinaire (ADR-4).
 
 **Conséquences** : `rule_id` reste stable et prévisible (`rules.<id>` quand
 la règle vit dans `<repo>/rules/…`), indépendamment de l'endroit où `cccf`
-est installé. `tests/test_liveness_rules.py` fixe cette convention : le
-fixture `tests/fixtures/liveness_repo/rules/rules.yml` est une copie exacte
-du pack livré (`test_fixture_rules_pack_matches_shipped_pack`), testée avec
-un `rules:` projet-relatif comme n'importe quel autre pack. Si un futur pack
-de règles a besoin d'être découvert automatiquement sans copie manuelle,
-cette décision devra être revisitée (ex. CLI qui matérialise le fichier dans
-le repo cible plutôt que de le référencer à distance).
+ou le repo skill sont installés. `ccc-findings` garde une copie de test
+(`tests/fixtures/liveness_repo/rules/`, `tests/test_liveness_rules.py`) qui
+valide le *comportement* des règles (positif/négatif sur fixtures réelles)
+mais n'est plus la source de vérité — celle-ci est `ccc-findings-skill`, qui
+n'a pas d'infra de test propre ; la synchronisation entre les deux copies
+est manuelle, pas vérifiée automatiquement (les deux repos sont versionnés
+indépendamment). Si ça devient un point de friction, une vérification
+inter-repos ou un script de sync pourra être ajouté.

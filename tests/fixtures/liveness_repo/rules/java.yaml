@@ -1,0 +1,87 @@
+rules:
+  - id: cccf.liveness.java.new-resttemplate-no-timeout
+    languages: [java]
+    severity: WARNING
+    message: >-
+      new RestTemplate() sans configuration de timeout : par défaut, aucune
+      limite de temps de connexion/lecture, un service distant qui ne répond
+      jamais bloque le thread indéfiniment.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern: new RestTemplate()
+
+  - id: cccf.liveness.java.blocking-join-no-timeout
+    languages: [java]
+    severity: WARNING
+    message: >-
+      join() sans timeout (Thread ou CompletableFuture) : attente
+      potentiellement infinie.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern: $X.join()
+
+  - id: cccf.liveness.java.blocking-future-get-no-timeout
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Future.get() sans timeout : attente potentiellement infinie.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  Future<$T> $F = ...;
+                  ...
+              - pattern: $F.get()
+          - patterns:
+              - pattern-inside: |
+                  CompletableFuture<$T> $F = ...;
+                  ...
+              - pattern: $F.get()
+
+  - id: cccf.liveness.java.rest-call-in-kafka-listener
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Appel REST synchrone dans un @KafkaListener : le temps d'attente
+      peut dépasser max.poll.interval.ms et déclencher un rebalance.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern-inside: |
+          @KafkaListener(...)
+          $RET $METHOD(...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: $REST.getForObject(...)
+          - pattern: $REST.getForEntity(...)
+          - pattern: $REST.postForObject(...)
+          - pattern: $REST.postForEntity(...)
+          - pattern: $REST.exchange(...)
+          - pattern: $REST.put(...)
+          - pattern: $REST.delete(...)
+          - pattern: $REST.patchForObject(...)
+
+  - id: cccf.liveness.java.network-call-inside-synchronized
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Appel réseau à l'intérieur d'un bloc synchronized : si l'appel bloque,
+      le moniteur reste tenu et tout autre thread qui l'attend se fige.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern-inside: |
+          synchronized (...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: $REST.getForObject(...)
+          - pattern: $REST.getForEntity(...)
+          - pattern: $REST.postForObject(...)
+          - pattern: $REST.postForEntity(...)
+          - pattern: $REST.exchange(...)
