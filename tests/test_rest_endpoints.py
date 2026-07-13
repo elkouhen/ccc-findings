@@ -116,13 +116,16 @@ def test_java_webclient_fluent_calls_are_call_sites() -> None:
     )
 
     by_line = {e.start_line: e for e in endpoints}
-    assert len(endpoints) == 2
+    assert len(endpoints) == 3
     for endpoint in endpoints:
         assert endpoint.role == "call"
         assert endpoint.framework == "webclient"
 
     assert by_line[14].topic == "GET /orders/{id}"
     assert by_line[18].topic == "POST /orders"
+    # BACKLOG-10 K13 : `.uri(...)` sur une ligne distincte de `.patch()`.
+    assert by_line[22].topic == "PATCH /orders/{id}/cancel"
+    assert not by_line[22].topic_dynamic
 
 
 @pytest.mark.integration
@@ -130,8 +133,8 @@ def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> Non
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
     # java : 9 serve (OrderController) + 5 call resttemplate (OrderClient)
-    # + 3 call feign (PaymentClient) + 2 call webclient (WebClientCaller)
-    assert len(endpoints) == 19
+    # + 3 call feign (PaymentClient) + 3 call webclient (WebClientCaller)
+    assert len(endpoints) == 20
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}

@@ -184,17 +184,21 @@ _SPRING_PROFILE_PATTERNS = (
 
 
 def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
-    """Cherche le premier texte entre guillemets sur la première ligne du
-    snippet (annotation ou appel). Renvoie (littéral, concaténé) ;
-    concaténé=True si immédiatement suivi de `+` (avant la virgule/
+    """Cherche le premier texte entre guillemets dans le snippet (annotation
+    ou appel), en parcourant ses lignes dans l'ordre — une chaîne fluent
+    `WebClient` peut répartir `.get()` et `.uri(...)` sur deux lignes
+    (BACKLOG-10 K13) ; le snippet est de toute façon borné exactement par
+    `start_line`/`end_line` du match Semgrep, jamais de code hors de
+    l'appel. Renvoie (littéral, concaténé) ; concaténé=True si
+    immédiatement suivi de `+` sur la même ligne (avant la virgule/
     parenthèse fermante), ou si aucun littéral n'est trouvé."""
-    first_line = snippet.splitlines()[0] if snippet else ""
-    match = _QUOTED_STRING_RE.search(first_line)
-    if match is None:
-        return None, True
-    literal = match.group(1)
-    remainder = first_line[match.end() :].lstrip()
-    return literal, remainder.startswith("+")
+    for line in snippet.splitlines():
+        match = _QUOTED_STRING_RE.search(line)
+        if match is not None:
+            literal = match.group(1)
+            remainder = line[match.end() :].lstrip()
+            return literal, remainder.startswith("+")
+    return None, True
 
 
 def _extract_rest_path(snippet: str) -> tuple[str, bool]:

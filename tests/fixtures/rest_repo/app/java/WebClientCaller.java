@@ -17,4 +17,10 @@ public class WebClientCaller {
     public void create() {
         webClient.post().uri("/orders").retrieve();
     }
+
+    public void cancel(String id) {
+        webClient.patch()
+            .uri("/orders/{id}/cancel", id)
+            .retrieve();
+    }
 }

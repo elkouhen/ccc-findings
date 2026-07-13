@@ -608,3 +608,40 @@ l'ordre :
   liveness (`new-resttemplate-no-timeout`) remonte en hotspot. CA2 (K7)
   reste aussi validé de bout en bout dans
   `tests/test_k7_federation_e2e.py`.
+
+### [ ] K13 — `WebClient` fluent réparti sur plusieurs lignes
+- **Priorité** : HAUTE
+- **Fichiers** : `src/cccf/scanner.py`,
+  `tests/fixtures/rest_repo/app/java/WebClientCaller.java`,
+  `tests/test_rest_endpoints.py`, `docs/SPEC-TECH.md`
+- **Description** : reliquat K11. `_find_first_literal` ne cherche un
+  littéral entre guillemets que sur la première ligne du snippet ; pour un
+  appel `WebClient` formaté `webClient.get()\n    .uri("/orders/{id}")`,
+  le littéral tombe sur la deuxième ligne du snippet (borné exactement par
+  `start_line`/`end_line` du match Semgrep, donc sans risque de capter du
+  code hors de l'appel) et l'endpoint ressort à tort `topic_dynamic=True`.
+- **CA** :
+  1. `_find_first_literal` trouve le premier littéral entre guillemets en
+     parcourant les lignes du snippet dans l'ordre, pas seulement la
+     première.
+  2. La détection de concaténation (`+` après le littéral) reste vérifiée
+     sur la ligne où le littéral a été trouvé, pas seulement la première
+     ligne du snippet.
+  3. Une fixture `WebClient` avec `.get()`/`.uri(...)` sur deux lignes
+     distinctes produit un endpoint `role: call`, `framework: webclient`,
+     chemin résolu, `topic_dynamic=False`.
+  4. Non-régression : les fixtures REST/Kafka existantes (littéral sur la
+     première ligne) restent inchangées.
+- **Statut** : livré. `_find_first_literal` parcourt désormais les lignes
+  du snippet dans l'ordre (au lieu de la seule première ligne) et renvoie
+  le premier littéral trouvé, avec la vérification de concaténation (`+`)
+  faite sur la ligne où ce littéral a été trouvé — pas seulement la
+  première ligne du snippet. `WebClientCaller.java` (fixture) gagne une
+  méthode `cancel` avec `.patch()\n.uri(...)` sur deux lignes distinctes ;
+  testé dans `tests/test_rest_endpoints.py`
+  (`test_java_webclient_fluent_calls_are_call_sites`,
+  `test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks`).
+  Verbe `patch` choisi (plutôt que `put`) pour ne pas recouper la règle
+  générique `cccf.rest.java.call-put` (`$REST.put(...)`, framework
+  `resttemplate`) qui matche aussi un `webClient.put()` — chevauchement
+  préexistant entre packs de règles, hors périmètre de cette tâche.

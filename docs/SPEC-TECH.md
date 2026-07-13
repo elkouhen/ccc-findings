@@ -321,11 +321,15 @@ système est ignoré. Communs aux deux systèmes :
   `scanner._java_qualified_name(str(repo_root), path)` — voir §2.
 
 **REST** (`system: rest`, ou absent) — `_extract_rest_path(snippet)` :
-premier littéral entre guillemets de la première ligne du snippet (relu
-depuis le fichier source, comme `parse_semgrep_json`). Absent, ou suivi
-d'une concaténation (`+`) → `topic_dynamic=True`, chemin conservé comme
-préfixe littéral exploitable (ou `"<dynamic>"` si aucun littéral) — jamais
-résolu silencieusement (ADR-26). Les URLs absolues/scheme-relative sont
+premier littéral entre guillemets du snippet (relu depuis le fichier
+source, comme `parse_semgrep_json`), recherché ligne par ligne dans
+l'ordre — pas seulement la première (BACKLOG-10 K13 : une chaîne fluent
+`WebClient` peut répartir `.get()` et `.uri(...)` sur deux lignes ; le
+snippet reste borné exactement par `start_line`/`end_line` du match
+Semgrep, jamais de code hors de l'appel). Absent, ou suivi d'une
+concaténation (`+`) sur la même ligne → `topic_dynamic=True`, chemin
+conservé comme préfixe littéral exploitable (ou `"<dynamic>"` si aucun
+littéral) — jamais résolu silencieusement (ADR-26). Les URLs absolues/scheme-relative sont
 normalisées en route canonique (`http://order-service/orders?x=1` →
 `/orders`) : host, query string et fragment sont jetés, slash initial forcé,
 slashes répétés compactés. `topic = f"{http_method} {chemin}"` (ex.
