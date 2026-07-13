@@ -100,7 +100,7 @@ l'ordre :
   `endpoints`, filtres `Store.all_endpoints`, remplacement par fichier et
   migration additive en schéma v4 sont présents et testés.
 
-### [ ] K2 — Règles Semgrep d'extraction des endpoints Kafka
+### [x] K2 — Règles Semgrep d'extraction des endpoints Kafka
 - **Priorité** : HAUTE
 - **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/kafka/`
   (nouveau — ADR-24, jamais dans `ccc-findings`) ; ce repo :
@@ -129,6 +129,21 @@ l'ordre :
      conservée telle quelle, `topic_dynamic=True`.
   4. Le parsing de la sortie Semgrep de ces règles est testé sur fixtures
      JSON (esprit ADR-8).
+- **Statut** : livré — 3 règles Java (`consume`, `produce-template`,
+  `produce-record`), `skills/cccf/rules/kafka/java.yaml` côté skill.
+  `resolve_spring_property` (ADR-28) résout un placeholder `${prop}`/
+  `${prop:défaut}` contre `application.yml`/`.yaml`/`.properties`
+  (`src/main/resources/` puis racine, layout Maven/Gradle standard, YAML
+  imbriqué aplati en clés pointées) ; non résolu → placeholder conservé,
+  `topic_dynamic=True`. `_extract_kafka_topic`/`parse_semgrep_endpoints`
+  dans `scanner.py` (même fonction que K11, désormais partagée entre REST
+  et Kafka via `metadata.system`), testés dans `tests/test_kafka_endpoints.
+  py` (fixtures réelles incluant un `application.yml`, + tests unitaires de
+  `resolve_spring_property`). Pas encore branché dans `cccf index` ni dans
+  une commande CLI/MCP (K3 — voir A1 dans `archive/BACKLOG-11.md`). Restent
+  à couvrir : profils Spring (`application-prod.yml`), suivi d'une variable
+  alimentée par `@Value(...)` ailleurs dans la classe, `confluent-kafka`
+  (API bas niveau hors Spring).
 
 ### [ ] K3 — Pipeline d'indexation des endpoints + embeddings
 - **Priorité** : HAUTE

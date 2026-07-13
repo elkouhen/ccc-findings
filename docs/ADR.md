@@ -793,3 +793,42 @@ pas `build_graph`/`find_hotspots` avec les endpoints/findings de plusieurs
 projets — la limitation est explicite dans la sortie (`note`), pas cachée.
 `tests/test_graph.py` vérifie qu'aucune table `*graph*`/`*cycle*` n'existe
 dans le schéma (CA5).
+
+## ADR-28 — Un topic Kafka donné comme propriété Spring est résolu
+localement contre `application.yml`/`.properties`, jamais deviné
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K2 doit extraire le nom du topic dans
+`@KafkaListener(topics = "...")`/`KafkaTemplate.send(...)`. En pratique
+(cible Java + Spring + Maven), le topic n'est presque jamais un littéral
+brut : il est externalisé en configuration —
+`@KafkaListener(topics = "${app.kafka.topics.orders}")`, la valeur réelle
+vivant dans `application.yml`/`.properties`. Le texte capturé par
+extraction regex (ADR-26) est alors `${app.kafka.topics.orders}` — une clé
+de configuration, pas un nom de topic. Le marquer simplement
+`topic_dynamic=True` comme un cas non résolu (variable, concaténation)
+aurait été correct mais peu utile : la clé est presque toujours résolvable
+statiquement, dans le même repo, sans aucune connexion runtime.
+
+**Décision** : `resolve_spring_property(repo_root, property_key)` cherche
+`property_key` (syntaxe `prop` ou `prop:défaut`, comme Spring) dans les
+fichiers de configuration Spring Boot conventionnels du repo (Maven/Gradle
+standard layout : `src/main/resources/application.{yml,yaml,properties}`,
+puis les mêmes noms à la racine), dans cet ordre — premier fichier qui
+définit la clé gagne. YAML imbriqué est aplati en clés pointées
+(`app.kafka.topics.orders`) ; `.properties` est déjà plat. Si la clé n'est
+trouvée dans aucun fichier, le défaut Spring (`${prop:défaut}`) s'applique ;
+sinon, le placeholder est conservé tel quel et marqué `topic_dynamic=True`
+— jamais résolu au hasard, même politique que ADR-26 pour les chemins REST
+non littéraux.
+
+**Conséquences** : une variable qui reçoit une valeur `@Value("${...}")`
+puis est passée à `.send(topic, ...)` n'est **pas** résolue (pas d'analyse
+de flux de données à travers les statements — hors périmètre, cohérent
+avec l'absence de métavariables/taint dans ADR-26) : seul le cas où le
+placeholder apparaît **textuellement** dans l'annotation/l'appel est
+couvert. Les profils Spring (`application-prod.yml`) ne sont pas
+consultés — seul le fichier de base. `tests/test_kafka_endpoints.py` fixe
+le contrat : résolution YAML et `.properties`, valeur par défaut, clé
+introuvable, priorité YAML > `.properties` quand les deux existent.

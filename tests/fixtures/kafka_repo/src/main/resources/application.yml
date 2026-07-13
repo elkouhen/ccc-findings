@@ -1,0 +1,5 @@
+app:
+  kafka:
+    topics:
+      payments: payments.received
+      orders: orders.created

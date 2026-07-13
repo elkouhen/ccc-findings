@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from cccf.config import Config
 from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 
@@ -106,28 +108,126 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
     return findings
 
 
-# BACKLOG-10 K11 : règles d'inventaire d'endpoints (`metadata.category:
+# BACKLOG-10 K2/K11 : règles d'inventaire d'endpoints (`metadata.category:
 # endpoint-inventory`) — le rôle/système/méthode HTTP viennent des métadonnées
-# de la règle (fixes par construction, une règle = une méthode), le chemin
-# vient d'une extraction best-effort sur le snippet (métavariables Semgrep
-# indisponibles sans compte connecté, voir ADR-26).
+# de la règle (fixes par construction, une règle = une méthode), le
+# topic/chemin vient d'une extraction best-effort sur le snippet
+# (métavariables Semgrep indisponibles sans compte connecté, voir ADR-26).
 _QUOTED_STRING_RE = re.compile(r"f?[\"']([^\"']*)[\"']")
+_PROPERTY_PLACEHOLDER_RE = re.compile(r"^\$\{([^}]+)\}$")
+
+# BACKLOG-11 A1 / K2 : emplacements conventionnels des fichiers de
+# configuration Spring Boot (Maven/Gradle standard layout), essayés dans
+# l'ordre — le premier fichier qui définit la clé gagne.
+_SPRING_PROPERTY_FILES = [
+    "src/main/resources/application.yml",
+    "src/main/resources/application.yaml",
+    "src/main/resources/application.properties",
+    "application.yml",
+    "application.yaml",
+    "application.properties",
+]
 
 
-def _extract_rest_path(snippet: str) -> tuple[str, bool]:
-    """Renvoie (chemin, dynamique). Cherche le premier littéral entre
-    guillemets sur la première ligne du snippet (annotation ou appel) ; si
-    ce littéral est suivi d'une concaténation (`+`) ou qu'aucun littéral
-    n'est trouvé, le chemin est marqué dynamique (jamais résolu
-    silencieusement, même esprit que `topic_dynamic` en K2)."""
+def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
+    """Cherche le premier texte entre guillemets sur la première ligne du
+    snippet (annotation ou appel). Renvoie (littéral, concaténé) ;
+    concaténé=True si immédiatement suivi de `+` (avant la virgule/
+    parenthèse fermante), ou si aucun littéral n'est trouvé."""
     first_line = snippet.splitlines()[0] if snippet else ""
     match = _QUOTED_STRING_RE.search(first_line)
     if match is None:
-        return "<dynamic>", True
-    path = match.group(1)
+        return None, True
+    literal = match.group(1)
     remainder = first_line[match.end() :].lstrip()
-    is_dynamic = remainder.startswith("+")
-    return path, is_dynamic
+    return literal, remainder.startswith("+")
+
+
+def _extract_rest_path(snippet: str) -> tuple[str, bool]:
+    """Renvoie (chemin, dynamique) — jamais résolu silencieusement (même
+    esprit que `topic_dynamic` en K2)."""
+    literal, dynamic = _find_first_literal(snippet)
+    if literal is None:
+        return "<dynamic>", True
+    return literal, dynamic
+
+
+def _flatten_properties(data: object, prefix: str = "") -> dict[str, str]:
+    flat: dict[str, str] = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            full_key = f"{prefix}.{key}" if prefix else str(key)
+            flat.update(_flatten_properties(value, full_key))
+    elif isinstance(data, (str, int, float, bool)):
+        flat[prefix] = str(data)
+    return flat
+
+
+def _parse_dotted_properties_file(text: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("!"):
+            continue
+        sep_index = min(
+            (i for i in (stripped.find("="), stripped.find(":")) if i != -1), default=-1
+        )
+        if sep_index == -1:
+            continue
+        key, value = stripped[:sep_index], stripped[sep_index + 1 :]
+        result[key.strip()] = value.strip()
+    return result
+
+
+def resolve_spring_property(repo_root: Path, property_key: str) -> str | None:
+    """Cherche `property_key` (ex. `app.kafka.topics.orders`, ou
+    `prop:default` — syntaxe de valeur par défaut Spring) dans les fichiers
+    de configuration Spring Boot conventionnels du repo (Maven/Gradle
+    standard layout). `None` si introuvable et sans défaut — jamais résolu
+    au hasard (ADR-26/28)."""
+    key, _, default = property_key.partition(":")
+    for rel_path in _SPRING_PROPERTY_FILES:
+        path = repo_root / rel_path
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        if rel_path.endswith(".properties"):
+            flat = _parse_dotted_properties_file(text)
+        else:
+            try:
+                data = yaml.safe_load(text)
+            except yaml.YAMLError:
+                continue
+            flat = _flatten_properties(data or {})
+
+        if key in flat:
+            return flat[key]
+
+    return default or None
+
+
+def _extract_kafka_topic(snippet: str, repo_root: Path) -> tuple[str, bool]:
+    """Renvoie (topic, dynamique). Un littéral `${propriete.imbriquee}`
+    (placeholder Spring, ex. `@KafkaListener(topics = "${app.kafka.topics.
+    orders}")`) n'est pas un nom de topic mais une clé de configuration :
+    tentative de résolution via `resolve_spring_property` avant de retomber
+    sur dynamique si la clé est introuvable — jamais résolu au hasard."""
+    literal, dynamic = _find_first_literal(snippet)
+    if literal is None:
+        return "<dynamic>", True
+
+    placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
+    if placeholder is not None:
+        resolved = resolve_spring_property(repo_root, placeholder.group(1))
+        if resolved is not None:
+            return resolved, False
+        return literal, True
+
+    return literal, dynamic
 
 
 def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
@@ -149,29 +249,40 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
         metadata = extra.get("metadata") or {}
         if metadata.get("category") != "endpoint-inventory":
             continue
-        if metadata.get("system", "rest") != "rest":
-            continue  # K2 (kafka) a sa propre extraction, hors périmètre K11
+
+        system = metadata.get("system", "rest")
+        if system not in ("rest", "kafka"):
+            continue
 
         try:
             path = _relative_path(result["path"], repo_root)
             start_line = result["start"]["line"]
             end_line = result["end"]["line"]
             role = metadata["role"]
-            http_method = metadata["http_method"]
         except (KeyError, TypeError) as exc:
             raise SemgrepError(
                 f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
             ) from exc
 
         snippet = _read_snippet(repo_root, path, start_line, end_line)
-        route, dynamic = _extract_rest_path(snippet)
-        topic = f"{http_method} {route}"
+
+        if system == "rest":
+            try:
+                http_method = metadata["http_method"]
+            except KeyError as exc:
+                raise SemgrepError(
+                    f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
+                ) from exc
+            route, dynamic = _extract_rest_path(snippet)
+            topic = f"{http_method} {route}"
+        else:
+            topic, dynamic = _extract_kafka_topic(snippet, repo_root)
 
         endpoints.append(
             MessageEndpoint(
                 id=compute_endpoint_id(role, topic, path, start_line, end_line),
                 role=role,
-                system="rest",
+                system=system,
                 topic=topic,
                 topic_dynamic=dynamic,
                 source="code",

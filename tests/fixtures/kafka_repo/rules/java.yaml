@@ -1,0 +1,44 @@
+rules:
+  - id: cccf.kafka.java.consume
+    languages: [java]
+    severity: INFO
+    message: Consommation Kafka (@KafkaListener).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: consume
+      framework: spring-kafka
+    patterns:
+      - pattern: |
+          @KafkaListener(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.kafka.java.produce-template
+    languages: [java]
+    severity: INFO
+    message: Production Kafka (KafkaTemplate).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: produce
+      framework: spring-kafka
+    patterns:
+      - pattern-either:
+          # au moins topic + 1 argument : exclut send(ProducerRecord) à un
+          # seul argument, où le topic est déjà porté par produce-record.
+          - pattern: $KAFKA.send($TOPIC, $VAL, ...)
+          - pattern: $KAFKA.sendDefault(...)  # topic implicite (config du template), toujours dynamique
+
+  - id: cccf.kafka.java.produce-record
+    languages: [java]
+    severity: INFO
+    message: Production Kafka (ProducerRecord).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: produce
+      framework: kafka-clients
+    patterns:
+      - pattern-either:
+          - pattern: new ProducerRecord($TOPIC, $KEY, $VAL)
+          - pattern: new ProducerRecord($TOPIC, $VAL)

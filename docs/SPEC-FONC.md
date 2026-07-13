@@ -367,10 +367,41 @@ le pipeline d'indexation ni une commande CLI/MCP (K3, K5/K6, non livrés).
 Chaque résultat porte `metadata.category: endpoint-inventory`,
 `metadata.role`, `metadata.http_method`, `metadata.framework` — le contrat
 que lit `parse_semgrep_endpoints` (voir `docs/SPEC-TECH.md#4bis-extraction-
-dendpoints-rest-run_semgrep_endpoints-backlog-10-k11`). Le chemin est
-extrait du texte du site (regex sur le snippet, pas de métavariable Semgrep
-— ADR-26) : un chemin non littéral, ou concaténé à une variable, est marqué
-`topic_dynamic=True` plutôt que résolu au hasard. `@RequestMapping` avec
-méthode explicite autre que GET reste à couvrir. Périmètre : Java
-uniquement — la stack cible de l'analyse est Java + Spring + Maven (voir
-K8/K11 dans `archive/BACKLOG-10.md`).
+dendpoints-rest--kafka-run_semgrep_endpoints-backlog-10-k11k2`). Le chemin
+est extrait du texte du site (regex sur le snippet, pas de métavariable
+Semgrep — ADR-26) : un chemin non littéral, ou concaténé à une variable,
+est marqué `topic_dynamic=True` plutôt que résolu au hasard.
+`@RequestMapping` avec méthode explicite autre que GET reste à couvrir.
+Périmètre : Java uniquement — la stack cible de l'analyse est Java +
+Spring + Maven (voir K8/K11 dans `archive/BACKLOG-10.md`).
+
+## 8. Pack de règles d'inventaire Kafka (BACKLOG-10 K2)
+
+Comme le pack REST, vit dans `ccc-findings-skill`
+(`skills/cccf/rules/kafka/java.yaml`, ADR-24) — copie de test dans
+`tests/fixtures/kafka_repo/`. Pas un pack de findings, pas exécuté
+automatiquement (mêmes raisons que K11).
+
+| Règle | Rôle | Détecte |
+|---|---|---|
+| `cccf.kafka.java.consume` | `consume` | Méthode `@KafkaListener(topics = "...")` |
+| `cccf.kafka.java.produce-template` | `produce` | `KafkaTemplate.send(topic, valeur, ...)` (au moins 2 arguments — exclut `send(ProducerRecord)`, déjà couvert ci-dessous) ou `KafkaTemplate.sendDefault(...)` (topic implicite, toujours dynamique) |
+| `cccf.kafka.java.produce-record` | `produce` | `new ProducerRecord(topic, ...)` |
+
+Le topic est extrait comme pour REST (`extra.metadata.role`, pas de
+`http_method` ici), avec un cas supplémentaire propre à Kafka/Spring : un
+littéral de la forme `${propriete.imbriquee}` — un topic externalisé en
+configuration (`@KafkaListener(topics = "${app.kafka.topics.orders}")`) —
+n'est **pas** traité comme un nom de topic littéral. `cccf` tente de le
+résoudre contre `application.yml`/`.yaml`/`.properties` du repo
+(`src/main/resources/` puis la racine, layout standard Maven/Gradle,
+support de la syntaxe de défaut Spring `${prop:défaut}`) via
+`resolve_spring_property` — voir ADR-28. Résolu → `topic_dynamic=False`,
+topic = la valeur trouvée (ou le défaut) ; introuvable et sans défaut →
+`topic_dynamic=True`, le placeholder est conservé tel quel (jamais résolu
+au hasard). Une variable alimentée par un `@Value("${...}")` ailleurs dans
+la classe n'est pas suivie (pas d'analyse de flux de données entre
+statements) : seul le placeholder textuel dans l'annotation/l'appel est
+résolu.
+
+Périmètre : Java uniquement (voir note en tête de `archive/BACKLOG-10.md`).
