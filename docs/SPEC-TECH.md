@@ -279,6 +279,13 @@ purge findings, chunks et embeddings associés.
 `meta.index_engine = "cocoindex-prototype"`. Le moteur manuel reste le défaut et
 écrit `meta.index_engine = "manual"` quand il est utilisé via la CLI.
 
+Le tool MCP `reindex_findings` (BACKLOG-16 P3) respecte ce même choix :
+il lit `meta.index_engine` et dispatche vers `index_repo_with_cocoindex`
+si sa valeur est `"cocoindex-prototype"`, sinon vers `index_repo` (et écrit
+alors `"manual"`, parité avec la CLI) — sans cela, un repo indexé avec
+`--engine cocoindex` verrait ses chunks de code ne plus jamais être
+rafraîchis dès qu'un agent réindexe via MCP plutôt que la CLI.
+
 `findings_removed` / `endpoints_removed` sont calculés en comptant, **avant**
 suppression, les lignes déjà en base pour les chemins de `deleted` et de
 `changed`, via des requêtes SQL `COUNT(*) WHERE path IN (...)` batchées par

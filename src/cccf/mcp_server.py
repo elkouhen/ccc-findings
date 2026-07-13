@@ -4,6 +4,7 @@ from mcp.server.fastmcp import FastMCP
 
 from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
+from cccf.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
 from cccf.config import ConfigError, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.flow import (
@@ -106,7 +107,15 @@ def reindex_findings() -> IndexReport:
     config = load_config(repo_root)
     embedder = make_embedder(config.embedding_model)
     with Store(repo_root) as store:
-        return index_repo(repo_root, config, store, embedder)
+        # BACKLOG-16 P3 : même dispatch que `cccf index` (cli.py) — un repo
+        # indexé avec `--engine cocoindex` doit continuer de rafraîchir ses
+        # chunks de code ici, sinon `search` (MCP) sert des chunks périmés
+        # après un `reindex_findings` qui les a silencieusement ignorés.
+        if store.get_meta("index_engine") == ENGINE_META_VALUE:
+            return index_repo_with_cocoindex(repo_root, config, store, embedder)
+        report = index_repo(repo_root, config, store, embedder)
+        store.set_meta("index_engine", "manual")
+        return report
 
 
 @mcp.tool()

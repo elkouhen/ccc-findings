@@ -45,7 +45,7 @@
   - CA : test qui indexe, modifie `application.yml` (nouveau nom de topic),
     réindexe dans le même process, et observe le nouveau topic.
 
-- [ ] **P3 — MCP `reindex_findings` ignore le moteur d'indexation du store**
+- [x] **P3 — MCP `reindex_findings` ignore le moteur d'indexation du store**
   - Fichiers : `src/cccf/mcp_server.py`, `tests/test_mcp_server.py`
   - Description : le tool appelle `index_repo` directement (moteur manuel,
     sans chunks). Sur un repo indexé avec `--engine cocoindex`,
