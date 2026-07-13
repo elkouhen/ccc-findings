@@ -139,6 +139,53 @@ def test_find_cycles_detects_the_three_service_rest_cycle_with_sites() -> None:
     assert ("b/Controller.java", 10) in sites
 
 
+def test_find_cycles_marks_webclient_only_cycle_as_not_synchronous() -> None:
+    # Cycle A -> B -> A, mais les deux appels sont WebClient (réactif) :
+    # le cycle existe, mais pas de garantie de blocage de thread synchrone.
+    endpoints_by_service = {
+        "service-a": [
+            make_endpoint("serve", "GET /a-status", "a/Controller.java", 10, 10),
+            make_endpoint(
+                "call", "GET /b-status", "a/Client.java", 5, 5, framework="webclient"
+            ),
+        ],
+        "service-b": [
+            make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10),
+            make_endpoint(
+                "call", "GET /a-status", "b/Client.java", 5, 5, framework="webclient"
+            ),
+        ],
+    }
+
+    cycles = find_cycles(build_graph(endpoints_by_service))
+
+    assert len(cycles) == 1
+    assert cycles[0].has_synchronous_rest is False
+
+
+def test_find_cycles_marks_mixed_webclient_and_resttemplate_cycle_as_synchronous() -> None:
+    # Un seul maillon bloquant (RestTemplate) suffit à qualifier le cycle.
+    endpoints_by_service = {
+        "service-a": [
+            make_endpoint("serve", "GET /a-status", "a/Controller.java", 10, 10),
+            make_endpoint(
+                "call", "GET /b-status", "a/Client.java", 5, 5, framework="webclient"
+            ),
+        ],
+        "service-b": [
+            make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10),
+            make_endpoint(
+                "call", "GET /a-status", "b/Client.java", 5, 5, framework="resttemplate"
+            ),
+        ],
+    }
+
+    cycles = find_cycles(build_graph(endpoints_by_service))
+
+    assert len(cycles) == 1
+    assert cycles[0].has_synchronous_rest is True
+
+
 def test_find_cycles_returns_nothing_when_graph_is_acyclic() -> None:
     endpoints_by_service = {
         "service-a": [make_endpoint("call", "GET /b-status", "a/Client.java", 5, 5)],

@@ -27,9 +27,13 @@ rules:
       http_method: POST
       framework: spring
     patterns:
-      - pattern: |
-          @PostMapping(...)
-          $RET $METHOD(...) { ... }
+      - pattern-either:
+          - pattern: |
+              @PostMapping(...)
+              $RET $METHOD(...) { ... }
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.POST, ...)
+              $RET $METHOD(...) { ... }
 
   - id: cccf.rest.java.serve-put
     languages: [java]
@@ -41,9 +45,13 @@ rules:
       http_method: PUT
       framework: spring
     patterns:
-      - pattern: |
-          @PutMapping(...)
-          $RET $METHOD(...) { ... }
+      - pattern-either:
+          - pattern: |
+              @PutMapping(...)
+              $RET $METHOD(...) { ... }
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.PUT, ...)
+              $RET $METHOD(...) { ... }
 
   - id: cccf.rest.java.serve-delete
     languages: [java]
@@ -55,9 +63,13 @@ rules:
       http_method: DELETE
       framework: spring
     patterns:
-      - pattern: |
-          @DeleteMapping(...)
-          $RET $METHOD(...) { ... }
+      - pattern-either:
+          - pattern: |
+              @DeleteMapping(...)
+              $RET $METHOD(...) { ... }
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.DELETE, ...)
+              $RET $METHOD(...) { ... }
 
   - id: cccf.rest.java.serve-patch
     languages: [java]
@@ -69,9 +81,13 @@ rules:
       http_method: PATCH
       framework: spring
     patterns:
-      - pattern: |
-          @PatchMapping(...)
-          $RET $METHOD(...) { ... }
+      - pattern-either:
+          - pattern: |
+              @PatchMapping(...)
+              $RET $METHOD(...) { ... }
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.PATCH, ...)
+              $RET $METHOD(...) { ... }
 
   - id: cccf.rest.java.call-get
     languages: [java]
@@ -124,3 +140,183 @@ rules:
       framework: resttemplate
     patterns:
       - pattern: $REST.delete(...)
+
+  # Feign : interfaces déclaratives (@FeignClient) dont les méthodes portent
+  # les mêmes annotations que des routes Spring MVC, mais sont des sites
+  # d'appel (pas de corps de méthode : signature suivie de `;`).
+  - id: cccf.rest.java.feign-get
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (Feign, GET).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: GET
+      framework: feign
+    patterns:
+      - pattern-inside: |
+          @FeignClient(...)
+          interface $IFACE {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              @GetMapping(...)
+              $RET $METHOD(...);
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.GET, ...)
+              $RET $METHOD(...);
+
+  - id: cccf.rest.java.feign-post
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (Feign, POST).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: POST
+      framework: feign
+    patterns:
+      - pattern-inside: |
+          @FeignClient(...)
+          interface $IFACE {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              @PostMapping(...)
+              $RET $METHOD(...);
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.POST, ...)
+              $RET $METHOD(...);
+
+  - id: cccf.rest.java.feign-put
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (Feign, PUT).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PUT
+      framework: feign
+    patterns:
+      - pattern-inside: |
+          @FeignClient(...)
+          interface $IFACE {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              @PutMapping(...)
+              $RET $METHOD(...);
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.PUT, ...)
+              $RET $METHOD(...);
+
+  - id: cccf.rest.java.feign-delete
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (Feign, DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: DELETE
+      framework: feign
+    patterns:
+      - pattern-inside: |
+          @FeignClient(...)
+          interface $IFACE {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              @DeleteMapping(...)
+              $RET $METHOD(...);
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.DELETE, ...)
+              $RET $METHOD(...);
+
+  - id: cccf.rest.java.feign-patch
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (Feign, PATCH).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PATCH
+      framework: feign
+    patterns:
+      - pattern-inside: |
+          @FeignClient(...)
+          interface $IFACE {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              @PatchMapping(...)
+              $RET $METHOD(...);
+          - pattern: |
+              @RequestMapping(..., method = RequestMethod.PATCH, ...)
+              $RET $METHOD(...);
+
+  # WebClient : builder fluent (Spring WebFlux), une méthode HTTP par
+  # entrée de chaîne (`.get()`, `.post()`, ...) suivie de `.uri(...)`.
+  - id: cccf.rest.java.webclient-get
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (WebClient, GET).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: GET
+      framework: webclient
+    patterns:
+      - pattern: $WC.get().uri(...)
+
+  - id: cccf.rest.java.webclient-post
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (WebClient, POST).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: POST
+      framework: webclient
+    patterns:
+      - pattern: $WC.post().uri(...)
+
+  - id: cccf.rest.java.webclient-put
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (WebClient, PUT).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PUT
+      framework: webclient
+    patterns:
+      - pattern: $WC.put().uri(...)
+
+  - id: cccf.rest.java.webclient-delete
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (WebClient, DELETE).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: DELETE
+      framework: webclient
+    patterns:
+      - pattern: $WC.delete().uri(...)
+
+  - id: cccf.rest.java.webclient-patch
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (WebClient, PATCH).
+    metadata:
+      category: endpoint-inventory
+      role: call
+      http_method: PATCH
+      framework: webclient
+    patterns:
+      - pattern: $WC.patch().uri(...)

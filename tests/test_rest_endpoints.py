@@ -42,6 +42,11 @@ def test_java_server_routes_extract_role_method_and_literal_path() -> None:
     # @RequestMapping(value = "...", method = RequestMethod.GET) reconnu
     # comme GET au même titre que @GetMapping
     assert by_line[32].topic == "GET /orders/{id}/summary"
+    # @RequestMapping(..., method = RequestMethod.{PUT,DELETE,PATCH}) : mêmes
+    # verbes non-GET reconnus au même titre que les annotations dédiées
+    assert by_line[37].topic == "PUT /orders/{id}/cancel"
+    assert by_line[42].topic == "DELETE /orders/{id}/archive"
+    assert by_line[46].topic == "PATCH /orders/{id}/pause"
 
 
 @pytest.mark.integration
@@ -87,14 +92,50 @@ def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic(
 
 
 @pytest.mark.integration
+def test_java_feign_client_methods_are_call_sites_not_server_routes() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/PaymentClient.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 3
+    for endpoint in endpoints:
+        assert endpoint.role == "call"
+        assert endpoint.framework == "feign"
+
+    assert by_line[9].topic == "GET /payments/{id}"
+    assert by_line[12].topic == "POST /payments"
+    # @RequestMapping(..., method = RequestMethod.PUT) sur une interface Feign
+    assert by_line[15].topic == "PUT /payments/{id}/cancel"
+
+
+@pytest.mark.integration
+def test_java_webclient_fluent_calls_are_call_sites() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/WebClientCaller.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 2
+    for endpoint in endpoints:
+        assert endpoint.role == "call"
+        assert endpoint.framework == "webclient"
+
+    assert by_line[14].topic == "GET /orders/{id}"
+    assert by_line[18].topic == "POST /orders"
+
+
+@pytest.mark.integration
 def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
-    # java : 6 serve + 5 call
-    assert len(endpoints) == 11
+    # java : 9 serve (OrderController) + 5 call resttemplate (OrderClient)
+    # + 3 call feign (PaymentClient) + 2 call webclient (WebClientCaller)
+    assert len(endpoints) == 19
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}
+    assert {e.framework for e in endpoints} == {"spring", "resttemplate", "feign", "webclient"}
 
 
 def test_parse_semgrep_endpoints_missing_role_raises_semgrep_error() -> None:

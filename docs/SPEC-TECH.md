@@ -418,8 +418,11 @@ Fonctions pures, aucune écriture SQLite (ADR-27) :
   par `edges` ; dédoublonnés par l'ensemble des arêtes qui les composent
   (`frozenset(id(edge) ...)`), indépendamment du service de départ du
   parcours. `Cycle.has_synchronous_rest` : au moins une arête `"rest"` dans
-  le cycle (toutes les arêtes REST actuelles sont des appels bloquants —
-  `RestTemplate`/`requests`, pas de client async dans le pack K11).
+  le cycle, à l'exception des arêtes dont le site d'appel est `WebClient`
+  (framework `webclient`, non bloquant par nature, K11) : un cycle composé
+  uniquement d'appels réactifs reste rapporté (c'est un cycle), mais
+  `has_synchronous_rest` est `False` — pas de fausse alerte de blocage
+  synchrone pour un flux qui ne bloque pas de thread.
 - `find_outbound_calls_in_consumers(endpoints) -> list[OutboundCallInConsumer]`
   — pour un **seul** service (fichier/lignes non comparables entre repos) :
   un `call` dont `start_line` tombe dans `[consume.start_line,

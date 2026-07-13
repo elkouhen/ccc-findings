@@ -471,8 +471,10 @@ skill), et alimente `cccf endpoints` / `cccf graph`.
 
 | Règle | Langage | Rôle | Détecte |
 |---|---|---|---|
-| `cccf.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Route Spring exposée (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, ou `@RequestMapping(method=...)` pour GET) |
+| `cccf.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Route Spring exposée (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, ou `@RequestMapping(method=...)` pour n'importe quel verbe) |
 | `cccf.rest.java.call-{get,post,put,delete}` | Java | `call` | Appel `RestTemplate` (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
+| `cccf.rest.java.feign-{get,post,put,delete,patch}` | Java | `call` | Méthode d'une interface `@FeignClient` annotée `@GetMapping`/.../`@RequestMapping(method=...)` (signature sans corps — un client déclaratif, pas une route exposée) |
+| `cccf.rest.java.webclient-{get,post,put,delete,patch}` | Java | `call` | Appel `WebClient` fluent (`.get().uri(...)`, `.post().uri(...)`, ...) |
 
 Chaque résultat porte `metadata.category: endpoint-inventory`,
 `metadata.role`, `metadata.http_method`, `metadata.framework` — le contrat
@@ -482,10 +484,14 @@ est extrait du texte du site (regex sur le snippet, pas de métavariable
 Semgrep — ADR-26) : un chemin non littéral, ou concaténé à une variable,
 est marqué `topic_dynamic=True` plutôt que résolu au hasard. Une URL absolue
 appelante est normalisée en route canonique (`GET http://svc/orders` →
-`GET /orders`) pour rester comparable aux routes exposées.
-`@RequestMapping` avec méthode explicite autre que GET reste à couvrir.
-Périmètre : Java uniquement — la stack cible de l'analyse est Java +
-Spring + Maven (voir K8/K11 dans `archive/BACKLOG-10.md`).
+`GET /orders`) pour rester comparable aux routes exposées. Une interface
+`@FeignClient` n'est jamais classée `serve` : les règles `serve-*` exigent un
+corps de méthode (`{ ... }`), absent des signatures déclaratives Feign — pas
+besoin d'exclusion explicite. Périmètre : Java uniquement — la stack cible
+de l'analyse est Java + Spring + Maven (voir K8/K11 dans
+`archive/BACKLOG-10.md`). Reste à couvrir : chaîne `WebClient` répartie sur
+plusieurs lignes (`.get()` et `.uri(...)` non sur la même ligne dans le
+snippet — `_find_first_literal` ne cherche que sur la première ligne).
 
 ## 8. Pack de règles d'inventaire Kafka (BACKLOG-10 K2)
 

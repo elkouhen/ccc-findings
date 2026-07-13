@@ -33,4 +33,18 @@ public class OrderController {
     public Order getSummary(@PathVariable String id) {
         return null;
     }
+
+    @RequestMapping(value = "/orders/{id}/cancel", method = RequestMethod.PUT)
+    public Order cancelOrder(@PathVariable String id) {
+        return null;
+    }
+
+    @RequestMapping(value = "/orders/{id}/archive", method = RequestMethod.DELETE)
+    public void archiveOrder(@PathVariable String id) {
+    }
+
+    @RequestMapping(value = "/orders/{id}/pause", method = RequestMethod.PATCH)
+    public Order pauseOrder(@PathVariable String id) {
+        return null;
+    }
 }

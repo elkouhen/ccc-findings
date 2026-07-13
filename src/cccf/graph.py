@@ -111,7 +111,10 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
 def find_cycles(edges: list[GraphEdge]) -> list[Cycle]:
     """Cycles simples (chaque service visité au plus une fois) sur le
     graphe services -> services induit par `edges`. Dérivé à la requête,
-    jamais persisté (ADR-27)."""
+    jamais persisté (ADR-27). `has_synchronous_rest` ignore les arêtes REST
+    dont le site d'appel est `WebClient` (framework `webclient`, non
+    bloquant par nature) : un cycle composé uniquement d'appels réactifs
+    n'est pas un risque de blocage synchrone, même s'il reste un cycle."""
     adjacency: dict[str, list[GraphEdge]] = {}
     for edge in edges:
         adjacency.setdefault(edge.from_service, []).append(edge)
@@ -136,7 +139,10 @@ def find_cycles(edges: list[GraphEdge]) -> list[Cycle]:
                     Cycle(
                         services=tuple(visited + [start]),
                         edges=cycle_edges,
-                        has_synchronous_rest=any(e.kind == "rest" for e in cycle_edges),
+                        has_synchronous_rest=any(
+                            e.kind == "rest" and e.from_endpoint.framework != "webclient"
+                            for e in cycle_edges
+                        ),
                     )
                 )
                 continue

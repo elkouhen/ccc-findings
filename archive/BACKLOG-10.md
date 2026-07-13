@@ -396,7 +396,7 @@ l'ordre :
   5. Un topic déclaré en manifeste ET détecté en code (K2) apparaît comme
      deux endpoints dans `cccf flow` (K5), pas de fusion silencieuse (CA K3.4).
 
-### [ ] K11 — Règles Semgrep d'extraction des endpoints REST
+### [x] K11 — Règles Semgrep d'extraction des endpoints REST
 - **Priorité** : HAUTE (phase 2 — pendant REST de K2)
 - **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/rest/`
   (nouveau — ADR-24, jamais dans `ccc-findings`) ; ce repo :
@@ -417,23 +417,41 @@ l'ordre :
      (rôle, méthode, chemin, lignes).
   2. URL dynamique → endpoint présent, marqué dynamique, expression conservée.
   3. Parsing testé sur fixtures JSON (esprit ADR-8).
-- **Statut** : Java (Spring `@*Mapping`/`@RequestMapping` GET, `RestTemplate`)
-  livré — 9 règles, `skills/cccf/rules/rest/java.yaml` côté skill (le volet
-  Python livré puis retiré, cible Java + Spring + Maven uniquement — voir
-  note en tête de fichier). Extraction par regex sur le snippet plutôt que
-  par métavariable Semgrep : les métavariables se sont révélées
-  indisponibles sans session `semgrep login` (ADR-26) — la méthode HTTP
-  vient donc de `metadata.http_method` (une règle = une méthode), seul le
-  chemin est extrait du texte, avec le même principe `topic_dynamic` que K2
-  pour ce qui n'est pas un littéral. `parse_semgrep_endpoints`/
-  `run_semgrep_endpoints` dans `scanner.py`, testés dans
-  `tests/test_rest_endpoints.py` (fixtures réelles + fixtures JSON pour les
-  cas d'erreur). Branché dans `cccf index` et exposé via `cccf endpoints`/
-  `cccf graph` (CLI + MCP) — voir A1 dans `archive/BACKLOG-11.md`. Depuis J1
-  (`archive/BACKLOG-12.md`), les URLs absolues appelantes sont normalisées en
-  routes canoniques (`METHOD /path`) pour rester comparables aux routes
-  exposées dans le graphe. Reste à couvrir : `@RequestMapping` méthodes
-  non-GET, `WebClient`/Feign.
+- **Statut** : Java (Spring `@*Mapping`/`@RequestMapping` tous verbes,
+  `RestTemplate`, Feign, `WebClient`) livré — 24 règles,
+  `skills/cccf/rules/rest/java.yaml` côté skill (le volet Python livré puis
+  retiré, cible Java + Spring + Maven uniquement — voir note en tête de
+  fichier). Extraction par regex sur le snippet plutôt que par métavariable
+  Semgrep : les métavariables se sont révélées indisponibles sans session
+  `semgrep login` (ADR-26) — la méthode HTTP vient donc de
+  `metadata.http_method` (une règle = une méthode), seul le chemin est
+  extrait du texte, avec le même principe `topic_dynamic` que K2 pour ce qui
+  n'est pas un littéral. `parse_semgrep_endpoints`/`run_semgrep_endpoints`
+  dans `scanner.py`, testés dans `tests/test_rest_endpoints.py` (fixtures
+  réelles + fixtures JSON pour les cas d'erreur). Branché dans `cccf index`
+  et exposé via `cccf endpoints`/`cccf graph` (CLI + MCP) — voir A1 dans
+  `archive/BACKLOG-11.md`. Depuis J1 (`archive/BACKLOG-12.md`), les URLs
+  absolues appelantes sont normalisées en routes canoniques (`METHOD /path`)
+  pour rester comparables aux routes exposées dans le graphe.
+
+  **Complété** : `@RequestMapping(method = RequestMethod.{POST,PUT,DELETE,
+  PATCH})` reconnu au même titre que `@GetMapping`/etc. sur les 5 verbes.
+  Feign (`cccf.rest.java.feign-*`, framework `feign`, `role: call`) : une
+  interface `@FeignClient` dont les méthodes portent les mêmes annotations
+  qu'un contrôleur Spring, distinguée sans ambiguïté par l'absence de corps
+  de méthode (`;` au lieu de `{ ... }`) — donc jamais classée `serve` par les
+  règles existantes, pas besoin d'exclusion explicite. `WebClient`
+  (`cccf.rest.java.webclient-*`, framework `webclient`) : chaîne fluent
+  `.get().uri(...)`/`.post().uri(...)`/etc. Comme `WebClient` est
+  non-bloquant par nature, `graph.find_cycles` (K12) ne le compte plus dans
+  `has_synchronous_rest` — un cycle purement `WebClient` reste rapporté
+  (c'est un cycle) mais n'est plus signalé comme un risque de blocage de
+  thread synchrone.
+
+  **Reste à couvrir** : chaîne `WebClient` répartie sur plusieurs lignes
+  (`.get()` et `.uri(...)` non sur la même ligne du snippet —
+  `_find_first_literal` ne cherche que sur la première ligne), Express/JS,
+  Flask/FastAPI (volet Python retiré, hors périmètre actuel).
 
 ### [x] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
 - **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les
