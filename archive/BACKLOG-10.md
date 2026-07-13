@@ -191,7 +191,7 @@ l'ordre :
      schéma pertinent.
   3. Schéma sans topic résolu → indexé quand même, lien absent, pas d'erreur.
 
-### [ ] K5 — CLI `cccf flow`
+### [x] K5 — CLI `cccf flow`
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/flow.py` (nouveau), `src/cccf/cli.py`,
   `tests/test_cli.py`, `docs/SPEC-FONC.md`
@@ -207,6 +207,31 @@ l'ordre :
   2. Une requête NL approximative retrouve le bon topic.
   3. Topic inconnu → message explicite, code de sortie non nul documenté.
   4. Contrat `--json` documenté dans SPEC-FONC et testé.
+- **Statut** : livré, résolution textuelle (CA1/CA3/CA4). `src/cccf/flow.py`
+  (nouveau) : `resolve_topic` (nom exact, sinon sous-chaîne insensible à la
+  casse si elle désigne un unique topic/route — ambigu ou introuvable →
+  `None`) et `trace_flow` (résout puis construit un `FlowSite` par endpoint
+  correspondant, avec les findings qui le recouvrent, esprit ADR-19). CLI
+  `cccf flow <requête> [--workspace ROOT] [--json]` : sans `--workspace`,
+  cherche dans le projet courant seul (`service: null`) ; avec, réutilise
+  `discover_maven_services`/`load_federation` (A2) tel quel — un flux Kafka
+  qui traverse plusieurs services (producteur dans l'un, consommateur dans
+  l'autre) ressort avec chaque site attribué à son service. Les
+  avertissements de fédération (service non indexé, K7 CA2) sont reportés
+  tels quels dans `warnings`, jamais absorbés silencieusement. Testé de bout
+  en bout dans `tests/test_k5_flow_e2e.py` (réutilise la fixture
+  `kafka_workspace` de K7 : producteur `order-service` + consommateur
+  `payment-service`, plus une règle de finding dédiée pour prouver le
+  recouvrement finding/site) et unitairement dans `tests/test_flow.py`.
+
+  **CA2 adapté** : pas de « requête NL » au sens recherche sémantique — la
+  résolution est une sous-chaîne textuelle exacte/non ambiguë ; la vraie
+  similarité vectorielle (embeddings sur les endpoints) est le reliquat K3
+  (voir plus bas), pas encore livré. `resolve_topic` est conçue pour
+  accueillir ce fallback sans changer sa signature ni celle de `trace_flow`.
+
+  **Reste à couvrir** : schéma lié (K4, non livré) — absent du rendu tant
+  que K4 n'existe pas.
 
 ### [ ] K6 — Tool MCP `trace_message_flow` + mise à jour du skill
 - **Priorité** : HAUTE

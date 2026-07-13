@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from cccf.ccc_bridge import CodeHitWithFindings
+from cccf.flow import FlowResult
 from cccf.graph import Cycle, Hotspot, OutboundCallInConsumer
 from cccf.models import MessageEndpoint
 from cccf.search import SearchHit, Summary, get_context
@@ -416,6 +417,70 @@ def render_workspace_text(result: WorkspaceResult) -> str:
             f"endpoints={info['endpoint_count']} findings={info['finding_count']}  "
             f"{info['path']}"
         )
+    for warning in result["warnings"]:
+        lines.append(f"⚠ {warning}")
+    return "\n".join(lines)
+
+
+class FlowSiteInfo(TypedDict):
+    service: str | None  # None hors fédération (projet courant seul)
+    role: str
+    system: str
+    framework: str | None
+    path: str
+    start_line: int
+    end_line: int
+    topic_dynamic: bool
+    finding_rule_ids: list[str]
+
+
+class FlowResultInfo(TypedDict):
+    """Shape returned by `cccf flow <query> --json` and the
+    `trace_message_flow` MCP tool (BACKLOG-10 K5/K6)."""
+
+    query: str
+    resolved_topic: str
+    sites: list[FlowSiteInfo]
+    warnings: list[str]
+
+
+def render_flow_json(result: FlowResult) -> FlowResultInfo:
+    return FlowResultInfo(
+        query=result.query,
+        resolved_topic=result.resolved_topic,
+        sites=[
+            FlowSiteInfo(
+                service=site.service,
+                role=site.endpoint.role,
+                system=site.endpoint.system,
+                framework=site.endpoint.framework,
+                path=site.endpoint.path,
+                start_line=site.endpoint.start_line,
+                end_line=site.endpoint.end_line,
+                topic_dynamic=site.endpoint.topic_dynamic,
+                finding_rule_ids=[f.rule_id for f in site.findings],
+            )
+            for site in result.sites
+        ],
+        warnings=result.warnings,
+    )
+
+
+def render_flow_text(result: FlowResultInfo) -> str:
+    lines = [f"Topic/route résolu : {result['resolved_topic']}"]
+    if not result["sites"]:
+        lines.append("Aucun site (producteur/consommateur/serveur/appelant) trouvé.")
+        return "\n".join(lines)
+    for site in result["sites"]:
+        service_marker = f"[{site['service']}] " if site["service"] else ""
+        framework_marker = f" ({site['framework']})" if site["framework"] else ""
+        dynamic_marker = " (dynamique)" if site["topic_dynamic"] else ""
+        lines.append(
+            f"  {service_marker}{site['role']}/{site['system']}{framework_marker}"
+            f"{dynamic_marker}  {site['path']}:{site['start_line']}-{site['end_line']}"
+        )
+        for rule_id in site["finding_rule_ids"]:
+            lines.append(f"    ⚠ finding: {rule_id}")
     for warning in result["warnings"]:
         lines.append(f"⚠ {warning}")
     return "\n".join(lines)

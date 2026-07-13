@@ -308,6 +308,52 @@ commande : il apparaît dans `warnings`, absent des comptages. Aucun module
 Maven trouvé → message informatif, code de sortie 0 (pas une erreur —
 `root` peut légitimement ne pas être un répertoire Maven).
 
+### `cccf flow <requête> [--workspace ROOT] [--json]`
+Résout `<requête>` en topic Kafka ou route REST (BACKLOG-10 K5) : nom exact
+d'abord, sinon sous-chaîne insensible à la casse **si elle désigne un
+unique topic/route** parmi les endpoints indexés — une correspondance
+ambiguë (plusieurs topics contiennent la sous-chaîne) échoue plutôt que de
+choisir arbitrairement. Résolution purement textuelle pour l'instant ; la
+similarité vectorielle prendra le relais quand le texte ne trouve aucun
+candidat unique (BACKLOG-10 K3).
+
+Sans `--workspace` : ne cherche que dans le projet courant (`service` vaut
+`null` dans le rendu JSON). Avec `--workspace ROOT` : fédère les
+microservices Maven sous `ROOT` (BACKLOG-11 A2, lecture seule) — chaque
+site du flux (producteur/consommateur Kafka, ou serveur/appelant REST)
+apparaît attribué à son service. Pour chaque site, les findings Semgrep qui
+le recouvrent (fichier + lignes qui se chevauchent, même service — esprit
+ADR-19) sont listés par `rule_id`.
+
+Rendu `--json` :
+```json
+{
+  "query": "orders.created",
+  "resolved_topic": "orders.created",
+  "sites": [
+    {"service": "order-service", "role": "produce", "system": "kafka",
+     "framework": "spring-kafka", "path": "app/OrderProducer.java",
+     "start_line": 14, "end_line": 14, "topic_dynamic": false,
+     "finding_rule_ids": ["rules.cccf.demo.kafka-send-fire-and-forget"]},
+    {"service": "payment-service", "role": "consume", "system": "kafka",
+     "framework": "spring-kafka", "path": "app/OrderConsumer.java",
+     "start_line": 7, "end_line": 10, "topic_dynamic": false,
+     "finding_rule_ids": []}
+  ],
+  "warnings": []
+}
+```
+
+Requête sans correspondance, ou ambiguë (plusieurs topics correspondent en
+sous-chaîne) : message explicite sur stderr, code de sortie 2. Mêmes règles
+d'index absent que `findings`/`summary` (message identique, code 2) quand
+`--workspace` n'est pas fourni ; avec `--workspace`, un service fédéré
+manquant ou incompatible ne fait jamais échouer `flow` (mêmes garanties que
+`cccf graph --workspace`/`cccf workspace`, K7 CA2), mais n'est **pas** non
+plus absorbé silencieusement : il apparaît dans `warnings` — un site
+manquant à cause d'un service non fédéré doit rester visible, pas confondu
+avec l'absence réelle d'un producteur/consommateur.
+
 ### `cccf mcp`
 Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 `cccf mcp --help` documente le bloc d'enregistrement client :

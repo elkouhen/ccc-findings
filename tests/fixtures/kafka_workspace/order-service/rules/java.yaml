@@ -42,3 +42,12 @@ rules:
       - pattern-either:
           - pattern: new ProducerRecord($TOPIC, $KEY, $VAL)
           - pattern: new ProducerRecord($TOPIC, $VAL)
+
+  # Règle de findings (pas d'inventaire) : sert à couvrir le recouvrement
+  # finding/site utilisé par `cccf flow` (BACKLOG-10 K5).
+  - id: cccf.demo.kafka-send-fire-and-forget
+    languages: [java]
+    severity: WARNING
+    message: Envoi Kafka sans vérification du futur retourné (fire-and-forget).
+    patterns:
+      - pattern: $KAFKA.send($TOPIC, $VAL)

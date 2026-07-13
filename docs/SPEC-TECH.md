@@ -478,6 +478,39 @@ fédérés par `discover_maven_services`/`load_federation`, puis
 consommateur — la seule preuve de bout en bout, hors K1/K2/K11 chacun
 testés isolément, que la chaîne complète fonctionne.
 
+### 6quater. Traçage d'un flux (`flow.py`, BACKLOG-10 K5)
+
+Fonctions pures, aucune écriture SQLite :
+
+- `resolve_topic(query, all_topics) -> str | None` — nom exact d'abord ;
+  sinon sous-chaîne insensible à la casse, seulement si elle désigne un
+  **unique** topic/route parmi `all_topics` (ambigu → `None`, jamais un choix
+  arbitraire). La similarité vectorielle (BACKLOG-10 K3) prendra le relais
+  ici quand aucun candidat textuel unique n'existe, sans changer la
+  signature de `trace_flow`.
+- `trace_flow(query, endpoints_by_service, findings_by_service, warnings=None)
+  -> FlowResult` — résout `query` via `resolve_topic` (échec →
+  `FlowError`), puis pour chaque endpoint dont `topic == resolved_topic`
+  dans n'importe quel service, construit un `FlowSite` (`service`,
+  `endpoint`, `findings` qui le recouvrent — même jointure fichier+lignes
+  que `graph.find_hotspots`, esprit ADR-19). `endpoints_by_service`/
+  `findings_by_service` ont la même forme que celles de `workspace.py`
+  (§6ter) mais avec `None` comme clé possible (mode projet courant, hors
+  fédération) — `flow.py` ne connaît rien de Maven, `workspace.py` ne
+  connaît rien de `flow.py` : couplage uniquement par la forme des dicts.
+  `warnings` (avertissements de fédération K7 CA2, déjà émis par
+  `load_federation`) sont reportés tels quels sur `FlowResult.warnings` —
+  jamais absorbés silencieusement : un site manquant à cause d'un service
+  non fédéré doit rester visible, distinct d'une absence réelle de
+  producteur/consommateur.
+
+CLI `cccf flow <requête> [--workspace ROOT]` (§2 SPEC-FONC) : sans
+`--workspace`, `endpoints_by_service = {None: store.all_endpoints()}` sur le
+projet courant ; avec `--workspace`, réutilise `discover_maven_services`/
+`load_federation` (§6ter) tel quel. `render_flow_json`/`render_flow_text`
+(`render.py`) forment le contrat `--json`/texte, partagé avec le tool MCP
+`trace_message_flow` (BACKLOG-10 K6).
+
 ## 7. Contrat JSON (F4.2 — figé)
 
 Consommé par `cccf search --json`, le tool MCP `search_findings`, et (sans
