@@ -280,3 +280,33 @@ existants plutôt que bloquer inutilement.
 | Embeddings incompatibles avec la requête | `cccf findings` (ou repli findings de `cccf search`) | stderr actionnable + code 2 |
 | Toute exception | tools MCP | remonte telle quelle → `ToolError` FastMCP → `isError: true` côté protocole ; le serveur reste utilisable pour l'appel suivant |
 | `ccc` absent ou en erreur | `cccf search` / `search` (MCP) | stderr/exception explicite, code 2 côté CLI, `isError: true` côté MCP |
+
+## 6. Pack de règles fourni — liveness (BACKLOG-10 K8)
+
+`src/cccf/rules/liveness/rules.yml`, livré avec le package, cible les
+motifs de blocage les plus courants dans un ensemble de microservices REST
++ Kafka (voir `archive/BACKLOG-10.md`) :
+
+| Règle | Sévérité | Détecte |
+|---|---|---|
+| `cccf.liveness.requests-no-timeout` | WARNING | Appel `requests.get/post/put/delete/patch/request` sans `timeout=` |
+| `cccf.liveness.thread-join-no-timeout` | WARNING | `Thread.join()` sans argument |
+| `cccf.liveness.future-result-no-timeout` | WARNING | `Future.result()` sans argument |
+| `cccf.liveness.http-call-in-kafka-python-consumer-loop` | ERROR | Appel `requests`/`httpx` dans une boucle `for message in consumer:` sur un `KafkaConsumer` (kafka-python) |
+| `cccf.liveness.network-call-inside-lock` | ERROR | Appel `requests`/`httpx` à l'intérieur d'un bloc `with lock:` |
+
+**Usage** : comme toute règle Semgrep locale (ADR-4), le pack n'est jamais
+référencé par un chemin absolu vers le package installé (l'identité de
+règle Semgrep dépend du chemin passé à `--config`, donc de la machine —
+voir `tests/test_liveness_rules.py`). Le copier dans le repo cible
+(ex. `.cccf/rules/liveness.yml`) et le déclarer dans `rules:` :
+
+```yaml
+rules:
+  - .cccf/rules/liveness.yml
+```
+
+Périmètre actuel : Python (`requests`/`httpx`, `kafka-python`,
+`threading`/`concurrent.futures`). Java/Spring et JS/TS restent à couvrir
+(voir K8 dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair,
+`PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.

@@ -630,3 +630,36 @@ vers `ccc` pour les usages paginés/filtrés — cassant le positionnement
 MCP exposé change. Les tests et docs qui référençaient le tool par son ancien
 nom sont mis à jour (`tests/test_mcp_server.py`,
 `tests/test_ccc_bridge.py`).
+
+## ADR-24 — Les packs de règles livrés avec `cccf` ne sont jamais référencés
+par un chemin absolu vers le package installé
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K8 introduit `src/cccf/rules/liveness/rules.yml`,
+le premier pack de règles Semgrep livré *avec* le package `cccf` (jusque-là,
+`rules:` ne contenait que des chemins projet ou des packs registry — ADR-4,
+ADR-13). En expérimentant l'usage direct via `--config
+/chemin/absolu/vers/.venv/.../rules/liveness.yml`, le `check_id` Semgrep
+sorti (donc `Finding.rule_id`, et son identité — ADR-5/ADR-15) se révèle
+préfixé par les composants du chemin passé à `--config` tels quels : deux
+machines avec le paquet installé à des chemins différents (ou un dev
+checkout vs une install `uv tool`) obtiennent des `rule_id` différents pour
+la même règle.
+
+**Décision** : les packs livrés (comme `liveness/rules.yml`) sont documentés
+comme des fichiers de référence à **copier dans le repo cible** (ex.
+`.cccf/rules/liveness.yml`) et à déclarer dans `rules:` par un chemin
+**relatif au repo scanné** — exactement comme une règle locale ordinaire
+(ADR-4). Aucun mécanisme d'auto-découverte par chemin absolu
+(`importlib.resources` ou équivalent) n'est introduit pour l'instant.
+
+**Conséquences** : `rule_id` reste stable et prévisible (`rules.<id>` quand
+la règle vit dans `<repo>/rules/…`), indépendamment de l'endroit où `cccf`
+est installé. `tests/test_liveness_rules.py` fixe cette convention : le
+fixture `tests/fixtures/liveness_repo/rules/rules.yml` est une copie exacte
+du pack livré (`test_fixture_rules_pack_matches_shipped_pack`), testée avec
+un `rules:` projet-relatif comme n'importe quel autre pack. Si un futur pack
+de règles a besoin d'être découvert automatiquement sans copie manuelle,
+cette décision devra être revisitée (ex. CLI qui matérialise le fichier dans
+le repo cible plutôt que de le référencer à distance).

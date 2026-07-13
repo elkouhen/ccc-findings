@@ -222,6 +222,14 @@ l'ordre :
      quel finding (`cccf findings "appel bloquant dans un consumer"`).
   3. Le pack liveness s'exécute sur un projet où aucune autre tâche K n'est
      livrée (indépendance vérifiée).
+- **Statut** : volet liveness Python livré (5 règles : timeout HTTP manquant,
+  `Thread.join()`/`Future.result()` sans timeout, appel REST dans une boucle
+  de consommation kafka-python, appel réseau sous verrou — voir
+  `src/cccf/rules/liveness/rules.yml`, `tests/test_liveness_rules.py`,
+  `docs/SPEC-FONC.md#6-pack-de-règles-fourni--liveness-backlog-10-k8`,
+  ADR-24). Restent à faire : volet sécurité (SASL, PLAINTEXT,
+  désérialisation), Java/Spring et JS/TS, configs consumer risquées
+  (`max.poll.interval.ms`), handler sans DLQ, retry sans backoff.
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
 - **Priorité** : BASSE
