@@ -517,4 +517,34 @@ la classe n'est pas suivie (pas d'analyse de flux de données entre
 statements) : seul le placeholder textuel dans l'annotation/l'appel est
 résolu.
 
+## 9. Pack de règles sécurité Kafka (BACKLOG-10 K8, volet sécurité)
+
+Vit dans `ccc-findings-skill` (`skills/cccf/rules/kafka-security/
+java.yaml`, ADR-24) — copie de test dans
+`tests/fixtures/kafka_security_repo/`. Contrairement aux packs `rest`/
+`kafka` (inventaire), ce sont de vraies règles de **findings**, comme
+`default`/`liveness` — indexées et interrogeables via `cccf findings`.
+
+| Règle | Sévérité | Détecte |
+|---|---|---|
+| `cccf.kafka-security.sasl-plaintext-credentials` | ERROR | `sasl.jaas.config` avec un mot de passe **littéral** (`password="..."` en dur, pas construit depuis une variable) |
+| `cccf.kafka-security.plaintext-protocol` | ERROR | `security.protocol` réglé sur `PLAINTEXT` (littéral ou constante `CommonClientConfigs.SECURITY_PROTOCOL_CONFIG`) |
+| `cccf.kafka-security.json-deserializer-trusts-all-packages` | ERROR | `JsonDeserializer`/`ErrorHandlingDeserializer` Spring Kafka configuré avec `trusted.packages` = `"*"` (désérialisation non sûre — instanciation de classe arbitraire depuis un message) |
+| `cccf.kafka-security.unsafe-java-deserialization` | ERROR | `ObjectInputStream(...).readObject()` — désérialisation Java native sur des données potentiellement issues d'un message non fiable |
+
+`cccf.kafka-security.sasl-plaintext-credentials` distingue un mot de passe
+en dur d'un mot de passe injecté par variable via `metavariable-regex` sur
+le texte source du littéral — qui porte des guillemets **échappés**
+(`\"`), pas nus, puisque c'est un littéral Java imbriqué dans un autre
+littéral (voir ADR-31, un piège non évident à connaître avant d'écrire ce
+genre de règle).
+
+**Ce qui n'est délibérément pas dupliqué ici** : producteur non idempotent,
+`enable.auto.commit` risqué et handler sans DLQ/retry étaient dans le
+périmètre initial de K8 mais sont déjà couverts par le pack `default`
+(`skills/cccf/rules/default/b-kafka.yaml`, règles R7 et R10) — voir
+`archive/BACKLOG-10.md` K8. `max.poll.interval.ms` risqué reste un
+écart documenté (pas de règle, le seuil/l'intention « risqué » n'étant pas
+assez univoque pour une détection fiable sans faux positifs).
+
 Périmètre : Java uniquement (voir note en tête de `archive/BACKLOG-10.md`).

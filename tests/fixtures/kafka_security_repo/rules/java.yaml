@@ -1,0 +1,54 @@
+rules:
+  - id: cccf.kafka-security.sasl-plaintext-credentials
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Identifiants SASL Kafka en clair dans le code (sasl.jaas.config avec un
+      mot de passe littéral) : à externaliser en secret manager/variable
+      d'environnement, jamais en dur dans le source versionné.
+    patterns:
+      - pattern-either:
+          - pattern: $PROPS.put("sasl.jaas.config", $V)
+          - pattern: $PROPS.setProperty("sasl.jaas.config", $V)
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?s).*password\s*=\s*\\"[^"]*\\".*
+
+  - id: cccf.kafka-security.plaintext-protocol
+    languages: [java]
+    severity: ERROR
+    message: >-
+      security.protocol Kafka réglé sur PLAINTEXT : trafic (y compris
+      d'éventuels identifiants SASL) non chiffré sur le réseau.
+    patterns:
+      - pattern-either:
+          - pattern: $PROPS.put("security.protocol", "PLAINTEXT")
+          - pattern: $PROPS.setProperty("security.protocol", "PLAINTEXT")
+          - pattern: $PROPS.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "PLAINTEXT")
+
+  - id: cccf.kafka-security.json-deserializer-trusts-all-packages
+    languages: [java]
+    severity: ERROR
+    message: >-
+      JsonDeserializer Kafka configuré pour faire confiance à tous les
+      paquets (trusted packages "*") : un message malveillant peut faire
+      instancier une classe arbitraire du classpath (désérialisation non
+      sûre). Restreindre aux paquets métier réellement attendus.
+    patterns:
+      - pattern-either:
+          - pattern: $DESERIALIZER.addTrustedPackages("*")
+          - pattern: $PROPS.put("spring.json.trusted.packages", "*")
+          - pattern: $PROPS.setProperty("spring.json.trusted.packages", "*")
+
+  - id: cccf.kafka-security.unsafe-java-deserialization
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Désérialisation Java native (ObjectInputStream.readObject) sur des
+      données potentiellement issues d'un message Kafka non fiable : risque
+      d'exécution de code à distance par chaîne de gadgets.
+    patterns:
+      - pattern-inside: |
+          $OIS = new ObjectInputStream(...);
+          ...
+      - pattern: $OIS.readObject()

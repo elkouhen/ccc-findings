@@ -922,3 +922,39 @@ réels. `tests/test_workspace.py` fixe le contrat : noms/classification,
 détection d'indexation, avertissement sur service non indexé ou base
 incompatible, non-fuite des endpoints d'un module partagé, et non-écriture
 effective d'une connexion read-only.
+
+## ADR-31 — `metavariable-regex` sur un littéral Java doit tenir compte des
+guillemets échappés dans le texte source
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-10 K8 (volet sécurité) doit distinguer un
+`sasl.jaas.config` avec un mot de passe **littéral** (`password="secret"`,
+en dur dans le source) d'un mot de passe **construit** (`password="` +
+variable + `"`, injecté depuis l'extérieur). `metavariable-regex` applique
+la regex au texte source brut capturé par la métavariable — pour un
+littéral Java contenant des guillemets internes, ce texte porte les
+guillemets **échappés** (`\"`), pas des guillemets nus, puisque c'est ainsi
+qu'ils apparaissent dans le fichier `.java` lui-même. Une regex du genre
+`password\s*=\s*"[^"]+"` (guillemets nus) ne matche donc **jamais**, y
+compris sur le cas qu'elle est censée détecter — testé et confirmé en
+expérimentation (voir aussi ADR-26 : `extra.metavars` n'apparaît pas dans
+la sortie JSON sans session `semgrep login`, ce qui a rendu ce piège plus
+long à diagnostiquer, faute de pouvoir inspecter directement le texte
+capturé).
+
+**Décision** : la regex doit chercher le guillemet échappé explicitement —
+`password\s*=\s*\\"[^"]*\\"` (un littéral backslash-quote, pas de backslash
+dans le contenu). Un mot de passe concaténé avec une variable ne produit
+qu'**un seul** guillemet échappé suivi du nom de la variable (pas de
+second guillemet fermant dans la même sous-chaîne), donc ne matche pas —
+c'est exactement la distinction recherchée.
+
+**Conséquences** : `cccf.kafka-security.sasl-plaintext-credentials`
+(`skills/cccf/rules/kafka-security/java.yaml`) encode cette regex ;
+`tests/test_kafka_security_rules.py` fixe le contrat sur les deux formes
+(littéral pur vs concaténation) pour éviter une régression silencieuse si
+quelqu'un « simplifie » la regex vers des guillemets nus. Tout futur usage
+de `metavariable-regex` visant le contenu d'un littéral de chaîne Java (ou
+d'un langage à guillemets échappables similaire) doit garder ce piège en
+tête plutôt que de le redécouvrir.

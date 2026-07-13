@@ -258,7 +258,7 @@ l'ordre :
   promesse que le CA original, tenue par l'implémentation adaptée plutôt
   que par `cccf flow`.
 
-### [ ] K8 — Pack de règles liveness (+ sécurité) Kafka/REST (findings)
+### [x] K8 — Pack de règles liveness (+ sécurité) Kafka/REST (findings)
 - **Priorité** : HAUTE (phase 1 — le seul livrable sans aucune dépendance :
   le pipeline findings existant suffit)
 - **Fichiers** : repo `ccc-findings-skill` : `skills/cccf/rules/liveness/`,
@@ -294,10 +294,31 @@ l'ordre :
   (`skills/cccf/rules/liveness/java.yaml`, ADR-24), aux côtés du pack
   `default` déjà présent côté skill. `ccc-findings` garde une copie de test
   (`tests/fixtures/liveness_repo/`, `tests/test_liveness_rules.py`,
-  `docs/SPEC-FONC.md#6-pack-de-règles-liveness-backlog-10-k8`). Restent à
-  faire : volet sécurité (SASL, PLAINTEXT, désérialisation), configs
-  consumer risquées (`max.poll.interval.ms`), handler sans DLQ, retry sans
-  backoff.
+  `docs/SPEC-FONC.md#6-pack-de-règles-liveness-backlog-10-k8`).
+
+  **Volet sécurité livré** — nouveau pack `kafka-security`
+  (`skills/cccf/rules/kafka-security/java.yaml`, 4 règles) : identifiants
+  SASL en clair (`sasl.jaas.config` avec mot de passe littéral, distingué
+  d'un mot de passe construit par variable — ADR-31, piège des guillemets
+  échappés dans `metavariable-regex`), `security.protocol` PLAINTEXT,
+  `JsonDeserializer` faisant confiance à tous les paquets
+  (`addTrustedPackages("*")`/`spring.json.trusted.packages=*`),
+  désérialisation Java native (`ObjectInputStream.readObject`). Testé
+  (`tests/fixtures/kafka_security_repo/`, `tests/test_kafka_security_rules.
+  py`, `docs/SPEC-FONC.md#9-pack-de-règles-sécurité-kafka-backlog-10-k8-
+  volet-sécurité`), run par défaut à `cccf init` (SKILL.md).
+
+  **Déjà couvert ailleurs, pas dupliqué** : producteur non idempotent et
+  `enable.auto.commit` risqué (pack `default`, `b-kafka.yaml` R7), handler
+  sans DLQ/retry (pack `default`, `b-kafka.yaml` R10) — ces trois items du
+  périmètre initial de K8 étaient déjà livrés par le pack `default` avant
+  même cette tâche.
+
+  **Écart restant, documenté** : `max.poll.interval.ms` risqué n'a pas de
+  règle — l'intention « risqué » (augmenté pour masquer un consumer lent ?
+  réduit sans rapport avec le temps de traitement réel ?) n'est pas assez
+  univoque pour une détection fiable sans faux positifs ; nécessite un
+  cadrage produit avant d'écrire la règle.
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
 - **Priorité** : BASSE
