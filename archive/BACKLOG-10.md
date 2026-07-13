@@ -1,28 +1,34 @@
-# Backlog 10 — Architecture distribuée : échanges de messages Kafka (2026-07-12)
+# Backlog 10 — Architecture distribuée : messages Kafka + appels REST (2026-07-12)
 
-> Objectif : étendre `cccf` pour qu'un agent puisse raisonner sur une
-> architecture distribuée à base de messages Kafka — *« qui produit / consomme
-> le topic X ? »*, *« trace le flux des événements de commande »*, *« quels
-> problèmes de sécurité sur les consommateurs de paiements ? »* — sans trahir
-> la philosophie de `ccc`/`cccf`.
+> Objectif : étendre `cccf` pour qu'un agent puisse raisonner sur un ensemble
+> de microservices interconnectés par des appels REST et des messages Kafka —
+> *« qui produit / consomme le topic X ? »*, *« qui appelle cette route ? »*,
+> *« trace le flux des événements de commande »* — et surtout **localiser les
+> points de blocage probables** d'une application qui se verrouille par
+> intermittence (appels sans timeout, appels bloquants dans les handlers de
+> consommation, cycles d'appels synchrones entre services) — sans trahir la
+> philosophie de `ccc`/`cccf`.
 >
 > Convention : une tâche = un commit (`K<n>: <titre>`), DoD globale inchangée
 > (voir `AGENT.md`).
 
 ## Principe directeur
 
-L'idée clé qui respecte la philosophie existante : **les échanges de messages
-sont modélisés comme des *endpoints statiques*** (un site de production ou de
-consommation d'un topic, avec fichier + lignes), pas comme des flux runtime —
-extraits soit du code (K2, moteur Semgrep déjà en place, metavariables sur le
-nom du topic), soit d'un manifeste déclaratif versionné (K10, `TOPICS.md`,
-pour les topics non résolvables statiquement ou documentés côté équipe). Les
-deux sources produisent la même entité (`source: code`|`manifest`, K1) et
-partagent le stockage existant (SQLite + `sqlite-vec`, embeddings du même
-modèle). La « vue distribuée » est une **jointure à la requête** entre
-endpoints (toutes sources), schémas d'événements, code et findings —
-exactement comme `search_code_with_findings` joint déjà code et findings par
-fichier + lignes (esprit ADR-19).
+L'idée clé qui respecte la philosophie existante : **les échanges entre
+services (messages Kafka *et* appels REST) sont modélisés comme des
+*endpoints statiques*** (un site de production/consommation d'un topic, ou
+d'exposition/appel d'une route, avec fichier + lignes), pas comme des flux
+runtime — extraits soit du code (K2 Kafka, K11 REST : moteur Semgrep déjà en
+place, metavariables sur le nom du topic ou le chemin de route), soit d'un
+manifeste déclaratif versionné (K10, `TOPICS.md`, pour ce qui n'est pas
+résolvable statiquement). Les deux sources produisent la même entité
+(`source: code`|`manifest`, K1) et partagent le stockage existant (SQLite +
+`sqlite-vec`, embeddings du même modèle). La « vue distribuée » est une
+**jointure à la requête** entre endpoints (toutes sources), schémas
+d'événements, code et findings — exactement comme `search_code_with_findings`
+joint déjà code et findings par fichier + lignes (esprit ADR-19). Le graphe
+d'interactions et les cycles (K12) sont eux aussi **dérivés à la requête**,
+jamais persistés.
 
 ## Exclusions délibérées (philosophie ccc/cccf)
 
@@ -33,9 +39,30 @@ fichier + lignes (esprit ADR-19).
   une fédération *en lecture seule* de fichiers SQLite locaux, à la requête.
 - **Pas d'analyse taint inter-services** : Semgrep Pro / interfile reste hors
   scope (PRD §5, question ouverte §12.3).
-- **Kafka d'abord, mais modèle extensible** : le champ `system` des endpoints
-  permet d'autres brokers (RabbitMQ, SQS…) plus tard — non livré, comme
-  « autres moteurs que Semgrep » dans le PRD.
+- **Kafka et REST d'abord, modèle extensible** : le champ `system`
+  (`kafka`|`rest`) des endpoints permet d'autres protocoles (RabbitMQ, SQS,
+  gRPC…) plus tard — non livré, comme « autres moteurs que Semgrep » dans
+  le PRD.
+- **Détection statique = candidats, pas preuve** : `cccf` désigne les motifs
+  et structures propices au blocage ; la confirmation d'un verrouillage vécu
+  reste du ressort du runtime (thread dumps, consumer lag, tracing), hors
+  scope.
+
+## Ordre de réalisation (objectif : localiser les points de blocage)
+
+Le symptôme visé — l'application se verrouille par intermittence — dicte
+l'ordre :
+
+1. **Phase 1 — détecteurs immédiats** : K8 (règles liveness). Aucune
+   dépendance aux autres tâches : le pipeline findings existant suffit,
+   valeur dès la première indexation d'un service.
+2. **Phase 2 — cartographier les échanges** : K1 (modèle généralisé
+   kafka+rest), K2 et K11 (extraction), K3 (pipeline).
+3. **Phase 3 — croiser** : K7 (fédération multi-dépôts), K12 (cycles et
+   hotspots — la réponse directe à « où sont les endroits problématiques »),
+   K10 (manifeste : complète les arêtes que l'extraction rate), K5/K6
+   (surfaces CLI/MCP).
+4. **Phase 4 — confort** : K4 (schémas), K9 (éval).
 
 ## Tâches
 
@@ -44,7 +71,9 @@ fichier + lignes (esprit ADR-19).
 - **Fichiers** : `src/cccf/models.py`, `src/cccf/store.py`,
   `tests/test_store.py`, `docs/SPEC-TECH.md`, `docs/ADR.md`
 - **Description** : nouvelle entité `MessageEndpoint` — `role`
-  (`produce`|`consume`), `system` (`kafka`), `topic`, `topic_dynamic` (bool),
+  (`produce`|`consume` pour Kafka, `serve`|`call` pour REST), `system`
+  (`kafka`|`rest`), `topic` (nom de topic Kafka, ou méthode HTTP + chemin de
+  route normalisé pour REST), `topic_dynamic` (bool),
   `source` (`code`|`manifest`, voir K10), `framework`, fichier, lignes,
   extrait, identité stable (même esprit qu'ADR-5/ADR-15 : hash rôle + topic +
   chemin + localisation ; pour `source: manifest`, la localisation est le
@@ -105,7 +134,7 @@ fichier + lignes (esprit ADR-19).
      l'indexation.
 
 ### [ ] K4 — Indexation des contrats d'événements locaux (schémas)
-- **Priorité** : MOYENNE
+- **Priorité** : BASSE (phase 4)
 - **Fichiers** : `src/cccf/indexer.py`, `src/cccf/store.py`,
   `src/cccf/models.py`, `docs/SPEC-TECH.md`, `docs/SPEC-FONC.md`
 - **Description** : indexer les fichiers de schéma présents dans le repo
@@ -151,7 +180,8 @@ fichier + lignes (esprit ADR-19).
   3. `SKILL.md` mis à jour dans le repo skill (commit séparé là-bas).
 
 ### [ ] K7 — Workspace multi-dépôts (fédération read-only)
-- **Priorité** : MOYENNE
+- **Priorité** : HAUTE (prérequis de K12 : sans fédération, pas de cycle
+  inter-services visible)
 - **Fichiers** : `src/cccf/workspace.py` (nouveau), `src/cccf/cli.py`,
   `src/cccf/mcp_server.py`, `docs/ADR.md`, `docs/SPEC-FONC.md`
 - **Description** : un système distribué s'étale sur plusieurs dépôts (le
@@ -169,19 +199,29 @@ fichier + lignes (esprit ADR-19).
   2. Repo manquant/non indexé signalé sans faire échouer la requête.
   3. Aucune écriture dans les bases des autres projets.
 
-### [ ] K8 — Pack de règles sécurité/qualité Kafka (findings)
-- **Priorité** : MOYENNE
-- **Fichiers** : `src/cccf/rules/kafka-security/` (ou doc pointant un pack
-  registry), fixtures de tests, `docs/SPEC-FONC.md`
-- **Description** : à la différence de K2 (inventaire), de vraies règles de
-  *findings* : désérialiseurs non sûrs côté consumer, credentials SASL en
-  clair, `security.protocol` PLAINTEXT, handler de consommation sans gestion
-  d'erreur/DLQ, producteur non idempotent. Réutilise le pipeline findings
-  existant tel quel ; opt-in via `cccf init --rules` (cohérent ADR-13).
+### [ ] K8 — Pack de règles liveness (+ sécurité) Kafka/REST (findings)
+- **Priorité** : HAUTE (phase 1 — le seul livrable sans aucune dépendance :
+  le pipeline findings existant suffit)
+- **Fichiers** : `src/cccf/rules/liveness/`, `src/cccf/rules/kafka-security/`
+  (ou doc pointant un pack registry), fixtures de tests, `docs/SPEC-FONC.md`
+- **Description** : à la différence de K2/K11 (inventaire), de vraies règles
+  de *findings*, recentrées sur l'objectif « points de blocage ». Volet
+  **liveness** (prioritaire) : appel HTTP sans timeout (`requests`/`httpx`
+  sans `timeout=`, `RestTemplate` par défaut…), appel REST synchrone dans un
+  handler de consommation Kafka, attente bloquante (`.get()`, `.join()`,
+  `.result()`) dans un chemin de traitement, verrou tenu autour d'une I/O
+  réseau, configs consumer risquées (`max.poll.interval.ms`,
+  `enable.auto.commit`), handler sans gestion d'erreur/DLQ, retry sans
+  backoff. Volet **sécurité** (second) : désérialiseurs non sûrs côté
+  consumer, credentials SASL en clair, `security.protocol` PLAINTEXT,
+  producteur non idempotent. Réutilise le pipeline findings existant tel
+  quel ; opt-in via `cccf init --rules` (cohérent ADR-13).
 - **CA** :
   1. Chaque règle testée sur fixture positive + négative.
   2. Les findings produits sont indexés et interrogeables comme n'importe
-     quel finding (`cccf findings "désérialisation kafka"`).
+     quel finding (`cccf findings "appel bloquant dans un consumer"`).
+  3. Le pack liveness s'exécute sur un projet où aucune autre tâche K n'est
+     livrée (indépendance vérifiée).
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
 - **Priorité** : BASSE
@@ -258,3 +298,55 @@ fichier + lignes (esprit ADR-19).
      absent ou introuvable → endpoint indexé quand même, lien absent.
   5. Un topic déclaré en manifeste ET détecté en code (K2) apparaît comme
      deux endpoints dans `cccf flow` (K5), pas de fusion silencieuse (CA K3.4).
+
+### [ ] K11 — Règles Semgrep d'extraction des endpoints REST
+- **Priorité** : HAUTE (phase 2 — pendant REST de K2)
+- **Fichiers** : `src/cccf/rules/rest/` (nouveau, embarqué dans le package),
+  `tests/fixtures/rest/*`, `tests/test_scanner.py`, `docs/SPEC-TECH.md`
+- **Description** : même mécanique que K2, pour les deux faces d'un appel
+  REST. Côté **serveur** (`role: serve`) : routes exposées — Spring
+  (`@GetMapping`/`@PostMapping`/`@RequestMapping`), Flask/FastAPI
+  (décorateurs de route), Express (`app.get/post/...`). Côté **client**
+  (`role: call`) : sites d'appel — `requests`/`httpx`,
+  `RestTemplate`/`WebClient`/Feign, `fetch`/`axios` — avec méthode HTTP et
+  chemin d'URL capturés en metavariables. Une URL non littérale (base URL en
+  config, f-string) → endpoint marqué dynamique (même sémantique que
+  `topic_dynamic`), jamais résolue silencieusement. `system: rest`, le champ
+  `topic` porte « méthode + chemin normalisé » (ex. `GET /orders/{id}`).
+  Conforme ADR-4 : règles embarquées, testées sur fixtures locales.
+- **CA** :
+  1. Une fixture par framework, côtés serveur et client ; endpoints attendus
+     (rôle, méthode, chemin, lignes).
+  2. URL dynamique → endpoint présent, marqué dynamique, expression conservée.
+  3. Parsing testé sur fixtures JSON (esprit ADR-8).
+
+### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
+- **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les
+  endroits problématiques »)
+- **Fichiers** : `src/cccf/graph.py` (nouveau), `src/cccf/cli.py`,
+  `src/cccf/mcp_server.py`, tests, `docs/SPEC-FONC.md`, `docs/ADR.md`
+- **Description** : construit **à la requête** (jamais persisté — nouvel
+  ADR) le graphe services ↔ endpoints à partir des endpoints fédérés (K7) :
+  arête REST synchrone quand un `call` s'apparie à un `serve` (méthode +
+  chemin, appariement par segments littéral ↔ template `{param}`,
+  best-effort), arête Kafka quand un `produce` rencontre un `consume` du
+  même topic. Détections, par gravité :
+  1. **Cycles contenant au moins une arête REST synchrone** (risque de
+     blocage distribué) ;
+  2. **Appel sortant dans un handler de consommation** (croisement d'un
+     `consume` et d'un `call` dans le même fichier/plage) ;
+  3. **Hotspots** : sites à la fois sur un cycle *et* recouverts par un
+     finding liveness (K8) — jointure fichier + lignes existante, classement
+     pondéré par sévérité (esprit ADR-19).
+  Sortie compacte (NF3) + `--json` ; tool MCP associé. Les arêtes que
+  l'extraction rate (URL en config) se complètent via le manifeste K10
+  (extension `rest:` du frontmatter, à spécifier le moment venu).
+- **CA** :
+  1. Fixture 3 services avec cycle REST A→B→C→A → cycle détecté, rapporté
+     avec les sites (fichier:lignes) de chaque arête.
+  2. Handler Kafka contenant un appel REST → signalé.
+  3. Un site sur cycle + finding liveness K8 remonte en tête des hotspots.
+  4. Appariement testé chemin littéral ↔ template ; non-appariement → arête
+     absente, jamais d'erreur ni de fausse arête.
+  5. Aucune table de graphe dans le schéma SQLite (dérivation pure à la
+     requête).
