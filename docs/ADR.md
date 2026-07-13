@@ -867,3 +867,58 @@ existante). `tests/test_indexer.py` fixe le contrat : un scan mélangeant
 une règle de finding et deux règles d'inventaire produit 1 finding et 2
 endpoints, sans fuite dans un sens ni dans l'autre ; suppression de fichier
 purge aussi les endpoints (déjà vrai depuis K1 via `Store.remove_files`).
+
+## ADR-30 — Fédération multi-services : découverte Maven par `pom.xml`,
+lecture strictement read-only des bases pairs
+
+**Statut** : Acté.
+
+**Contexte** : BACKLOG-11 A2 doit permettre à `cccf` de raisonner sur
+plusieurs microservices à la fois (graphe REST/Kafka inter-services, K12),
+sans dépendre d'une configuration manuelle de « workspace nommé » (le plan
+initial de K7, `~/.cccf/workspaces/<nom>.yml`) — la cible réelle est un
+répertoire parent contenant tous les microservices et des modules Maven
+partagés d'un même produit (voir `archive/BACKLOG-PRIORITY.md`, cadrage
+2026-07-13), pas des dépôts indépendants sans lien.
+
+**Décision** :
+1. **Découverte** (`workspace.discover_maven_services`) : chaque `pom.xml`
+   trouvé sous le répertoire donné est un module. Le nom logique stable
+   vient de l'`artifactId` du pom (repli : nom du répertoire si le pom est
+   illisible ou sans `artifactId` — un module cassé ne bloque jamais les
+   autres). Un module est classé `microservice` si son pom référence
+   `spring-boot-maven-plugin` (il produit un jar exécutable), `shared-module`
+   sinon — recherche textuelle simple dans le XML, pas une résolution
+   complète du modèle Maven (héritage de parent POM, profils) : suffisant
+   pour distinguer un service déployable d'une bibliothèque interne dans
+   l'immense majorité des repos Spring Boot réels, documenté comme
+   heuristique et non comme garantie.
+2. **Lecture read-only** (`Store(path, readonly=True)`) : ouverture SQLite
+   via `file:...?mode=ro` (URI), sans `_create_schema()` (aucune écriture de
+   schéma/migration dans la base d'un autre projet), sans `commit()` en
+   sortie. Base absente → `StoreError` explicite avant même la tentative de
+   connexion ; schéma incompatible (`schema_version` différent, ou table
+   manquante) → `StoreError` explicite plutôt qu'une lecture partielle
+   silencieuse (K7 CA2/A2 CA8). SQLite refuse lui-même toute écriture sur
+   une connexion `mode=ro` — double garantie, pas seulement une convention
+   côté code.
+3. **Robustesse par service** (`workspace.load_federation`) : un module non
+   indexé ou dont la base est incompatible ajoute un avertissement et
+   n'interrompt pas la fédération des autres services — jamais un échec
+   global pour un seul module en défaut.
+4. **Modules partagés vs microservices** (A2 CA5) : `load_federation`
+   inclut les findings d'un `shared-module` (une bibliothèque interne porte
+   du code, donc potentiellement des findings pertinents pour les
+   hotspots), mais jamais ses endpoints — un module partagé n'est pas un
+   producteur/consommateur runtime, même si un scan y a par erreur détecté
+   un endpoint-inventory.
+
+**Conséquences** : `src/cccf/workspace.py` (nouveau), pas de dépendance à
+un parseur Maven tiers (juste `xml.etree.ElementTree`, stdlib). CLI `cccf
+workspace <root>` et tool MCP `list_workspace_services` exposent la
+découverte + le comptage endpoints/findings par service, en amont de K12
+qui consommera `load_federation` pour construire le graphe et les hotspots
+réels. `tests/test_workspace.py` fixe le contrat : noms/classification,
+détection d'indexation, avertissement sur service non indexé ou base
+incompatible, non-fuite des endpoints d'un module partagé, et non-écriture
+effective d'une connexion read-only.

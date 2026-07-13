@@ -11,6 +11,7 @@ from cccf.mcp_server import (
     findings_summary,
     graph,
     list_endpoints,
+    list_workspace_services,
     mcp,
     reindex_findings,
     search_findings,
@@ -20,6 +21,7 @@ from cccf.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
+MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
 
 runner = CliRunner()
 
@@ -202,3 +204,17 @@ def test_list_endpoints_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
 
     with pytest.raises(ToolError, match="Index absent"):
         asyncio.run(mcp.call_tool("list_endpoints", {}))
+
+
+def test_list_workspace_services_tool_discovers_and_flags_unindexed(tmp_path: Path) -> None:
+    dest = tmp_path / "maven_workspace"
+    shutil.copytree(MAVEN_WORKSPACE, dest)
+    with Store(dest / "service-a"):
+        pass
+
+    result = list_workspace_services(str(dest))
+
+    by_name = {s["name"]: s for s in result["services"]}
+    assert by_name["order-service"]["indexed"] is True
+    assert by_name["common-lib"]["kind"] == "shared-module"
+    assert any("payment-service" in w for w in result["warnings"])

@@ -28,6 +28,10 @@ def _glob_to_sqlite(pattern: str) -> str:
     return pattern
 
 
+class StoreError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class CodeChunk:
     id: str
@@ -39,11 +43,26 @@ class CodeChunk:
 
 
 class Store:
-    def __init__(self, repo_root: Path) -> None:
+    def __init__(self, repo_root: Path, readonly: bool = False) -> None:
         self._db_path = Path(repo_root) / ".cccf" / "findings.db"
         self._conn: sqlite3.Connection | None = None
+        self._readonly = readonly
 
     def __enter__(self) -> "Store":
+        if self._readonly:
+            # BACKLOG-11 A2 : fédération d'un autre projet, jamais d'écriture
+            # dans sa base (ni schéma, ni migration, ni commit) — voir ADR-30.
+            if not self._db_path.is_file():
+                raise StoreError(f"Base introuvable : {self._db_path}")
+            try:
+                self._conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
+            except sqlite3.OperationalError as exc:
+                raise StoreError(f"Impossible d'ouvrir {self._db_path} : {exc}") from exc
+            self._conn.row_factory = sqlite3.Row
+            self._load_vec_extension()
+            self._check_schema_compatible()
+            return self
+
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
@@ -58,10 +77,23 @@ class Store:
         tb: TracebackType | None,
     ) -> None:
         assert self._conn is not None
-        if exc_type is None:
+        if exc_type is None and not self._readonly:
             self._conn.commit()
         self._conn.close()
         self._conn = None
+
+    def _check_schema_compatible(self) -> None:
+        try:
+            version = self.get_meta("schema_version")
+        except sqlite3.OperationalError as exc:
+            raise StoreError(
+                f"Base incompatible ({self._db_path}) : {exc}"
+            ) from exc
+        if version != SCHEMA_VERSION:
+            raise StoreError(
+                f"Schéma incompatible ({self._db_path}) : version {version!r}, "
+                f"attendu {SCHEMA_VERSION!r} — relancez cccf index sur ce projet."
+            )
 
     @property
     def conn(self) -> sqlite3.Connection:

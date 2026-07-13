@@ -22,11 +22,14 @@ from cccf.render import (
     render_search_text,
     render_summary_json,
     render_summary_text,
+    render_workspace_json,
+    render_workspace_text,
 )
 from cccf.scanner import SemgrepError
 from cccf.search import search_findings
 from cccf.search import summary as compute_summary
 from cccf.store import Store
+from cccf.workspace import discover_maven_services, load_federation
 
 app = typer.Typer(help="ccc-findings: index Semgrep interrogeable par LLM")
 
@@ -268,6 +271,29 @@ def graph_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(json.dumps(render_graph_json(outbound_calls)))
     else:
         typer.echo(render_graph_text(render_graph_json(outbound_calls)))
+
+
+@app.command(name="workspace")
+def workspace_cmd(
+    root: Path = typer.Argument(..., help="Répertoire parent à explorer (multi-modules Maven)."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module par
+    `pom.xml`, nommé d'après son `artifactId`, classé `microservice`
+    (référence `spring-boot-maven-plugin`) ou `shared-module`. Lit en
+    lecture seule les projets déjà indexés (`cccf index`) pour compter
+    endpoints/findings par service — n'écrit jamais dans leurs bases.
+    Un module non indexé ou dont la base est incompatible est signalé en
+    avertissement, sans faire échouer la commande.
+    """
+    services = discover_maven_services(root)
+    federation = load_federation(services)
+    result = render_workspace_json(services, federation)
+
+    if json_output:
+        typer.echo(json.dumps(result))
+    else:
+        typer.echo(render_workspace_text(result))
 
 
 @app.command(name="mcp")

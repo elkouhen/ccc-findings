@@ -19,11 +19,12 @@
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Graphe d'interactions dérivé à la requête (BACKLOG-10 K12) : `build_graph`, `find_cycles`, `find_outbound_calls_in_consumers`, `find_hotspots`/`rank_hotspots`, `paths_match` | `models` |
-| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings), du résumé et du graphe | `search`, `ccc_bridge`, `graph` |
+| `workspace.py` | Fédération read-only d'un répertoire multi-services Maven (BACKLOG-11 A2, ADR-30) : `discover_maven_services`, `load_federation` | `models`, `store` |
+| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings), du résumé, du graphe et de la découverte workspace | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings` : orchestration code (via `ccc`) + findings + classement + modes dégradés — implémentation partagée CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
-| `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `findings`, `summary`, `mcp`) | tous les modules ci-dessus |
-| `mcp_server.py` | Serveur `FastMCP` stdio, 4 tools | `code_search`, `config`, `embedder`, `indexer`, `render`, `search`, `store` |
+| `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `findings`, `summary`, `endpoints`, `graph`, `workspace`, `mcp`) | tous les modules ci-dessus |
+| `mcp_server.py` | Serveur `FastMCP` stdio, tools | `code_search`, `config`, `embedder`, `graph`, `indexer`, `render`, `search`, `store`, `workspace` |
 
 Le sens des dépendances est globalement `cli.py`/`mcp_server.py` → logique
 métier → `store.py`. La factory publique d'embedder vit dans `embedder.py` et
@@ -431,10 +432,40 @@ Fonctions pures, aucune écriture SQLite (ADR-27) :
   décroissante (`INFO < WARNING < ERROR`), tri stable.
 
 `endpoints_by_service`/`findings_by_service` : un dict à une seule clé pour
-un projet unique (usage actuel, CLI/MCP), plusieurs clés pour un scénario
-multi-services (tests, et futur K7). Le graphe et les cycles ne dépendent
-pas de la fédération elle-même, seulement d'avoir plusieurs jeux
-d'endpoints à comparer — `cccf graph` aujourd'hui n'en fournit qu'un.
+un projet unique (usage actuel via `cccf graph` seul), plusieurs clés une
+fois fédérées par `workspace.load_federation` (§6ter). Le graphe et les
+cycles ne dépendent pas de la fédération elle-même, seulement d'avoir
+plusieurs jeux d'endpoints à comparer.
+
+### 6ter. Fédération multi-services (`workspace.py`, BACKLOG-11 A2, ADR-30)
+
+- `discover_maven_services(root: Path) -> list[DiscoveredService]` —
+  `root.rglob("pom.xml")`, triés par chemin. Pour chaque `pom.xml` :
+  `artifactId` (XML, avec ou sans espace de noms Maven déclaré) comme nom
+  de service, repli sur le nom du répertoire si le pom est illisible/mal
+  formé/sans `artifactId`. `kind = "microservice"` si le texte du pom
+  contient `spring-boot-maven-plugin`, `"shared-module"` sinon — recherche
+  textuelle simple, pas de résolution de modèle Maven (parent POM,
+  profils). `indexed` : `<module>/.cccf/findings.db` existe.
+- `load_federation(services) -> FederationResult` — pour chaque service
+  indexé, ouvre `Store(service.path, readonly=True)` : `findings_by_service`
+  toujours peuplé (un module partagé peut porter des findings pertinents
+  pour les hotspots) ; `endpoints_by_service` seulement pour
+  `kind="microservice"` (A2 CA5 — un module partagé n'est jamais une source
+  d'endpoints). Service non indexé, base introuvable ou schéma incompatible
+  (`StoreError`) → message ajouté à `warnings`, la fédération continue avec
+  les autres services (K7 CA2).
+- `Store(path, readonly=True)` (`store.py`) : connexion SQLite
+  `file:...?mode=ro` (URI), pas de `_create_schema()`/migration, pas de
+  `commit()` en sortie — voir ADR-30 pour la garantie de non-écriture.
+  `StoreError` si la base est absente (avant la tentative de connexion) ou
+  si `schema_version` ne correspond pas au schéma courant.
+
+`FederationResult.endpoints_by_service`/`.findings_by_service` sont
+directement les dicts multi-clés que `graph.build_graph`/`find_hotspots`
+(§6bis) attendent — `workspace.py` ne connaît rien du graphe, `graph.py` ne
+connaît rien de Maven ni de SQLite : le couplage se fait uniquement par la
+forme des deux dicts.
 
 ## 7. Contrat JSON (F4.2 — figé)
 

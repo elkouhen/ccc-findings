@@ -5,6 +5,7 @@ from cccf.ccc_bridge import CodeHitWithFindings
 from cccf.graph import OutboundCallInConsumer
 from cccf.models import MessageEndpoint
 from cccf.search import SearchHit, Summary, get_context
+from cccf.workspace import DiscoveredService, FederationResult
 
 
 class FindingHit(TypedDict):
@@ -279,4 +280,56 @@ def render_endpoints_text(endpoints: list[MessageEndpoint]) -> str:
             f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}  "
             f"{e.path}:{e.start_line}-{e.end_line}"
         )
+    return "\n".join(lines)
+
+
+class WorkspaceServiceInfo(TypedDict):
+    name: str
+    path: str
+    kind: str
+    indexed: bool
+    endpoint_count: int
+    finding_count: int
+
+
+class WorkspaceResult(TypedDict):
+    """Shape returned by `cccf workspace <root> --json` and the
+    `list_workspace_services` MCP tool (BACKLOG-11 A2)."""
+
+    services: list[WorkspaceServiceInfo]
+    warnings: list[str]
+
+
+def render_workspace_json(
+    services: list[DiscoveredService], federation: FederationResult
+) -> WorkspaceResult:
+    return WorkspaceResult(
+        services=[
+            WorkspaceServiceInfo(
+                name=s.name,
+                path=str(s.path),
+                kind=s.kind,
+                indexed=s.indexed,
+                endpoint_count=len(federation.endpoints_by_service.get(s.name, [])),
+                finding_count=len(federation.findings_by_service.get(s.name, [])),
+            )
+            for s in services
+        ],
+        warnings=federation.warnings,
+    )
+
+
+def render_workspace_text(result: WorkspaceResult) -> str:
+    if not result["services"]:
+        return "Aucun module Maven découvert (pom.xml introuvable)."
+    lines = []
+    for info in result["services"]:
+        status = "indexé" if info["indexed"] else "non indexé"
+        lines.append(
+            f"[{info['kind']}] {info['name']} ({status})  "
+            f"endpoints={info['endpoint_count']} findings={info['finding_count']}  "
+            f"{info['path']}"
+        )
+    for warning in result["warnings"]:
+        lines.append(f"⚠ {warning}")
     return "\n".join(lines)

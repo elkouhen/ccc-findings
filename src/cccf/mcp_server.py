@@ -13,14 +13,17 @@ from cccf.render import (
     FindingHit,
     FindingsSummary,
     GraphResult,
+    WorkspaceResult,
     render_endpoints_json,
     render_graph_json,
     render_search_json,
     render_summary_json,
+    render_workspace_json,
 )
 from cccf.search import search_findings as run_search_findings
 from cccf.search import summary as compute_summary
 from cccf.store import Store
+from cccf.workspace import discover_maven_services, load_federation
 
 mcp = FastMCP("cccf")
 
@@ -147,3 +150,18 @@ def graph() -> GraphResult:
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
     return render_graph_json(find_outbound_calls_in_consumers(endpoints))
+
+
+@mcp.tool()
+def list_workspace_services(root: str) -> WorkspaceResult:
+    """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module
+    par `pom.xml`, classé `microservice` (référence
+    `spring-boot-maven-plugin`) ou `shared-module`. Lit en lecture seule les
+    projets déjà indexés (`cccf index`) pour compter endpoints/findings par
+    service — n'écrit jamais dans leurs bases. Utiliser avant `graph` pour
+    vérifier quels services d'un répertoire multi-services sont prêts à
+    être fédérés.
+    """
+    services = discover_maven_services(Path(root))
+    federation = load_federation(services)
+    return render_workspace_json(services, federation)

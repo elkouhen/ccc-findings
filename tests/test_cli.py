@@ -12,6 +12,7 @@ from cccf.store import Store
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
 ENDPOINT_INDEX_REPO = FIXTURES_DIR / "endpoint_index_repo"
+MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
 
 runner = CliRunner()
 
@@ -461,3 +462,34 @@ def test_graph_and_endpoints_reflect_a_real_cccf_index_run(
     summary_result = runner.invoke(app, ["summary", "--json"])
     assert summary_result.exit_code == 0
     assert sum(json.loads(summary_result.output)["by_severity"].values()) == 1
+
+
+def test_workspace_discovers_maven_modules_and_flags_unindexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "maven_workspace"
+    shutil.copytree(MAVEN_WORKSPACE, dest)
+    with Store(dest / "service-a"):
+        pass  # crée .cccf/findings.db, vide
+
+    result = runner.invoke(app, ["workspace", str(dest), "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    by_name = {s["name"]: s for s in data["services"]}
+    assert by_name["order-service"]["kind"] == "microservice"
+    assert by_name["order-service"]["indexed"] is True
+    assert by_name["common-lib"]["kind"] == "shared-module"
+    assert any("payment-service" in w for w in data["warnings"])
+
+
+def test_workspace_text_reports_no_modules_for_empty_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    result = runner.invoke(app, ["workspace", str(empty)])
+
+    assert result.exit_code == 0
+    assert "Aucun module Maven découvert" in result.output

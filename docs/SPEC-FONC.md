@@ -236,10 +236,12 @@ Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12) :
 appels REST synchrones détectés dans un handler de consommation Kafka (même
 fichier, site d'appel dans la plage de lignes du handler). Les cycles
 d'appels inter-services et les hotspots (site sur un cycle + finding
-liveness K8) nécessitent plusieurs projets indexés — fédération multi-dépôts
-K7, pas encore livrée — donc toujours vides pour l'instant (voir ADR-27) :
-la réponse le dit explicitement plutôt que de laisser deviner une absence
-de résultat.
+liveness K8) nécessitent plusieurs projets indexés — la fédération
+multi-services existe désormais (`cccf workspace`, BACKLOG-11 A2) mais
+`cccf graph` ne la consomme pas encore (câblage restant, voir K12 dans
+`archive/BACKLOG-10.md`) — donc toujours vides pour l'instant (voir
+ADR-27) : la réponse le dit explicitement plutôt que de laisser deviner
+une absence de résultat.
 
 Rendu `--json` :
 ```json
@@ -258,6 +260,35 @@ Mêmes règles d'index absent que `findings`/`summary` (message identique,
 code 2) — `endpoints` vit dans la même base que `findings` (`.cccf/
 findings.db`).
 
+### `cccf workspace <root> [--json]`
+Découvre les modules Maven sous `root` (BACKLOG-11 A2, ADR-30) : un module
+par `pom.xml` trouvé, nommé d'après son `artifactId`, classé
+`microservice` (le pom référence `spring-boot-maven-plugin`) ou
+`shared-module` sinon. Pour chaque module déjà indexé (`cccf index` y a été
+lancé), lit sa base **en lecture seule** (jamais d'écriture dans la base
+d'un autre projet) pour compter ses endpoints et findings.
+
+Rendu `--json` :
+```json
+{
+  "services": [
+    {"name": "order-service", "path": "/repo/order-service", "kind": "microservice",
+     "indexed": true, "endpoint_count": 4, "finding_count": 2},
+    {"name": "common-lib", "path": "/repo/common-lib", "kind": "shared-module",
+     "indexed": true, "endpoint_count": 0, "finding_count": 1}
+  ],
+  "warnings": ["payment-service (/repo/payment-service) : non indexé, ignoré (lancez cccf index sur ce projet)."]
+}
+```
+
+`endpoint_count` d'un `shared-module` est toujours `0` : un module partagé
+n'est jamais traité comme producteur/consommateur runtime, même si des
+endpoints y ont été détectés par erreur (A2 CA5). Un module non indexé, à
+la base introuvable ou au schéma incompatible ne fait pas échouer la
+commande : il apparaît dans `warnings`, absent des comptages. Aucun module
+Maven trouvé → message informatif, code de sortie 0 (pas une erreur —
+`root` peut légitimement ne pas être un répertoire Maven).
+
 ### `cccf mcp`
 Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 `cccf mcp --help` documente le bloc d'enregistrement client :
@@ -267,7 +298,7 @@ Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
 
 ## 3. Serveur MCP
 
-Six tools, chacun annoté avec un type de retour concret (`TypedDict` ou
+Sept tools, chacun annoté avec un type de retour concret (`TypedDict` ou
 dataclass, jamais `str`) — FastMCP en dérive un `outputSchema` par champ,
 exposé aux clients MCP en plus du texte JSON habituel (`structuredContent`
 *et* `content` texte, les deux dans la même réponse ; un client qui ignore le
@@ -285,7 +316,8 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 | `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Recherche de code annotée des findings qui recouvrent chaque résultat — même nom de tool, mêmes paramètres et même comportement que le `search` de ccc, et équivalent à la CLI `cccf search` (implémentation partagée, `code_search.py`) | Utilise l'index code expérimental s'il existe, sinon `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Liste filtrable des endpoints REST/Kafka indexés — équivalent à la CLI `cccf endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
-| `graph()` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph` | `cycles`/`hotspots` vides tant que K7 (fédération) n'est pas livré (ADR-27) |
+| `graph()` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph` | `cycles`/`hotspots` vides tant que `cccf graph` ne consomme pas la fédération A2 (ADR-27) |
+| `list_workspace_services(root)` | `WorkspaceResult` | Découverte de modules Maven + comptage endpoints/findings par service — équivalent à la CLI `cccf workspace` | Lecture seule (ADR-30) ; BACKLOG-11 A2 |
 
 `search` ajoute à chaque résultat de code :
 - `findings` : liste des findings dont `path` est identique et dont la plage

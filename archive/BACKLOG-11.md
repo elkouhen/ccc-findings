@@ -87,6 +87,26 @@ et exécution robuste sur grands volumes.
      puis classent les résultats par sévérité.
   8. Une base absente, non initialisée ou incompatible est signalée comme
      erreur explicite, pas ignorée silencieusement.
+- **Statut** : CA1/CA2/CA5/CA8 livrés. `src/cccf/workspace.py` (nouveau,
+  ADR-30) : `discover_maven_services` (un module par `pom.xml`, nom =
+  `artifactId`, repli sur le nom du répertoire ; `microservice` si
+  `spring-boot-maven-plugin` référencé, `shared-module` sinon) et
+  `load_federation` (lecture read-only via `Store(path, readonly=True)`
+  — nouveau mode sur `Store`, `file:...?mode=ro`, aucune écriture ni
+  migration dans la base d'un autre projet ; service non indexé ou base
+  incompatible → avertissement, jamais un échec global). Modules partagés :
+  findings inclus, endpoints exclus (CA5). CLI `cccf workspace <root>` et
+  tool MCP `list_workspace_services`. CA3/CA4/CA6/CA7 (arêtes REST/Kafka,
+  cycles et hotspots rendus par `cccf graph`) restent à câbler : l'algorithme
+  (`graph.build_graph`/`find_cycles`/`find_hotspots`) est déjà livré et
+  testé (K12) et consomme exactement la forme que produit
+  `load_federation` — reste à brancher `cccf graph`/`graph()` dessus quand
+  un `--workspace` est fourni (voir K12 dans `archive/BACKLOG-10.md`).
+  Testé (`tests/test_workspace.py`, `tests/test_cli.py`,
+  `tests/test_mcp_server.py`) : classification, détection d'indexation,
+  repli sur pom cassé, non-fuite d'endpoints d'un module partagé,
+  non-écriture effective en lecture seule, base introuvable/incompatible
+  en avertissement.
 
 ### [ ] A5 — Optimiser l'indexation et la recherche pour grands repos
 - **Priorité** : MOYENNE
@@ -111,3 +131,12 @@ et exécution robuste sur grands volumes.
      chemins filtrés ne scannent pas inutilement tout le store.
   6. La documentation technique indique les garanties de complexité attendues
      et les limites restantes de `sqlite-vec` sur les filtres post-KNN.
+- **Statut** : **partiellement livré** via J3/J4 (`archive/BACKLOG-12.md`) :
+  hash fichiers en streaming, filtres findings/endpoints poussés en SQL,
+  suppressions/comptages batchés sous la limite SQLite, jointure
+  `search_code_with_findings` restreinte aux chemins demandés, et KNN findings
+  sur-demandé progressivement au lieu d'interroger d'emblée toute la table
+  vec0. Le reliquat A5 concerne surtout les grands répertoires multi-services :
+  mesurer les gains sur volume réaliste, compléter les cas encore post-filtrés
+  côté `sqlite-vec`, et traiter les autres compteurs/lectures historiques
+  restés en dehors de ce premier durcissement.
