@@ -48,6 +48,16 @@ def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
 
 
 @pytest.mark.integration
+def test_search_findings_tool_rejects_invalid_severity(indexed_repo: Path) -> None:
+    """BACKLOG-16 P4 : côté MCP aussi, une sévérité invalide doit lever une
+    erreur métier propre (`SearchError`), pas un `ValueError` non géré."""
+    from cccf.search import SearchError
+
+    with pytest.raises(SearchError, match="HIGH"):
+        search_findings("injection sql", severity="HIGH")
+
+
+@pytest.mark.integration
 def test_findings_summary_tool_returns_expected_json(indexed_repo: Path) -> None:
     result = findings_summary()
 

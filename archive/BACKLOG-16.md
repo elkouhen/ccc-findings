@@ -58,7 +58,7 @@
   - CA : test MCP : index cocoindex, modification d'un fichier,
     `reindex_findings`, `search` renvoie le contenu à jour.
 
-- [ ] **P4 — `--severity` invalide → `ValueError` brute (CLI et MCP)**
+- [x] **P4 — `--severity` invalide → `ValueError` brute (CLI et MCP)**
   - Fichiers : `src/cccf/search.py` (ou `store.py`), `tests/test_search.py`
   - Description : `cccf findings q --severity HIGH` lève
     `ValueError: 'HIGH' is not in list` (traceback non géré), idem via le

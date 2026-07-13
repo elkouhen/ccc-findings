@@ -162,6 +162,22 @@ def test_findings_json_output_matches_contract(
 
 
 @pytest.mark.integration
+def test_findings_invalid_severity_fails_with_exit_code_2(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-16 P4 : `--severity HIGH` (sévérité Semgrep brute, jamais
+    stockée telle quelle) échouait auparavant avec un ValueError brut."""
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+    runner.invoke(app, ["index"])
+
+    result = runner.invoke(app, ["findings", "injection sql", "--severity", "HIGH"])
+
+    assert result.exit_code == 2
+    assert "HIGH" in result.output
+
+
+@pytest.mark.integration
 def test_findings_context_includes_offending_source_line(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

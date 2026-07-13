@@ -4,12 +4,19 @@ from typing import Protocol
 
 import numpy as np
 
+from cccf.config import VALID_SEVERITIES
 from cccf.embedder import EmbeddingError
 from cccf.models import Finding
 from cccf.store import Store
 
 _KNN_OVERFETCH_FACTOR = 3
 _KNN_MIN_FETCH = 20
+
+
+class SearchError(Exception):
+    """Paramètre de recherche invalide (BACKLOG-16 P4) — distinct
+    d'`EmbeddingError` (incompatibilité de modèle/dimension) : ici la
+    requête elle-même est mal formée, indépendamment de l'index."""
 
 
 class EmbedderLike(Protocol):
@@ -39,6 +46,11 @@ def search_findings(
     limit: int = 5,
     offset: int = 0,
 ) -> list[SearchHit]:
+    if severity is not None and severity not in VALID_SEVERITIES:
+        raise SearchError(
+            f"Sévérité invalide : {severity!r}. Valeurs autorisées : {VALID_SEVERITIES}."
+        )
+
     candidates = store.all_findings(
         severity_at_least=severity, rule_id=rule, path_glob=path_glob
     )

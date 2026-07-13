@@ -46,7 +46,7 @@ from cccf.render import (
     render_workspace_text,
 )
 from cccf.scanner import SemgrepError
-from cccf.search import search_findings
+from cccf.search import SearchError, search_findings
 from cccf.search import summary as compute_summary
 from cccf.store import Store
 from cccf.workspace import discover_maven_services, load_federation
@@ -220,7 +220,7 @@ def findings_cmd(
                 limit=limit,
                 offset=offset,
             )
-    except EmbeddingError as exc:
+    except (EmbeddingError, SearchError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
 

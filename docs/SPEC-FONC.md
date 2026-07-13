@@ -162,7 +162,7 @@ devenue le sur-ensemble de `ccc search`.
 
 | Option | Effet |
 |---|---|
-| `--severity S` | ne garde que les findings de sévérité ≥ S (S ∈ INFO/WARNING/ERROR) |
+| `--severity S` | ne garde que les findings de sévérité ≥ S (S ∈ INFO/WARNING/ERROR ; une valeur hors de cet ensemble — ex. sévérité Semgrep brute `HIGH` — est une erreur bloquante, exit code 2, BACKLOG-16 P4) |
 | `--rule R` | ne garde que les findings de la règle `R` (égalité exacte sur `rule_id`) |
 | `--path GLOB` | ne garde que les findings dont le chemin matche le glob (style `fnmatch`) |
 | `--limit N` | nombre maximum de résultats (défaut 5) |

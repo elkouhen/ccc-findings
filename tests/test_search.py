@@ -8,7 +8,7 @@ import pytest
 from cccf.embedder import EmbeddingError, finding_to_text
 from cccf.models import Finding
 from cccf.render import render_search_json, render_search_text
-from cccf.search import SearchHit, get_context, search_findings, summary
+from cccf.search import SearchError, SearchHit, get_context, search_findings, summary
 from cccf.store import Store
 
 
@@ -171,6 +171,18 @@ def test_search_findings_rejects_incompatible_embedding_dimensions(tmp_path: Pat
 
         with pytest.raises(EmbeddingError, match="Dimension d'embedding incompatible"):
             search_findings(store, query_embedder, "injection sql")
+
+
+def test_search_findings_rejects_invalid_severity(tmp_path: Path) -> None:
+    """BACKLOG-16 P4 : `--severity HIGH` (sévérité Semgrep brute, jamais
+    stockée telle quelle — voir `scanner._normalize_severity`) doit lever
+    une erreur métier propre plutôt qu'un `ValueError` non géré."""
+    embedder = BagOfWordsFakeEmbedder(dim=8)
+    with Store(tmp_path) as store:
+        seed_store(store, embedder)
+
+        with pytest.raises(SearchError, match="HIGH"):
+            search_findings(store, embedder, "injection sql", severity="HIGH")
 
 
 def test_search_findings_does_not_fetch_all_vectors_upfront_when_unnecessary() -> None:
