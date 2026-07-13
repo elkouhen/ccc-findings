@@ -221,7 +221,7 @@ l'ordre :
   2. Topic inconnu → `ToolError` explicite.
   3. `SKILL.md` mis à jour dans le repo skill (commit séparé là-bas).
 
-### [ ] K7 — Workspace multi-dépôts (fédération read-only)
+### [x] K7 — Workspace multi-dépôts (fédération read-only)
 - **Priorité** : HAUTE (prérequis de K12 : sans fédération, pas de cycle
   inter-services visible)
 - **Fichiers** : `src/cccf/workspace.py` (nouveau), `src/cccf/cli.py`,
@@ -240,6 +240,23 @@ l'ordre :
      son repo.
   2. Repo manquant/non indexé signalé sans faire échouer la requête.
   3. Aucune écriture dans les bases des autres projets.
+- **Statut** : livré, **adapté** (voir note en tête de fichier et
+  `archive/BACKLOG-PRIORITY.md`, cadrage 2026-07-13) : la fédération réelle
+  est BACKLOG-11 A2 (`src/cccf/workspace.py`, ADR-30) — un répertoire parent
+  Maven découvert automatiquement (`discover_maven_services`) plutôt qu'un
+  fichier de workspace nommé (`~/.cccf/workspaces/<nom>.yml`), et `cccf
+  workspace`/`list_workspace_services` plutôt que `cccf flow --workspace`
+  (`cccf flow`, K5, n'a jamais été livré). CA2 (repo non indexé → avertissement)
+  et CA3 (aucune écriture, `Store(readonly=True)`) livrés tels quels par A2.
+  CA1 (deux repos fédérés, chaque site attribué à son repo, relation
+  producteur→consommateur visible) validé de bout en bout dans
+  `tests/test_k7_federation_e2e.py` avec le mécanisme réellement livré :
+  deux microservices Maven indexés séparément (`cccf init`/`cccf index`,
+  chacun ignorant l'autre), fédérés par `discover_maven_services`/
+  `load_federation`, puis `graph.build_graph` détecte l'arête Kafka
+  order-service→payment-service sur le topic `orders.created` — même
+  promesse que le CA original, tenue par l'implémentation adaptée plutôt
+  que par `cccf flow`.
 
 ### [ ] K8 — Pack de règles liveness (+ sécurité) Kafka/REST (findings)
 - **Priorité** : HAUTE (phase 1 — le seul livrable sans aucune dépendance :

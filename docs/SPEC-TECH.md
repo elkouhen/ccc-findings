@@ -467,6 +467,14 @@ directement les dicts multi-clés que `graph.build_graph`/`find_hotspots`
 connaît rien de Maven ni de SQLite : le couplage se fait uniquement par la
 forme des deux dicts.
 
+`tests/test_k7_federation_e2e.py` (BACKLOG-10 K7) enchaîne les trois
+couches sur de vraies fixtures : deux microservices Maven indexés
+séparément via la CLI (`cccf init`/`cccf index`, chacun ignorant l'autre),
+fédérés par `discover_maven_services`/`load_federation`, puis
+`graph.build_graph` détecte l'arête Kafka entre le producteur et le
+consommateur — la seule preuve de bout en bout, hors K1/K2/K11 chacun
+testés isolément, que la chaîne complète fonctionne.
+
 ## 7. Contrat JSON (F4.2 — figé)
 
 Consommé par `cccf search --json`, le tool MCP `search_findings`, et (sans
