@@ -1,9 +1,11 @@
+import math
 from pathlib import Path
 from typing import TypedDict
+from xml.sax.saxutils import quoteattr
 
 from cccf.ccc_bridge import CodeHitWithFindings
 from cccf.flow import FlowResult
-from cccf.graph import Cycle, Hotspot, OutboundCallInConsumer
+from cccf.graph import Cycle, GraphEdge, Hotspot, OutboundCallInConsumer
 from cccf.models import MessageEndpoint
 from cccf.search import SearchHit, Summary, get_context
 from cccf.workspace import DiscoveredService, FederationResult
@@ -324,6 +326,74 @@ def render_graph_text(result: GraphResult) -> str:
     if result["note"]:
         lines.append(result["note"])
     return "\n".join(lines)
+
+
+def render_graph_drawio(
+    services: list[str], edges: list[GraphEdge], cycles: list[Cycle]
+) -> str:
+    """Rend le graphe d'interactions services <-> services (BACKLOG-14 G1)
+    en XML mxGraph (format natif diagrams.net/drawio) : un nœud par service
+    (y compris sans arête), une arête par `GraphEdge` — REST en trait
+    plein, Kafka en pointillé, libellé = route/topic. Les arêtes d'un cycle
+    `has_synchronous_rest=True` sont mises en évidence en rouge (même
+    signal que le cycle « synchrone » du rendu JSON/texte). Layout initial
+    en grille — diagrams.net réorganise à la demande, ce n'est pas un rendu
+    figé. Toute valeur dérivée du code source (nom de service, route,
+    topic) est échappée XML via `quoteattr` — jamais interpolée brute."""
+    synchronous_edge_ids = {
+        id(edge) for cycle in cycles if cycle.has_synchronous_rest for edge in cycle.edges
+    }
+
+    ordered_services = sorted(services)
+    node_ids = {name: f"node-{i}" for i, name in enumerate(ordered_services)}
+    columns = max(1, math.ceil(math.sqrt(len(ordered_services)))) if ordered_services else 1
+
+    cells: list[str] = []
+    for i, name in enumerate(ordered_services):
+        x = 40 + (i % columns) * 220
+        y = 40 + (i // columns) * 120
+        cells.append(
+            f'<mxCell id="{node_ids[name]}" value={quoteattr(name)} '
+            'style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" '
+            f'vertex="1" parent="1"><mxGeometry x="{x}" y="{y}" width="160" height="50" '
+            'as="geometry" /></mxCell>'
+        )
+
+    for i, edge in enumerate(edges):
+        source_id = node_ids.get(edge.from_service)
+        target_id = node_ids.get(edge.to_service)
+        if source_id is None or target_id is None:
+            continue
+        style = "edgeStyle=orthogonalEdgeStyle;html=1;"
+        style += "dashed=1;" if edge.kind == "kafka" else ""
+        style += (
+            "strokeColor=#d32f2f;fontColor=#d32f2f;"
+            if id(edge) in synchronous_edge_ids
+            else "strokeColor=#666666;"
+        )
+        cells.append(
+            f'<mxCell id="edge-{i}" value={quoteattr(edge.to_endpoint.topic)} style={quoteattr(style)} '
+            f'edge="1" parent="1" source="{source_id}" target="{target_id}">'
+            '<mxGeometry relative="1" as="geometry" /></mxCell>'
+        )
+
+    body = "\n        ".join(cells)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<mxfile host="cccf">\n'
+        '  <diagram name="cccf graph" id="cccf-graph">\n'
+        '    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" '
+        'connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" '
+        'pageHeight="1100" math="0" shadow="0">\n'
+        "      <root>\n"
+        '        <mxCell id="0" />\n'
+        '        <mxCell id="1" parent="0" />\n'
+        f"        {body}\n"
+        "      </root>\n"
+        "    </mxGraphModel>\n"
+        "  </diagram>\n"
+        "</mxfile>\n"
+    )
 
 
 class EndpointHit(TypedDict):

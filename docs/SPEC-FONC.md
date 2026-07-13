@@ -235,7 +235,7 @@ applicables (repo non-Maven, fichier non-Java) — voir BACKLOG-13.
 Mêmes règles d'index absent que `findings` (message identique, code 2) —
 `endpoints` vit dans la même base que `findings`.
 
-### `cccf graph [--workspace ROOT] [--json]`
+### `cccf graph [--workspace ROOT] [--json] [--drawio FICHIER]`
 Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12).
 Toujours : les appels REST synchrones détectés dans un handler de
 consommation Kafka **du projet courant** (même fichier, site d'appel dans
@@ -298,6 +298,25 @@ code 2) — `endpoints` vit dans la même base que `findings` (`.cccf/
 findings.db`). `--workspace` ne fait jamais échouer la commande : un
 service fédéré manquant ou incompatible est signalé dans `note`, pas une
 erreur (K7 CA2).
+
+`--drawio FICHIER` (BACKLOG-14 G1) : plutôt que le rendu JSON/texte, écrit
+le graphe complet services ↔ services (pas seulement les arêtes des
+cycles) au format `.drawio` (XML mxGraph, ouvrable directement dans
+diagrams.net) à `FICHIER`, et affiche une confirmation courte (nombre de
+services/arêtes). Un nœud par service connu de la même source de données
+que `--json` (module Maven groupé, ou fédération `--workspace`) — y
+compris un service sans aucune arête. Une arête par appel REST apparié
+(call → serve) ou événement Kafka apparié (produce → consume) : trait
+plein pour REST, pointillé pour Kafka, libellé = route/topic. Les arêtes
+qui appartiennent à un cycle synchrone (`has_synchronous_rest: true`,
+c'est-à-dire au moins une arête REST hors `WebClient`) sont mises en
+évidence en rouge — même signal que le marqueur `[synchrone]` du rendu
+texte. Sans donnée inter-modules disponible, écrit un document valide mais
+sans nœud/arête et affiche la même `note` explicative que `--json`
+(jamais d'échec silencieux). Incompatible avec `--json` : `--drawio` a
+priorité s'il est fourni. Pas de tool MCP équivalent — un fichier
+`.drawio` n'est pas un résultat exploitable par un agent, contrairement au
+JSON déjà renvoyé par `graph`.
 
 ### `cccf workspace <root> [--json]`
 Découvre les modules Maven sous `root` (BACKLOG-11 A2, ADR-30) : un module

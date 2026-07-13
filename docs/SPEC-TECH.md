@@ -20,7 +20,7 @@
 | `search.py` | `search_findings` (cosinus), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Graphe d'interactions dérivé à la requête (BACKLOG-10 K12) : `build_graph`, `find_cycles`, `find_outbound_calls_in_consumers`, `find_hotspots`/`rank_hotspots`, `paths_match` | `models` |
 | `workspace.py` | Fédération read-only d'un répertoire multi-services Maven (BACKLOG-11 A2, ADR-30) : `discover_maven_services`, `load_federation` | `models`, `store` |
-| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings), du résumé, du graphe et de la découverte workspace | `search`, `ccc_bridge`, `graph`, `workspace` |
+| `render.py` | Sérialisation texte/JSON des résultats de recherche (findings, code+findings), du résumé, du graphe et de la découverte workspace ; export visuel `.drawio` du graphe (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `ccc_bridge.py` | Pont vers le CLI externe `ccc` : `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings` : orchestration code (via `ccc`) + findings + classement + modes dégradés — implémentation partagée CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
 | `cli.py` | Application Typer (`version`, `init`, `index`, `search`, `findings`, `summary`, `endpoints`, `graph`, `workspace`, `mcp`) | tous les modules ci-dessus |
@@ -329,8 +329,9 @@ snippet reste borné exactement par `start_line`/`end_line` du match
 Semgrep, jamais de code hors de l'appel). Absent, ou suivi d'une
 concaténation (`+`) sur la même ligne → `topic_dynamic=True`, chemin
 conservé comme préfixe littéral exploitable (ou `"<dynamic>"` si aucun
-littéral) — jamais résolu silencieusement (ADR-26). Les URLs absolues/scheme-relative sont
-normalisées en route canonique (`http://order-service/orders?x=1` →
+littéral) — jamais résolu silencieusement (ADR-26). Les URLs
+absolues/scheme-relative sont normalisées en route canonique
+(`http://order-service/orders?x=1` →
 `/orders`) : host, query string et fragment sont jetés, slash initial forcé,
 slashes répétés compactés. `topic = f"{http_method} {chemin}"` (ex.
 `"GET /orders/{id}"`), `http_method` fixé par la règle (une règle = une
@@ -539,6 +540,45 @@ graphe directement (pas de fédération). Sinon (aucun module Maven détecté),
 `cycles`/`hotspots` restent vides avec la note explicite — même
 comportement qu'avant BACKLOG-13. `--workspace`/`workspace_root` fourni
 déclenche toujours la fédération complète, inchangée.
+
+### 6bis-bis. Export visuel du graphe (`render.py`, BACKLOG-14 G1)
+
+`render_graph_drawio(services: list[str], edges: list[GraphEdge], cycles:
+list[Cycle]) -> str` — fonction pure, aucune dépendance à SQLite ni au
+CLI. Rend le graphe **complet** (toutes les arêtes de `build_graph`, pas
+seulement celles des cycles, contrairement à `render_graph_json`) en XML
+mxGraph (format natif diagrams.net/drawio) :
+- un nœud (`mxCell vertex="1"`) par nom de `services`, y compris un
+  service sans aucune arête — disposition initiale en grille
+  (`ceil(sqrt(n))` colonnes), purement indicative : diagrams.net réorganise
+  librement à l'ouverture ;
+- une arête (`mxCell edge="1"`) par `GraphEdge`, reliée par `source`/
+  `target` aux nœuds correspondants (une arête dont un service n'est pas
+  dans `services` est silencieusement ignorée — ne devrait pas arriver en
+  usage normal, `edges` et `services` viennent de la même source) ; style
+  pointillé (`dashed=1`) pour `kind="kafka"`, trait plein pour `"rest"` ;
+  libellé = `edge.to_endpoint.topic` (route ou nom de topic) ;
+- les arêtes appartenant à un cycle dont `has_synchronous_rest=True` sont
+  identifiées par `id(edge)` (mêmes objets `GraphEdge` que ceux passés
+  dans `cycles`, jamais de comparaison par valeur) et coloriées en rouge
+  (`strokeColor=#d32f2f`) — même signal que le marqueur `[synchrone]` du
+  rendu texte.
+
+Toute valeur dérivée du code source (nom de service, route/topic) est
+échappée via `xml.sax.saxutils.quoteattr` avant interpolation dans un
+attribut XML — jamais de f-string brute sur du contenu non fiable, pour
+qu'un nom de service ou un chemin contenant `<`/`&`/`"` ne puisse jamais
+produire un document mal formé (BACKLOG-14 G1 CA3).
+
+`cccf graph --drawio FICHIER` (CLI, §2) : calcule `services_by_name`/
+`edges`/`cycles` exactement comme pour `--json` (même branchement
+`--workspace`/regroupement par module), écrit le résultat de
+`render_graph_drawio` à `FICHIER`, affiche une confirmation courte puis,
+si `render_graph_json(...)["note"]` est non vide (aucune donnée
+inter-modules), l'affiche aussi — jamais d'échec silencieux, un fichier
+sans nœud/arête reste un document XML valide (CA2). Pas de tool MCP
+équivalent (§3) : un fichier n'est pas un résultat JSON exploitable par un
+agent.
 
 ### 6ter. Fédération multi-services (`workspace.py`, BACKLOG-11 A2, ADR-30)
 

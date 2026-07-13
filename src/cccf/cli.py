@@ -17,6 +17,7 @@ from cccf.flow import (
     trace_flow,
 )
 from cccf.graph import (
+    GraphEdge,
     build_graph,
     find_cycles,
     find_hotspots,
@@ -26,6 +27,7 @@ from cccf.graph import (
     rank_hotspots,
 )
 from cccf.indexer import index_repo
+from cccf.models import MessageEndpoint
 from cccf.render import (
     render_code_search_text,
     render_endpoints_json,
@@ -33,6 +35,7 @@ from cccf.render import (
     render_fallback_findings_text,
     render_flow_json,
     render_flow_text,
+    render_graph_drawio,
     render_graph_json,
     render_graph_text,
     render_search_json,
@@ -279,6 +282,13 @@ def graph_cmd(
         "cycles/hotspots inter-services.",
     ),
     json_output: bool = typer.Option(False, "--json"),
+    drawio: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--drawio",
+        help="Écrit le graphe d'interactions services <-> services en "
+        ".drawio (mxGraph, diagrams.net) à ce chemin, plutôt que le rendu "
+        "JSON/texte (BACKLOG-14 G1).",
+    ),
 ) -> None:
     """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
     K12) : appels REST synchrones détectés dans un handler de consommation
@@ -299,21 +309,25 @@ def graph_cmd(
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
+    services_by_name: dict[str, list[MessageEndpoint]] = {}
+    edges: list[GraphEdge] = []
     cycles = []
     hotspots = []
     warnings: list[str] = []
     cross_module_data_available = False
     if workspace is not None:
-        services = discover_maven_services(workspace)
-        federation = load_federation(services)
+        discovered = discover_maven_services(workspace)
+        federation = load_federation(discovered)
         warnings = federation.warnings
-        edges = build_graph(federation.endpoints_by_service)
+        services_by_name = federation.endpoints_by_service
+        edges = build_graph(services_by_name)
         cycles = find_cycles(edges)
         hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
         cross_module_data_available = True
     else:
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if grouped_endpoints:
+            services_by_name = grouped_endpoints
             edges = build_graph(grouped_endpoints)
             cycles = find_cycles(edges)
             grouped_findings = group_findings_by_module(findings)
@@ -327,6 +341,15 @@ def graph_cmd(
         warnings=warnings,
         cross_module_data_available=cross_module_data_available,
     )
+
+    if drawio is not None:
+        drawio.write_text(
+            render_graph_drawio(list(services_by_name), edges, cycles), encoding="utf-8"
+        )
+        typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
+        if result["note"]:
+            typer.echo(result["note"])
+        return
 
     if json_output:
         typer.echo(json.dumps(result))

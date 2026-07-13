@@ -103,3 +103,51 @@ def test_graph_without_workspace_still_reports_the_no_workspace_note(
     assert data["cycles"] == []
     assert data["hotspots"] == []
     assert "--workspace" in data["note"]
+
+
+@pytest.mark.integration
+def test_graph_drawio_writes_a_valid_mxgraph_file_with_the_cycle_highlighted(
+    indexed_cycle_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-14 G1 CA1."""
+    import xml.etree.ElementTree as ET
+
+    monkeypatch.chdir(indexed_cycle_workspace / "service-x")
+    out_file = tmp_path / "graph.drawio"
+
+    result = runner.invoke(
+        app, ["graph", "--workspace", str(indexed_cycle_workspace), "--drawio", str(out_file)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert str(out_file) in result.output
+    assert out_file.is_file()
+
+    root = ET.fromstring(out_file.read_text(encoding="utf-8"))
+    node_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
+    assert node_values == {"service-x", "service-y", "service-z"}
+    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
+    assert len(edge_cells) >= 3
+    assert all("strokeColor=#d32f2f" in cell.get("style", "") for cell in edge_cells)
+
+
+def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-14 G1 CA2."""
+    import xml.etree.ElementTree as ET
+
+    from cccf.store import Store
+
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+    out_file = tmp_path / "graph.drawio"
+
+    result = runner.invoke(app, ["graph", "--drawio", str(out_file)])
+
+    assert result.exit_code == 0
+    assert "--workspace" in result.output
+    assert out_file.is_file()
+    root = ET.fromstring(out_file.read_text(encoding="utf-8"))
+    assert [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"] == []
