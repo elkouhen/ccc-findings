@@ -201,10 +201,10 @@ purge findings, chunks et embeddings associés.
 `meta.index_engine = "cocoindex-prototype"`. Le moteur manuel reste le défaut et
 écrit `meta.index_engine = "manual"` quand il est utilisé via la CLI.
 
-`findings_removed` est calculé en comptant, **avant** suppression, les
-findings déjà en base pour les chemins de `deleted` et de `changed` (via
-`store.all_findings(path_glob=p)` — un appel par chemin, voir défaut connu R9
-dans `archive/BACKLOG-2.md`).
+`findings_removed` / `endpoints_removed` sont calculés en comptant, **avant**
+suppression, les lignes déjà en base pour les chemins de `deleted` et de
+`changed`, via des requêtes SQL `COUNT(*) WHERE path IN (...)` batchées par
+paquets sous la limite de binds SQLite.
 
 ## 4. Exécution Semgrep (`scanner.py`)
 
@@ -269,29 +269,37 @@ système est ignoré. Communs aux deux systèmes :
 **REST** (`system: rest`, ou absent) — `_extract_rest_path(snippet)` :
 premier littéral entre guillemets de la première ligne du snippet (relu
 depuis le fichier source, comme `parse_semgrep_json`). Absent, ou suivi
-d'une concaténation (`+`) → `topic_dynamic=True`, chemin conservé tel quel
-(préfixe littéral, ou `"<dynamic>"` si aucun littéral) — jamais résolu
-silencieusement (ADR-26). `topic = f"{http_method} {chemin}"` (ex.
+d'une concaténation (`+`) → `topic_dynamic=True`, chemin conservé comme
+préfixe littéral exploitable (ou `"<dynamic>"` si aucun littéral) — jamais
+résolu silencieusement (ADR-26). Les URLs absolues/scheme-relative sont
+normalisées en route canonique (`http://order-service/orders?x=1` →
+`/orders`) : host, query string et fragment sont jetés, slash initial forcé,
+slashes répétés compactés. `topic = f"{http_method} {chemin}"` (ex.
 `"GET /orders/{id}"`), `http_method` fixé par la règle (une règle = une
 méthode).
 
-**Kafka** (`system: kafka`) — `_extract_kafka_topic(snippet, repo_root)` :
+**Kafka** (`system: kafka`) — `_extract_kafka_topic(snippet, repo_root,
+source_path)` :
 même extraction de littéral que REST (`_find_first_literal`, factorisée),
 puis un cas supplémentaire : un littéral de la forme `${propriete}` (Spring
 property placeholder — ex. `@KafkaListener(topics = "${app.kafka.topics.
-orders}")`) est résolu via `resolve_spring_property(repo_root, propriete)`
-plutôt que traité comme un nom de topic littéral (ADR-28). Résolu →
-`topic_dynamic=False`, `topic` = la valeur résolue ; non résolu → le
-placeholder est conservé tel quel, `topic_dynamic=True`.
+orders}")`) est résolu via `resolve_spring_property(repo_root, propriete,
+source_path)` plutôt que traité comme un nom de topic littéral (ADR-28).
+Résolu → `topic_dynamic=False`, `topic` = la valeur résolue ; non résolu →
+le placeholder est conservé tel quel, `topic_dynamic=True`.
 
-`resolve_spring_property(repo_root, property_key)` : `property_key` accepte
-la syntaxe Spring `prop` ou `prop:défaut`. Cherche la clé (aplatie en
-notation pointée pour le YAML imbriqué) dans, dans l'ordre :
-`src/main/resources/application.{yml,yaml,properties}`, puis les mêmes noms
-à la racine du repo — premier fichier existant qui définit la clé gagne.
-Fichier absent ou YAML invalide → passe au suivant, jamais une erreur.
-Clé introuvable partout → le défaut Spring s'applique s'il est présent,
-sinon `None` (jamais résolu au hasard).
+`resolve_spring_property(repo_root, property_key, source_path=None)` :
+`property_key` accepte la syntaxe Spring `prop` ou `prop:défaut`. Cherche la
+clé (aplatie en notation pointée pour le YAML imbriqué) dans les configs
+Spring découvertes autour du fichier source : d'abord le module qui contient
+`source_path` (ancêtres du fichier + `src/main/resources` / racine du module),
+puis le repo parent. Noms supportés : `application.{yml,yaml,properties}`,
+`bootstrap.{yml,yaml,properties}` et variantes profilées
+`application-*.{yml,yaml,properties}` / `bootstrap-*.{...}`. Les fichiers
+sont parsés une seule fois par process via `lru_cache`. Fichier absent ou YAML
+invalide → passe au suivant, jamais une erreur. Clé introuvable partout → le
+défaut Spring s'applique s'il est présent, sinon `None` (jamais résolu au
+hasard).
 
 ## 5. Embedding et recherche
 
@@ -312,18 +320,18 @@ dimension vectorielle est stockée dans `meta.embedding_dim`.
 
 `search.search_findings` (depuis ADR-17, délègue le calcul de similarité à
 `sqlite-vec` au lieu d'un brute-force NumPy) :
-1. Filtre d'abord en SQL/Python (`store.all_findings(severity_at_least, rule_id,
+1. Filtre d'abord en SQL (`store.all_findings(severity_at_least, rule_id,
    path_glob)`) → ensemble de candidats.
 2. Vérifie que le vecteur de requête a la même dimension que
    `meta.embedding_dim` ; une incompatibilité lève `EmbeddingError` avec un
    message demandant de réindexer.
-3. `store.knn_search(query_vec, top_k=store.embedding_count())` — une seule
-   requête `SELECT finding_id, distance FROM vec_findings WHERE embedding
-   MATCH ? AND k = ? ORDER BY distance` sur **toute** la table vec0 (pas
-   seulement les candidats filtrés : `vec0` n'expose pas de filtrage par
-   métadonnée arbitraire côté WHERE, donc le filtre sévérité/règle/chemin est
-   appliqué en Python *après* le tri, en s'arrêtant dès que `offset + limit`
-   résultats appartenant à l'ensemble filtré ont été trouvés).
+3. `store.knn_search(query_vec, top_k=...)` interroge `vec_findings` avec un
+   `k` sur-demandé (facteur 3, minimum 20, puis doublement progressif si
+   besoin) au lieu de demander d'emblée toute la table vec0. `vec0`
+   n'exposant pas de filtre métadonnée arbitraire côté WHERE, le filtre
+   sévérité/règle/chemin reste appliqué en Python après le KNN, mais la
+   requête n'escalade vers plus de voisins que si `offset + limit` résultats
+   filtrés n'ont pas encore été trouvés.
 4. Le score retourné est `1 - distance_cosinus` (la table vec0 est déclarée
    `distance_metric=cosine`), donc équivalent au produit scalaire de l'ancien
    brute-force sur des vecteurs normalisés L2.
@@ -379,8 +387,9 @@ détectée, voir `archive/BACKLOG-2.md`).
 
 `ccc` absent du PATH ou code de sortie non nul → `CccUnavailable`.
 
-`annotate_with_findings(code_hits, store)` : jointure par égalité stricte de
-chemin puis chevauchement inclusif de plage
+`annotate_with_findings(code_hits, store)` : charge uniquement les findings des
+chemins présents dans `code_hits`, puis joint par égalité stricte de chemin et
+chevauchement inclusif de plage
 (`finding.start_line <= hit.end_line and finding.end_line >= hit.start_line`
 — une seule ligne commune suffit). Sérialise chaque finding joint sans le
 champ `score` (absent du contrat F4.2 dans ce contexte, puisqu'aucune requête

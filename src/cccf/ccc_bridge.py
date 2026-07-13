@@ -164,8 +164,10 @@ def _finding_to_ref(finding: Finding) -> FindingRef:
 
 
 def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeHitWithFindings]:
+    if not code_hits:
+        return []
     findings_by_path: dict[str, list[Finding]] = {}
-    for finding in store.all_findings():
+    for finding in store.all_findings_for_paths(sorted({hit.path for hit in code_hits})):
         findings_by_path.setdefault(finding.path, []).append(finding)
 
     results: list[CodeHitWithFindings] = []

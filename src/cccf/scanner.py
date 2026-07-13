@@ -1,8 +1,10 @@
 import json
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -122,18 +124,24 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
 # (métavariables Semgrep indisponibles sans compte connecté, voir ADR-26).
 _QUOTED_STRING_RE = re.compile(r"f?[\"']([^\"']*)[\"']")
 _PROPERTY_PLACEHOLDER_RE = re.compile(r"^\$\{([^}]+)\}$")
+_MULTI_SLASH_RE = re.compile(r"/{2,}")
 
-# BACKLOG-11 A1 / K2 : emplacements conventionnels des fichiers de
-# configuration Spring Boot (Maven/Gradle standard layout), essayés dans
-# l'ordre — le premier fichier qui définit la clé gagne.
-_SPRING_PROPERTY_FILES = [
-    "src/main/resources/application.yml",
-    "src/main/resources/application.yaml",
-    "src/main/resources/application.properties",
+_SPRING_BASE_FILENAMES = (
     "application.yml",
     "application.yaml",
     "application.properties",
-]
+    "bootstrap.yml",
+    "bootstrap.yaml",
+    "bootstrap.properties",
+)
+_SPRING_PROFILE_PATTERNS = (
+    "application-*.yml",
+    "application-*.yaml",
+    "application-*.properties",
+    "bootstrap-*.yml",
+    "bootstrap-*.yaml",
+    "bootstrap-*.properties",
+)
 
 
 def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
@@ -156,7 +164,22 @@ def _extract_rest_path(snippet: str) -> tuple[str, bool]:
     literal, dynamic = _find_first_literal(snippet)
     if literal is None:
         return "<dynamic>", True
-    return literal, dynamic
+    return _normalize_rest_path(literal), dynamic
+
+
+def _normalize_rest_path(literal: str) -> str:
+    normalized = literal.strip()
+    if not normalized:
+        return "/"
+    if normalized.startswith("//"):
+        normalized = urlsplit(f"http:{normalized}").path or "/"
+    elif "://" in normalized:
+        normalized = urlsplit(normalized).path or "/"
+    normalized = normalized.split("?", 1)[0].split("#", 1)[0]
+    normalized = _MULTI_SLASH_RE.sub("/", normalized)
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return normalized or "/"
 
 
 def _flatten_properties(data: object, prefix: str = "") -> dict[str, str]:
@@ -186,38 +209,80 @@ def _parse_dotted_properties_file(text: str) -> dict[str, str]:
     return result
 
 
-def resolve_spring_property(repo_root: Path, property_key: str) -> str | None:
+def _candidate_spring_roots(repo_root: Path, source_path: str | None) -> list[Path]:
+    if source_path is None:
+        return [repo_root]
+    source_abs = (repo_root / source_path).resolve()
+    roots: list[Path] = []
+    for candidate in [source_abs.parent, *source_abs.parents]:
+        if candidate == repo_root or repo_root in candidate.parents:
+            roots.append(candidate)
+        if candidate == repo_root:
+            break
+    if repo_root not in roots:
+        roots.append(repo_root)
+    return roots
+
+
+def _discover_spring_property_files(
+    repo_root_str: str, source_path: str | None
+) -> tuple[str, ...]:
+    repo_root = Path(repo_root_str)
+    discovered: list[str] = []
+    seen: set[Path] = set()
+
+    for root in _candidate_spring_roots(repo_root, source_path):
+        for config_dir in (root / "src" / "main" / "resources", root):
+            for filename in _SPRING_BASE_FILENAMES:
+                candidate = config_dir / filename
+                if candidate.is_file() and candidate not in seen:
+                    seen.add(candidate)
+                    discovered.append(str(candidate))
+            for pattern in _SPRING_PROFILE_PATTERNS:
+                for candidate in sorted(config_dir.glob(pattern)):
+                    if candidate.is_file() and candidate not in seen:
+                        seen.add(candidate)
+                        discovered.append(str(candidate))
+    return tuple(discovered)
+
+
+@lru_cache(maxsize=512)
+def _load_flat_spring_properties(path_str: str) -> dict[str, str]:
+    path = Path(path_str)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    if path.suffix == ".properties":
+        return _parse_dotted_properties_file(text)
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    return _flatten_properties(data or {})
+
+
+def resolve_spring_property(
+    repo_root: Path, property_key: str, source_path: str | None = None
+) -> str | None:
     """Cherche `property_key` (ex. `app.kafka.topics.orders`, ou
     `prop:default` — syntaxe de valeur par défaut Spring) dans les fichiers
-    de configuration Spring Boot conventionnels du repo (Maven/Gradle
-    standard layout). `None` si introuvable et sans défaut — jamais résolu
-    au hasard (ADR-26/28)."""
+    de configuration Spring Boot conventionnels du repo. La recherche est
+    best-effort mais orientée microservice : on essaie d'abord les configs du
+    module contenant `source_path`, puis celles du repo parent ; les fichiers
+    sont parsés une seule fois par process via cache."""
     key, _, default = property_key.partition(":")
-    for rel_path in _SPRING_PROPERTY_FILES:
-        path = repo_root / rel_path
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
-        if rel_path.endswith(".properties"):
-            flat = _parse_dotted_properties_file(text)
-        else:
-            try:
-                data = yaml.safe_load(text)
-            except yaml.YAMLError:
-                continue
-            flat = _flatten_properties(data or {})
-
+    for path_str in _discover_spring_property_files(str(repo_root), source_path):
+        flat = _load_flat_spring_properties(path_str)
         if key in flat:
             return flat[key]
-
     return default or None
 
 
-def _extract_kafka_topic(snippet: str, repo_root: Path) -> tuple[str, bool]:
+def _extract_kafka_topic(
+    snippet: str, repo_root: Path, source_path: str | None = None
+) -> tuple[str, bool]:
     """Renvoie (topic, dynamique). Un littéral `${propriete.imbriquee}`
     (placeholder Spring, ex. `@KafkaListener(topics = "${app.kafka.topics.
     orders}")`) n'est pas un nom de topic mais une clé de configuration :
@@ -229,7 +294,7 @@ def _extract_kafka_topic(snippet: str, repo_root: Path) -> tuple[str, bool]:
 
     placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
     if placeholder is not None:
-        resolved = resolve_spring_property(repo_root, placeholder.group(1))
+        resolved = resolve_spring_property(repo_root, placeholder.group(1), source_path)
         if resolved is not None:
             return resolved, False
         return literal, True
@@ -283,7 +348,7 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             route, dynamic = _extract_rest_path(snippet)
             topic = f"{http_method} {route}"
         else:
-            topic, dynamic = _extract_kafka_topic(snippet, repo_root)
+            topic, dynamic = _extract_kafka_topic(snippet, repo_root, path)
 
         endpoints.append(
             MessageEndpoint(

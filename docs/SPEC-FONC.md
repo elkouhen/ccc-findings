@@ -47,6 +47,12 @@ Crée `.cccf/config.yml`.
   informatif sur stdout précisant le pack utilisé et comment le changer,
   code de sortie 0. Ordre de priorité : `--rules` explicite > config locale
   détectée > pack par défaut.
+- Ce fallback `p/security-audit` est le comportement **générique** du CLI.
+  Pour le workflow d'audit Java/Spring/Maven porté par le skill
+  `ccc-findings-skill`, l'initialisation recommandée consiste à copier puis
+  déclarer explicitement les packs `.cccf/rules/default/`,
+  `.cccf/rules/liveness/`, `.cccf/rules/rest/` et `.cccf/rules/kafka/`, afin
+  que `cccf index` produise findings **et** inventaire d'endpoints.
 - Si `.cccf/config.yml` existe déjà : erreur explicite, code de sortie 1, le
   fichier existant n'est jamais écrasé.
 
@@ -212,6 +218,12 @@ Filtres optionnels combinables :
 
 Rendu texte, une ligne par endpoint :
 `[<system>/<role>] <topic>[ (dynamique)]  <path>:<start>-<end>`
+
+Pour les endpoints REST, `topic` est toujours canonique côté graphe :
+`METHOD /path`. Les URLs absolues appelantes (`http://service/orders`) sont
+normalisées en route (`/orders`) ; query string et fragment sont ignorés.
+Un appel concaténé à une variable reste `topic_dynamic=True`, mais conserve
+son préfixe de route normalisé.
 
 Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`).
@@ -383,11 +395,9 @@ Comme le pack liveness, vit dans `ccc-findings-skill`
 (`skills/cccf/rules/rest/java.yaml`, ADR-24) — copie de test dans
 `tests/fixtures/rest_repo/`. Contrairement aux packs liveness/`default`, ce
 pack n'est **pas un pack de findings** : `metadata.severity` (`INFO`) n'a
-pas de sens à seuiller, et `cccf` ne l'exécute pas encore automatiquement à
-`cccf init`/`cccf index` — K1/K11 livrent le modèle de données
-(`MessageEndpoint`) et l'extraction (`run_semgrep_endpoints`,
-`parse_semgrep_endpoints` dans `scanner.py`), pas encore le branchement dans
-le pipeline d'indexation ni une commande CLI/MCP (K3, K5/K6, non livrés).
+pas de sens à seuiller. En revanche, il est désormais exécuté pendant
+`cccf index` dès qu'il figure dans `rules:` (workflow d'audit microservices du
+skill), et alimente `cccf endpoints` / `cccf graph`.
 
 | Règle | Langage | Rôle | Détecte |
 |---|---|---|---|
@@ -400,7 +410,9 @@ que lit `parse_semgrep_endpoints` (voir `docs/SPEC-TECH.md#4bis-extraction-
 dendpoints-rest--kafka-run_semgrep_endpoints-backlog-10-k11k2`). Le chemin
 est extrait du texte du site (regex sur le snippet, pas de métavariable
 Semgrep — ADR-26) : un chemin non littéral, ou concaténé à une variable,
-est marqué `topic_dynamic=True` plutôt que résolu au hasard.
+est marqué `topic_dynamic=True` plutôt que résolu au hasard. Une URL absolue
+appelante est normalisée en route canonique (`GET http://svc/orders` →
+`GET /orders`) pour rester comparable aux routes exposées.
 `@RequestMapping` avec méthode explicite autre que GET reste à couvrir.
 Périmètre : Java uniquement — la stack cible de l'analyse est Java +
 Spring + Maven (voir K8/K11 dans `archive/BACKLOG-10.md`).
@@ -409,8 +421,9 @@ Spring + Maven (voir K8/K11 dans `archive/BACKLOG-10.md`).
 
 Comme le pack REST, vit dans `ccc-findings-skill`
 (`skills/cccf/rules/kafka/java.yaml`, ADR-24) — copie de test dans
-`tests/fixtures/kafka_repo/`. Pas un pack de findings, pas exécuté
-automatiquement (mêmes raisons que K11).
+`tests/fixtures/kafka_repo/`. Pas un pack de findings, mais exécuté pendant
+`cccf index` dès qu'il figure dans `rules:` (workflow d'audit microservices du
+skill).
 
 | Règle | Rôle | Détecte |
 |---|---|---|

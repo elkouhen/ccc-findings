@@ -24,6 +24,10 @@ def _chunked(items: list[str], size: int = _SQLITE_BIND_LIMIT) -> Iterator[list[
         yield items[i : i + size]
 
 
+def _glob_to_sqlite(pattern: str) -> str:
+    return pattern
+
+
 @dataclass(frozen=True)
 class CodeChunk:
     id: str
@@ -178,10 +182,9 @@ class Store:
     def remove_files(self, paths: list[str]) -> None:
         if not paths:
             return
-        placeholders = ",".join("?" for _ in paths)
-        self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", paths)
+        self._delete_rows_for_paths("files", paths)
         removed_ids = self._finding_ids_for_paths(paths)
-        self.conn.execute(f"DELETE FROM findings WHERE path IN ({placeholders})", paths)
+        self._delete_rows_for_paths("findings", paths)
         self._delete_embeddings(removed_ids)
         self.replace_code_chunks_for_files(paths, [])
         self.replace_endpoints_for_files(paths, [])
@@ -189,19 +192,15 @@ class Store:
     # -- findings --
 
     def _finding_ids_for_paths(self, paths: list[str]) -> list[str]:
-        placeholders = ",".join("?" for _ in paths)
-        cur = self.conn.execute(
-            f"SELECT id FROM findings WHERE path IN ({placeholders})", paths
-        )
-        return [row["id"] for row in cur.fetchall()]
+        return self._ids_for_paths("findings", "id", paths)
+
+    def count_findings_for_paths(self, paths: list[str]) -> int:
+        return self._count_rows_for_paths("findings", paths)
 
     def replace_findings_for_files(self, paths: list[str], findings: list[Finding]) -> None:
         if paths:
             removed_ids = self._finding_ids_for_paths(paths)
-            placeholders = ",".join("?" for _ in paths)
-            self.conn.execute(
-                f"DELETE FROM findings WHERE path IN ({placeholders})", paths
-            )
+            self._delete_rows_for_paths("findings", paths)
             self._delete_embeddings(removed_ids)
         for finding in findings:
             self.conn.execute(
@@ -240,21 +239,14 @@ class Store:
     # -- indexed code chunks (experimental CocoIndex-style target state) --
 
     def _code_chunk_ids_for_paths(self, paths: list[str]) -> list[str]:
-        placeholders = ",".join("?" for _ in paths)
-        cur = self.conn.execute(
-            f"SELECT id FROM code_chunks WHERE path IN ({placeholders})", paths
-        )
-        return [row["id"] for row in cur.fetchall()]
+        return self._ids_for_paths("code_chunks", "id", paths)
 
     def replace_code_chunks_for_files(
         self, paths: list[str], chunks: list[CodeChunk]
     ) -> None:
         if paths:
             removed_ids = self._code_chunk_ids_for_paths(paths)
-            placeholders = ",".join("?" for _ in paths)
-            self.conn.execute(
-                f"DELETE FROM code_chunks WHERE path IN ({placeholders})", paths
-            )
+            self._delete_rows_for_paths("code_chunks", paths)
             self._delete_code_chunk_embeddings(removed_ids)
         for chunk in chunks:
             self.conn.execute(
@@ -291,37 +283,44 @@ class Store:
         rule_id: str | None = None,
         path_glob: str | None = None,
     ) -> list[Finding]:
-        cur = self.conn.execute("SELECT * FROM findings")
-        results = []
-        for row in cur.fetchall():
-            if severity_at_least and SEVERITY_ORDER.index(
-                row["severity"]
-            ) < SEVERITY_ORDER.index(severity_at_least):
-                continue
-            if rule_id and row["rule_id"] != rule_id:
-                continue
-            if path_glob and not fnmatch.fnmatch(row["path"], path_glob):
-                continue
-            results.append(_row_to_finding(row))
-        return results
+        query = "SELECT * FROM findings"
+        clauses: list[str] = []
+        params: list[str] = []
+        if severity_at_least:
+            min_index = SEVERITY_ORDER.index(severity_at_least)
+            severities = SEVERITY_ORDER[min_index:]
+            placeholders = ",".join("?" for _ in severities)
+            clauses.append(f"severity IN ({placeholders})")
+            params.extend(severities)
+        if rule_id:
+            clauses.append("rule_id = ?")
+            params.append(rule_id)
+        if path_glob:
+            clauses.append("path GLOB ?")
+            params.append(_glob_to_sqlite(path_glob))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY path, start_line, end_line, id"
+        cur = self.conn.execute(query, params)
+        return [_row_to_finding(row) for row in cur.fetchall()]
+
+    def all_findings_for_paths(self, paths: list[str]) -> list[Finding]:
+        rows = self._rows_for_paths("findings", paths)
+        return [_row_to_finding(row) for row in rows]
 
     # -- endpoints (message_endpoints, BACKLOG-10 K1) --
 
     def _endpoint_ids_for_paths(self, paths: list[str]) -> list[str]:
-        placeholders = ",".join("?" for _ in paths)
-        cur = self.conn.execute(
-            f"SELECT id FROM endpoints WHERE path IN ({placeholders})", paths
-        )
-        return [row["id"] for row in cur.fetchall()]
+        return self._ids_for_paths("endpoints", "id", paths)
+
+    def count_endpoints_for_paths(self, paths: list[str]) -> int:
+        return self._count_rows_for_paths("endpoints", paths)
 
     def replace_endpoints_for_files(
         self, paths: list[str], endpoints: list[MessageEndpoint]
     ) -> None:
         if paths:
-            placeholders = ",".join("?" for _ in paths)
-            self.conn.execute(
-                f"DELETE FROM endpoints WHERE path IN ({placeholders})", paths
-            )
+            self._delete_rows_for_paths("endpoints", paths)
         for endpoint in endpoints:
             self.conn.execute(
                 """
@@ -363,19 +362,26 @@ class Store:
         topic: str | None = None,
         path_glob: str | None = None,
     ) -> list[MessageEndpoint]:
-        cur = self.conn.execute("SELECT * FROM endpoints")
-        results = []
-        for row in cur.fetchall():
-            if system and row["system"] != system:
-                continue
-            if role and row["role"] != role:
-                continue
-            if topic and row["topic"] != topic:
-                continue
-            if path_glob and not fnmatch.fnmatch(row["path"], path_glob):
-                continue
-            results.append(_row_to_endpoint(row))
-        return results
+        query = "SELECT * FROM endpoints"
+        clauses: list[str] = []
+        params: list[str] = []
+        if system:
+            clauses.append("system = ?")
+            params.append(system)
+        if role:
+            clauses.append("role = ?")
+            params.append(role)
+        if topic:
+            clauses.append("topic = ?")
+            params.append(topic)
+        if path_glob:
+            clauses.append("path GLOB ?")
+            params.append(_glob_to_sqlite(path_glob))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY path, start_line, end_line, id"
+        cur = self.conn.execute(query, params)
+        return [_row_to_endpoint(row) for row in cur.fetchall()]
 
     # -- embeddings --
     #
@@ -530,6 +536,46 @@ class Store:
             f"SELECT {dim} AS d, COUNT(*) AS c FROM findings GROUP BY {dim}"
         )
         return {row["d"]: row["c"] for row in cur.fetchall()}
+
+    def _ids_for_paths(self, table: str, column: str, paths: list[str]) -> list[str]:
+        rows = self._rows_for_paths(table, paths, columns=column)
+        return [row[column] for row in rows]
+
+    def _rows_for_paths(
+        self, table: str, paths: list[str], columns: str = "*"
+    ) -> list[sqlite3.Row]:
+        if not paths:
+            return []
+        rows: list[sqlite3.Row] = []
+        unique_paths = list(dict.fromkeys(paths))
+        for chunk in _chunked(unique_paths):
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                f"SELECT {columns} FROM {table} WHERE path IN ({placeholders}) "
+                "ORDER BY path, start_line, end_line, id",
+                chunk,
+            )
+            rows.extend(cur.fetchall())
+        return rows
+
+    def _count_rows_for_paths(self, table: str, paths: list[str]) -> int:
+        if not paths:
+            return 0
+        total = 0
+        for chunk in _chunked(list(dict.fromkeys(paths))):
+            placeholders = ",".join("?" for _ in chunk)
+            row = self.conn.execute(
+                f"SELECT COUNT(*) AS c FROM {table} WHERE path IN ({placeholders})", chunk
+            ).fetchone()
+            total += int(row["c"])
+        return total
+
+    def _delete_rows_for_paths(self, table: str, paths: list[str]) -> None:
+        if not paths:
+            return
+        for chunk in _chunked(list(dict.fromkeys(paths))):
+            placeholders = ",".join("?" for _ in chunk)
+            self.conn.execute(f"DELETE FROM {table} WHERE path IN ({placeholders})", chunk)
 
 
 def _row_to_finding(row: sqlite3.Row) -> Finding:

@@ -316,3 +316,23 @@ def test_remove_files_purges_endpoints(tmp_path: Path) -> None:
 
     with Store(tmp_path) as store:
         assert store.all_endpoints() == []
+
+
+def test_remove_files_batches_large_path_lists_over_sqlite_bind_limit(tmp_path: Path) -> None:
+    paths = [f"app/file_{i}.py" for i in range(1005)]
+    findings = [make_finding(path=path, suffix=f"-{i}") for i, path in enumerate(paths)]
+    endpoints = [
+        make_endpoint(path=path, start_line=i + 1, end_line=i + 1, topic=f"orders.{i}")
+        for i, path in enumerate(paths)
+    ]
+
+    with Store(tmp_path) as store:
+        store.replace_findings_for_files(paths, findings)
+        store.replace_endpoints_for_files(paths, endpoints)
+        for i, path in enumerate(paths):
+            store.set_file_hash(path, f"sha-{i}")
+        store.remove_files(paths)
+
+    with Store(tmp_path) as store:
+        assert store.all_findings() == []
+        assert store.all_endpoints() == []

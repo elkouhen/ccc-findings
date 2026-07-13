@@ -34,7 +34,11 @@ class IndexReport:
 
 
 def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _matches_any(rel_path: str, patterns: list[str]) -> bool:
@@ -178,16 +182,16 @@ def index_repo(
         changed = sorted(added | modified)
     unchanged = current_paths - set(changed)
 
-    findings_removed = sum(len(store.all_findings(path_glob=p)) for p in deleted)
-    endpoints_removed = sum(len(store.all_endpoints(path_glob=p)) for p in deleted)
+    findings_removed = store.count_findings_for_paths(deleted)
+    endpoints_removed = store.count_endpoints_for_paths(deleted)
     store.remove_files(deleted)  # purge aussi les endpoints (K1)
 
     findings_added = 0
     endpoints_added = 0
     findings: list[Finding] = []
     if changed:
-        findings_removed += sum(len(store.all_findings(path_glob=p)) for p in changed)
-        endpoints_removed += sum(len(store.all_endpoints(path_glob=p)) for p in changed)
+        findings_removed += store.count_findings_for_paths(changed)
+        endpoints_removed += store.count_endpoints_for_paths(changed)
 
         # Un seul scan Semgrep pour findings (K8/`default`) et règles
         # d'inventaire d'endpoints (K2/K11) mélangées dans config.rules ;

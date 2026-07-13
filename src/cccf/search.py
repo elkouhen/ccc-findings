@@ -8,6 +8,9 @@ from cccf.embedder import EmbeddingError
 from cccf.models import Finding
 from cccf.store import Store
 
+_KNN_OVERFETCH_FACTOR = 3
+_KNN_MIN_FETCH = 20
+
 
 class EmbedderLike(Protocol):
     def embed_query(self, text: str) -> np.ndarray: ...
@@ -63,15 +66,26 @@ def search_findings(
         return []
 
     by_id = {finding.id: finding for finding in candidates}
+    requested = offset + limit
+    needed = min(requested, len(by_id))
+    fetch_k = min(total_vectors, max(requested * _KNN_OVERFETCH_FACTOR, _KNN_MIN_FETCH))
+
     hits: list[SearchHit] = []
-    for finding_id, score in store.knn_search(query_vec, top_k=total_vectors):
-        finding = by_id.get(finding_id)
-        if finding is None:
-            continue
-        hits.append(SearchHit(finding=finding, score=score))
-        if len(hits) >= offset + limit:
-            break
-    return hits[offset : offset + limit]
+    while True:
+        hits = []
+        for finding_id, score in store.knn_search(query_vec, top_k=fetch_k):
+            finding = by_id.get(finding_id)
+            if finding is None:
+                continue
+            hits.append(SearchHit(finding=finding, score=score))
+            if len(hits) >= needed:
+                return hits[offset : offset + limit]
+        if fetch_k >= total_vectors:
+            return hits[offset : offset + limit]
+        next_fetch_k = min(total_vectors, max(fetch_k * 2, requested))
+        if next_fetch_k == fetch_k:
+            return hits[offset : offset + limit]
+        fetch_k = next_fetch_k
 
 
 def summary(store: Store) -> Summary:

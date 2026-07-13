@@ -105,6 +105,7 @@ comportement fonctionnel reste documenté dans
 
 ```bash
 uv tool install ccc-findings
+uv tool install cocoindex-code
 pipx install semgrep
 ```
 
@@ -114,10 +115,18 @@ pipx install semgrep
 cccf init                       # détecte une config Semgrep, sinon utilise p/security-audit
 cccf index                      # scan Semgrep incrémental + embeddings
 cccf index --engine cocoindex   # expérimental : ajoute un index local de chunks code
+cccf endpoints                  # inventaire REST/Kafka indexé
+cccf graph                      # appels REST sortants dans handlers Kafka
 cccf search "user auth flow"    # recherche de code (via ccc) + findings qui la recouvrent
 cccf findings "injection sql"   # recherche en langage naturel dans les findings seuls
 cccf summary                    # vue agrégée (sévérités, top règles, top répertoires)
 ```
+
+Pour un **audit Java microservices** piloté par le skill `ccc-findings-skill`,
+le workflow recommandé n'est pas le fallback générique `p/security-audit` :
+le skill copie et active par défaut les packs `default`, `liveness`, `rest`
+et `kafka`, puis enchaîne `cccf summary` → `cccf endpoints` → `cccf graph` →
+`cccf findings` / `cccf search`.
 
 `cccf search` est un **sur-ensemble de `ccc search`** : mêmes options
 (`--limit`, `--offset`, `--lang`, `--path`, `--refresh`), mêmes résultats,

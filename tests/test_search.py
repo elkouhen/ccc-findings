@@ -173,6 +173,39 @@ def test_search_findings_rejects_incompatible_embedding_dimensions(tmp_path: Pat
             search_findings(store, query_embedder, "injection sql")
 
 
+def test_search_findings_does_not_fetch_all_vectors_upfront_when_unnecessary() -> None:
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.top_ks: list[int] = []
+
+        def all_findings(
+            self,
+            severity_at_least: str | None = None,
+            rule_id: str | None = None,
+            path_glob: str | None = None,
+        ) -> list[Finding]:
+            return [SQL_FINDING]
+
+        def get_meta(self, key: str) -> str | None:
+            return None
+
+        def get_embedding_dim(self) -> int:
+            return 256
+
+        def embedding_count(self) -> int:
+            return 1000
+
+        def knn_search(self, query_vec: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+            self.top_ks.append(top_k)
+            return [(SQL_FINDING.id, 0.99)]
+
+    store = RecordingStore()
+    hits = search_findings(store, BagOfWordsFakeEmbedder(), "injection sql")
+
+    assert [hit.finding.id for hit in hits] == [SQL_FINDING.id]
+    assert store.top_ks == [20]
+
+
 def test_render_search_json_degrades_when_context_file_is_missing(tmp_path: Path) -> None:
     hit = SearchHit(finding=SQL_FINDING, score=0.9)
 

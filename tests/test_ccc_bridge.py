@@ -71,6 +71,38 @@ def test_annotate_with_findings_inclusive_overlap(tmp_path: Path) -> None:
     assert annotated[1]["max_severity"] is None
 
 
+def test_annotate_with_findings_only_loads_findings_for_hit_paths() -> None:
+    overlapping_finding = make_finding("app/db.py", 20, 22, suffix="-overlap")
+
+    class PathScopedStore:
+        def __init__(self) -> None:
+            self.requested_paths: list[str] | None = None
+
+        def all_findings_for_paths(self, paths: list[str]) -> list[Finding]:
+            self.requested_paths = paths
+            return [overlapping_finding]
+
+        def all_findings(self) -> list[Finding]:
+            raise AssertionError("annotate_with_findings should not load the whole store")
+
+    store = PathScopedStore()
+    hits = [
+        CodeHit(
+            path="app/db.py",
+            start_line=10,
+            end_line=20,
+            language="python",
+            score=0.9,
+            content="c1",
+        )
+    ]
+
+    annotated = annotate_with_findings(hits, store)
+
+    assert store.requested_paths == ["app/db.py"]
+    assert [f["id"] for f in annotated[0]["findings"]] == [overlapping_finding.id]
+
+
 def make_hit(
     path: str, score: float, max_severity: str | None = None
 ) -> CodeHitWithFindings:

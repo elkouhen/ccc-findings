@@ -453,7 +453,7 @@ def test_graph_and_endpoints_reflect_a_real_cccf_index_run(
     assert len(data["outbound_calls_in_consumers"]) == 1
     hit = data["outbound_calls_in_consumers"][0]
     assert hit["consumer"]["topic"] == "orders.created"
-    assert hit["call"]["topic"] == "POST http://payment-service/charge"
+    assert hit["call"]["topic"] == "POST /charge"
 
     # le finding "ordinaire" (System.out.println) est bien resté un finding,
     # pas un endpoint fuité dans la table findings (ni l'inverse) : 1 seul

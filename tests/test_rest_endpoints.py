@@ -56,10 +56,10 @@ def test_java_client_calls_flag_concatenated_url_as_dynamic() -> None:
     assert concatenated.role == "call"
     assert concatenated.framework == "resttemplate"
     assert concatenated.topic_dynamic is True
-    assert concatenated.topic == "GET http://order-service/orders/"
+    assert concatenated.topic == "GET /orders/"
 
     literal = by_line[18]  # postForObject("http://.../orders", order, ...)
-    assert literal.topic == "POST http://order-service/orders"
+    assert literal.topic == "POST /orders"
     assert literal.topic_dynamic is False
 
     # put/delete concatènent aussi l'id : dynamiques, comme getForObject

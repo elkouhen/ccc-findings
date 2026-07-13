@@ -161,3 +161,46 @@ def test_resolve_spring_property_prefers_yml_over_properties_when_both_exist(
     (resources / "application.properties").write_text("app.name=from-properties\n")
 
     assert resolve_spring_property(tmp_path, "app.name") == "from-yaml"
+
+
+def test_resolve_spring_property_reads_profile_specific_config_when_base_is_absent(
+    tmp_path: Path,
+) -> None:
+    resources = tmp_path / "src" / "main" / "resources"
+    resources.mkdir(parents=True)
+    (resources / "application-prod.yml").write_text("app:\n  name: from-profile\n")
+
+    assert resolve_spring_property(tmp_path, "app.name") == "from-profile"
+
+
+def test_resolve_spring_property_prefers_the_service_module_of_the_source_file(
+    tmp_path: Path,
+) -> None:
+    root_resources = tmp_path / "src" / "main" / "resources"
+    module_resources = tmp_path / "services" / "orders" / "src" / "main" / "resources"
+    java_file = (
+        tmp_path
+        / "services"
+        / "orders"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "OrderConsumer.java"
+    )
+    root_resources.mkdir(parents=True)
+    module_resources.mkdir(parents=True)
+    java_file.parent.mkdir(parents=True)
+    java_file.write_text("class OrderConsumer {}\n")
+    (root_resources / "application.yml").write_text("app:\n  name: root-app\n")
+    (module_resources / "application.yml").write_text("app:\n  name: orders-service\n")
+
+    assert (
+        resolve_spring_property(
+            tmp_path,
+            "app.name",
+            source_path="services/orders/src/main/java/com/example/OrderConsumer.java",
+        )
+        == "orders-service"
+    )
