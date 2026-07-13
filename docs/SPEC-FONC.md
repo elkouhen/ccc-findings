@@ -313,47 +313,44 @@ existants plutôt que bloquer inutilement.
 
 Le pack de règles vit dans le repo skill, pas dans ce repo : voir
 [`ccc-findings-skill`](https://github.com/elkouhen/ccc-findings-skill)
-`skills/cccf/rules/liveness/{python,java}.yaml`, aux côtés du pack
-`plateforme-agree` déjà distribué par le skill (ADR-24). `cccf` lui-même
-ne livre plus aucun fichier de règles (`src/cccf/rules/` n'existe pas) —
-il ne fait qu'exécuter Semgrep avec les chemins déclarés dans `rules:`.
-Ce repo garde une copie de test dans
-`tests/fixtures/liveness_repo/rules/` (`tests/test_liveness_rules.py`),
-tenue à jour manuellement avec la copie du skill.
+`skills/cccf/rules/liveness/java.yaml`, aux côtés du pack `default` déjà
+distribué par le skill (ADR-24). `cccf` lui-même ne livre plus aucun
+fichier de règles (`src/cccf/rules/` n'existe pas) — il ne fait qu'exécuter
+Semgrep avec les chemins déclarés dans `rules:`. Ce repo garde une copie de
+test dans `tests/fixtures/liveness_repo/rules/`
+(`tests/test_liveness_rules.py`), tenue à jour manuellement avec la copie
+du skill.
+
+Cible d'analyse : **Java + Spring + Maven uniquement** — décision de
+périmètre, pas un manque temporaire (voir « Périmètre » ci-dessous).
 
 | Règle | Langage | Sévérité | Détecte |
 |---|---|---|---|
-| `cccf.liveness.requests-no-timeout` | Python | WARNING | Appel `requests.get/post/put/delete/patch/request` sans `timeout=` |
-| `cccf.liveness.thread-join-no-timeout` | Python | WARNING | `Thread.join()` sans argument |
-| `cccf.liveness.future-result-no-timeout` | Python | WARNING | `Future.result()` sans argument |
-| `cccf.liveness.http-call-in-kafka-python-consumer-loop` | Python | ERROR | Appel `requests`/`httpx` dans une boucle `for message in consumer:` sur un `KafkaConsumer` (kafka-python) |
-| `cccf.liveness.network-call-inside-lock` | Python | ERROR | Appel `requests`/`httpx` à l'intérieur d'un bloc `with lock:` |
 | `cccf.liveness.java.new-resttemplate-no-timeout` | Java | WARNING | `new RestTemplate()` sans configuration de timeout (vs `RestTemplateBuilder`) |
 | `cccf.liveness.java.blocking-join-no-timeout` | Java | WARNING | `.join()` sans argument (`Thread` ou `CompletableFuture`) |
 | `cccf.liveness.java.blocking-future-get-no-timeout` | Java | WARNING | `.get()` sans argument sur une variable déclarée `Future<T>`/`CompletableFuture<T>` |
 | `cccf.liveness.java.rest-call-in-kafka-listener` | Java | ERROR | Appel `RestTemplate` dans une méthode `@KafkaListener` |
 | `cccf.liveness.java.network-call-inside-synchronized` | Java | ERROR | Appel `RestTemplate` à l'intérieur d'un bloc `synchronized` |
 
-**Usage** : comme le pack `plateforme-agree`, le copier dans le repo cible
+**Usage** : comme le pack `default`, le copier dans le repo cible
 (ex. `.cccf/rules/liveness/`) et le déclarer dans `rules:` — jamais de
 chemin absolu vers le repo skill (ADR-24) :
 
 ```yaml
 rules:
-  - .cccf/rules/liveness/python.yaml
   - .cccf/rules/liveness/java.yaml
 ```
 
-Périmètre actuel : Python (`requests`/`httpx`, `kafka-python`,
-`threading`/`concurrent.futures`) et Java (`RestTemplate`, Spring Kafka
-`@KafkaListener`, `synchronized`, `Future`/`CompletableFuture`). JS/TS reste
-à couvrir (voir K8 dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en
-clair, `PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.
+Périmètre : Java (`RestTemplate`, Spring Kafka `@KafkaListener`,
+`synchronized`, `Future`/`CompletableFuture`) — la stack cible de l'analyse
+est Java + Spring + Maven ; Python/JS/TS ne sont pas des cibles (voir K8
+dans `archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair,
+`PLAINTEXT`, désérialisation non sûre) n'est pas encore livré.
 
 ## 7. Pack de règles d'inventaire REST (BACKLOG-10 K11)
 
 Comme le pack liveness, vit dans `ccc-findings-skill`
-(`skills/cccf/rules/rest/{java,python}.yaml`, ADR-24) — copie de test dans
+(`skills/cccf/rules/rest/java.yaml`, ADR-24) — copie de test dans
 `tests/fixtures/rest_repo/`. Contrairement aux packs liveness/`default`, ce
 pack n'est **pas un pack de findings** : `metadata.severity` (`INFO`) n'a
 pas de sens à seuiller, et `cccf` ne l'exécute pas encore automatiquement à
@@ -366,8 +363,6 @@ le pipeline d'indexation ni une commande CLI/MCP (K3, K5/K6, non livrés).
 |---|---|---|---|
 | `cccf.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Route Spring exposée (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, ou `@RequestMapping(method=...)` pour GET) |
 | `cccf.rest.java.call-{get,post,put,delete}` | Java | `call` | Appel `RestTemplate` (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
-| `cccf.rest.python.serve-{get,post,put,delete,patch}` | Python | `serve` | Route FastAPI (`@app.get`/etc.) ou Flask (`@app.route`, GET implicite) |
-| `cccf.rest.python.call-{get,post,put,delete,patch}` | Python | `call` | Appel `requests.{get,post,put,delete,patch}` |
 
 Chaque résultat porte `metadata.category: endpoint-inventory`,
 `metadata.role`, `metadata.http_method`, `metadata.framework` — le contrat
@@ -376,6 +371,6 @@ dendpoints-rest-run_semgrep_endpoints-backlog-10-k11`). Le chemin est
 extrait du texte du site (regex sur le snippet, pas de métavariable Semgrep
 — ADR-26) : un chemin non littéral, ou concaténé à une variable, est marqué
 `topic_dynamic=True` plutôt que résolu au hasard. `@RequestMapping` avec
-méthode explicite autre que GET, et Flask `methods=[...]` explicite, restent
-à couvrir. Périmètre actuel : Java et Python ; JS/TS (`fetch`/`axios`,
-Express) reste à couvrir, comme pour le pack liveness.
+méthode explicite autre que GET reste à couvrir. Périmètre : Java
+uniquement — la stack cible de l'analyse est Java + Spring + Maven (voir
+K8/K11 dans `archive/BACKLOG-10.md`).

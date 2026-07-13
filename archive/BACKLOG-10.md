@@ -11,6 +11,12 @@
 >
 > Convention : une tâche = un commit (`K<n>: <titre>`), DoD globale inchangée
 > (voir `AGENT.md`).
+>
+> **Cible d'analyse : Java + Spring + Maven uniquement.** Décision de
+> périmètre (2026-07-13), pas un manque temporaire : un volet Python avait
+> été livré pour K8 (liveness) et K11 (REST) puis retiré. Les tâches encore
+> ouvertes (K2, K9, etc.) ne couvrent que Java/Spring sauf mention contraire
+> explicite.
 
 ## Principe directeur
 
@@ -66,7 +72,7 @@ l'ordre :
 
 ## Tâches
 
-### [ ] K1 — Modèle de données `message_endpoints`
+### [x] K1 — Modèle de données `message_endpoints`
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/models.py`, `src/cccf/store.py`,
   `tests/test_store.py`, `docs/SPEC-TECH.md`, `docs/ADR.md`
@@ -90,6 +96,9 @@ l'ordre :
   4. `source` distingue un endpoint extrait de code (K2) d'un endpoint
      déclaré en manifeste (K10) ; les deux peuvent coexister pour le même
      topic sans collision d'identité (chemins différents).
+- **Statut** : livré. `MessageEndpoint`, `compute_endpoint_id`, table SQLite
+  `endpoints`, filtres `Store.all_endpoints`, remplacement par fichier et
+  migration additive en schéma v4 sont présents et testés.
 
 ### [ ] K2 — Règles Semgrep d'extraction des endpoints Kafka
 - **Priorité** : HAUTE
@@ -97,20 +106,28 @@ l'ordre :
   (nouveau — ADR-24, jamais dans `ccc-findings`) ; ce repo :
   `tests/fixtures/kafka/*`, `tests/test_scanner.py`, `docs/SPEC-TECH.md`
 - **Description** : pack local de règles d'*inventaire* (pas des findings de
-  sécurité) avec metavariables capturant le topic, couvrant les frameworks
-  principaux : Python (`kafka-python`, `confluent-kafka` —
-  `producer.send/produce`, `consumer.subscribe`), Java/Spring
-  (`@KafkaListener`, `KafkaTemplate.send`), JS (`kafkajs`). Un topic non
-  littéral (variable, config) est capturé comme expression et marqué
-  `topic_dynamic: true` — jamais résolu silencieusement. Conforme ADR-4 :
-  règles embarquées et testées sur fixtures locales, pas de pack registry
-  dans les tests.
+  sécurité), Java/Spring uniquement (cible Java + Spring + Maven — voir note
+  en tête de fichier) : consommation (`@KafkaListener`), production
+  (`KafkaTemplate.send`, `new ProducerRecord(...)`). Le topic est extrait du
+  snippet par regex, pas par métavariable Semgrep (indisponible sans session
+  `semgrep login`, ADR-26) — un topic non littéral (variable, config) ou non
+  résolu est marqué `topic_dynamic: true`, jamais résolu au hasard. Cas
+  particulier à traiter : un topic donné comme propriété Spring
+  (`@KafkaListener(topics = "${app.kafka.topics.orders}")`) n'est **pas**
+  un nom de topic mais une clé de configuration — tenter une résolution
+  contre `application.yml`/`.properties` du repo (support du défaut
+  `${prop:default}`) avant de retomber sur dynamique si la clé est
+  introuvable. Conforme ADR-4 : règles embarquées et testées sur fixtures
+  locales, pas de pack registry dans les tests.
 - **CA** :
-  1. Une fixture par framework ; chaque fixture produit les endpoints
+  1. Fixtures produce/consume ; chaque fixture produit les endpoints
      attendus (rôle, topic, lignes).
-  2. Topic dynamique → endpoint présent, marqué dynamique, expression
-     conservée en clair.
-  3. Le parsing de la sortie Semgrep de ces règles est testé sur fixtures
+  2. Topic dynamique (variable, sans littéral) → endpoint présent, marqué
+     dynamique, expression conservée en clair.
+  3. Topic en propriété Spring résolue via `application.yml`/`.properties`
+     → topic littéral résolu, `topic_dynamic=False` ; non résolue → clé
+     conservée telle quelle, `topic_dynamic=True`.
+  4. Le parsing de la sortie Semgrep de ces règles est testé sur fixtures
      JSON (esprit ADR-8).
 
 ### [ ] K3 — Pipeline d'indexation des endpoints + embeddings
@@ -224,16 +241,18 @@ l'ordre :
      quel finding (`cccf findings "appel bloquant dans un consumer"`).
   3. Le pack liveness s'exécute sur un projet où aucune autre tâche K n'est
      livrée (indépendance vérifiée).
-- **Statut** : volets liveness Python (5 règles) et Java/Spring (5 règles :
-  `new RestTemplate()` sans timeout, `.join()`/`Future.get()` sans timeout,
-  appel REST dans un `@KafkaListener`, appel réseau sous `synchronized`)
-  livrés. Le pack ne vit plus dans `ccc-findings` — il est distribué par
-  `ccc-findings-skill` (`skills/cccf/rules/liveness/{python,java}.yaml`,
-  ADR-24), aux côtés du pack `plateforme-agree` déjà présent côté skill.
+- **Statut** : volet Java/Spring livré (5 règles : `new RestTemplate()` sans
+  timeout, `.join()`/`Future.get()` sans timeout, appel REST dans un
+  `@KafkaListener`, appel réseau sous `synchronized`). Un volet Python a été
+  livré puis retiré : la cible d'analyse est Java + Spring + Maven
+  uniquement (décision de périmètre, pas un manque temporaire — voir la
+  note en tête de ce fichier). Le pack ne vit plus dans `ccc-findings` — il
+  est distribué par `ccc-findings-skill` (`skills/cccf/rules/liveness/
+  java.yaml`, ADR-24), aux côtés du pack `default` déjà présent côté skill.
   `ccc-findings` garde une copie de test (`tests/fixtures/liveness_repo/`,
   `tests/test_liveness_rules.py`, `docs/SPEC-FONC.md#6-pack-de-règles-
   liveness-backlog-10-k8`). Restent à faire : volet sécurité (SASL,
-  PLAINTEXT, désérialisation), JS/TS, configs consumer risquées
+  PLAINTEXT, désérialisation), configs consumer risquées
   (`max.poll.interval.ms`), handler sans DLQ, retry sans backoff.
 
 ### [ ] K9 — Éval : requêtes NL sur les flux de messages
@@ -334,18 +353,19 @@ l'ordre :
   2. URL dynamique → endpoint présent, marqué dynamique, expression conservée.
   3. Parsing testé sur fixtures JSON (esprit ADR-8).
 - **Statut** : Java (Spring `@*Mapping`/`@RequestMapping` GET, `RestTemplate`)
-  et Python (FastAPI/Flask, `requests`) livrés — 9 règles Java, 10 règles
-  Python, `skills/cccf/rules/rest/{java,python}.yaml` côté skill. Extraction
-  par regex sur le snippet plutôt que par métavariable Semgrep : les
-  métavariables se sont révélées indisponibles sans session `semgrep login`
-  (ADR-26) — la méthode HTTP vient donc de `metadata.http_method` (une règle
-  = une méthode), seul le chemin est extrait du texte, avec le même principe
-  `topic_dynamic` que K2 pour ce qui n'est pas un littéral. `parse_semgrep_
-  endpoints`/`run_semgrep_endpoints` dans `scanner.py`, testés dans
+  livré — 9 règles, `skills/cccf/rules/rest/java.yaml` côté skill (le volet
+  Python livré puis retiré, cible Java + Spring + Maven uniquement — voir
+  note en tête de fichier). Extraction par regex sur le snippet plutôt que
+  par métavariable Semgrep : les métavariables se sont révélées
+  indisponibles sans session `semgrep login` (ADR-26) — la méthode HTTP
+  vient donc de `metadata.http_method` (une règle = une méthode), seul le
+  chemin est extrait du texte, avec le même principe `topic_dynamic` que K2
+  pour ce qui n'est pas un littéral. `parse_semgrep_endpoints`/
+  `run_semgrep_endpoints` dans `scanner.py`, testés dans
   `tests/test_rest_endpoints.py` (fixtures réelles + fixtures JSON pour les
   cas d'erreur). Pas encore branché dans `cccf index` ni dans une commande
-  CLI/MCP (K3, K5/K6). Restent à couvrir : `@RequestMapping` méthodes non-GET,
-  `WebClient`/Feign, Flask `methods=[...]` explicite, Express/JS.
+  CLI/MCP (K3, K5/K6 — voir A1 dans `archive/BACKLOG-11.md`). Reste à
+  couvrir : `@RequestMapping` méthodes non-GET, `WebClient`/Feign.
 
 ### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
 - **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les

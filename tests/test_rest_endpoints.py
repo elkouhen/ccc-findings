@@ -8,12 +8,14 @@ from cccf.scanner import SemgrepError, parse_semgrep_endpoints, run_semgrep_endp
 # Le pack de règles vit dans le repo skill (ccc-findings-skill/skills/cccf/
 # rules/rest/), pas dans ce repo (ADR-24). Les fixtures ci-dessous sont une
 # copie de test tenue à jour manuellement avec cette source.
+#
+# Cible d'analyse : Java + Spring + Maven uniquement (pas de pack Python).
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REST_REPO = FIXTURES_DIR / "rest_repo"
 
 
 def make_config(**overrides: object) -> Config:
-    defaults: dict = {"rules": ["rules/java.yaml", "rules/python.yaml"]}
+    defaults: dict = {"rules": ["rules/java.yaml"]}
     defaults.update(overrides)
     return Config(**defaults)
 
@@ -85,53 +87,11 @@ def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic(
 
 
 @pytest.mark.integration
-def test_python_fastapi_routes_extract_role_method_and_fstring_placeholder() -> None:
-    endpoints = run_semgrep_endpoints(
-        REST_REPO, make_config(), files=["app/python/routes.py"]
-    )
-
-    by_line = {e.start_line: e for e in endpoints}
-    assert by_line[6].topic == "GET /orders/{order_id}"
-    assert by_line[6].topic_dynamic is False
-    assert by_line[6].framework == "fastapi"
-    assert by_line[11].topic == "POST /orders"
-    assert by_line[16].topic == "PUT /orders/{order_id}"
-    assert by_line[21].topic == "DELETE /orders/{order_id}"
-    assert by_line[26].topic == "PATCH /orders/{order_id}/status"
-    # @app.route(...) bare (Flask) reconnu comme GET, même règle que FastAPI
-    assert by_line[31].topic == "GET /orders/{order_id}/summary"
-
-
-@pytest.mark.integration
-def test_python_requests_calls_resolve_fstring_but_flag_concatenation_and_bare_var() -> None:
-    endpoints = run_semgrep_endpoints(
-        REST_REPO, make_config(), files=["app/python/client.py"]
-    )
-
-    by_line = {e.start_line: e for e in endpoints}
-
-    fstring_call = by_line[5]  # requests.get(f"http://.../orders/{order_id}")
-    assert fstring_call.topic == "GET http://order-service/orders/{order_id}"
-    assert fstring_call.topic_dynamic is False
-
-    literal_call = by_line[9]  # requests.post("http://.../orders", json=payload)
-    assert literal_call.topic == "POST http://order-service/orders"
-    assert literal_call.topic_dynamic is False
-
-    concatenated_call = by_line[13]  # requests.put("..." + order_id, ...)
-    assert concatenated_call.topic_dynamic is True
-
-    bare_variable_call = by_line[26]  # requests.get(base_url)
-    assert bare_variable_call.topic == "GET <dynamic>"
-    assert bare_variable_call.topic_dynamic is True
-
-
-@pytest.mark.integration
 def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
-    # java : 6 serve + 5 call ; python : 6 serve + 6 call
-    assert len(endpoints) == 23
+    # java : 6 serve + 5 call
+    assert len(endpoints) == 11
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}
