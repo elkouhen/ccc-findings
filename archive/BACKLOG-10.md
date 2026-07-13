@@ -147,7 +147,7 @@ l'ordre :
   alimentée par `@Value(...)` ailleurs dans la classe, `confluent-kafka`
   (API bas niveau hors Spring).
 
-### [ ] K3 — Pipeline d'indexation des endpoints + embeddings
+### [x] K3 — Pipeline d'indexation des endpoints + embeddings
 - **Priorité** : HAUTE
 - **Fichiers** : `src/cccf/indexer.py`, `src/cccf/scanner.py`,
   `src/cccf/embedder.py`, `src/cccf/store.py`, `docs/SPEC-TECH.md`,
@@ -167,13 +167,56 @@ l'ordre :
      deux endpoints distincts (`source` différent) affichés ensemble par
      `cccf flow` (K5) — pas de fusion silencieuse, pas de conflit qui bloque
      l'indexation.
-- **Statut** : **partiellement livré** via A1 (`archive/BACKLOG-11.md`) :
-  `cccf index` exécute bien les packs d'inventaire dans le pipeline normal,
-  remplace les endpoints incrémentalement par fichier, purge ceux des fichiers
-  supprimés, et laisse les findings intacts si le scan échoue (NF5 via la
-  transaction SQLite). Le sous-objectif encore ouvert de K3 est la
-  **vectorisation dédiée des endpoints** (table `vec0` spécifique) ; aujourd'hui
-  les endpoints sont stockés et consultables, mais non embeddés.
+- **Statut** : livré. CA1/CA2/CA3 hérités d'A1 (`archive/BACKLOG-11.md`) :
+  `cccf index` exécute les packs d'inventaire dans le pipeline normal,
+  remplace les endpoints incrémentalement par fichier, purge ceux des
+  fichiers supprimés, et laisse les findings intacts si le scan échoue (NF5
+  via la transaction SQLite). Le sous-objectif restant — la **vectorisation
+  dédiée des endpoints** — est livré ici : `store.py` gagne `vec_endpoints`
+  (table `vec0`, même mécanique que `vec_findings`/`vec_code_chunks` —
+  `_ensure_endpoint_vec_table`, `set_endpoint_embedding`,
+  `_delete_endpoint_embeddings`, `iter_endpoint_embeddings`,
+  `endpoint_embedding_count`, `knn_search_endpoints`), gatée par la meta
+  `endpoint_embedding_dim` (même convention que `embedding_dim`/
+  `code_embedding_dim` — pas de bump de `SCHEMA_VERSION`, la table est créée
+  paresseusement comme les deux autres). `embedder.endpoint_to_text` (rôle +
+  système + topic + framework + extrait normalisé) et
+  `indexer._embed_endpoints` (même forme que `_embed_findings`) sont câblés
+  dans `index_repo` : ré-embed complet au changement de modèle (signature),
+  sinon seulement les endpoints pas encore embeddés. La suppression
+  d'endpoints (`replace_endpoints_for_files`, donc aussi `remove_files`)
+  purge leurs embeddings au même moment que les lignes SQL.
+
+  CA4 n'a pas d'équivalent : K10 (manifeste `TOPICS.md`) n'est pas livré, il
+  n'y a donc pas encore de second `source` à coexister avec `source: code`
+  pour un même topic.
+
+  **Résolution NL pour `cccf flow`** (au-delà du CA initial, motivé par la
+  partie K5/K6 "similarité vectorielle sur les endpoints" jamais câblée) :
+  `flow.resolve_topic_by_similarity(store, embedder, query, endpoints,
+  min_score=0.35)` — dernier recours quand `resolve_topic` (nom exact/sous-
+  chaîne non ambiguë) échoue, plus proche voisin via
+  `knn_search_endpoints`, **sous un seuil de similarité minimal** : en
+  dessous, aucun résultat n'est un meilleur signal qu'une requête sans
+  rapport avec l'index, mieux vaut échouer explicitement (même philosophie
+  que `topic_dynamic`, jamais résolu au hasard). Câblé dans `cccf flow`
+  (CLI) et `trace_message_flow` (MCP), uniquement pour le projet courant
+  (pas de fédération : chaque service fédéré aurait besoin de sa propre
+  requête KNN, hors scope ici, non détaillé plus avant). `ConfigError`/
+  `EmbeddingError` pendant le repli (config absente, modèle indisponible)
+  → l'erreur textuelle d'origine est reportée, pas masquée par une
+  exception différente.
+
+  **Non calibré empiriquement contre un modèle réel** : le seuil `0.35` est
+  un point de départ documenté, pas une valeur mesurée sur corpus réel — les
+  tests valident la mécanique (seuil respecté/rejeté) avec des vecteurs
+  construits directement, jamais via un vrai texte embeddé, car la
+  similarité cosinus d'un embedder de texte (réel ou `FakeEmbedder` à faible
+  dimension) s'est révélée non fiable pour deux chaînes courtes sans
+  rapport (`FakeEmbedder` a par exemple donné 0.77 de similarité entre
+  `"does-not-exist"` et un texte d'endpoint Kafka réel, empiriquement
+  vérifié pendant cette tâche) — un signal à recalibrer si ce seuil se
+  révèle trop permissif ou trop strict en usage réel.
 
 ### [ ] K4 — Indexation des contrats d'événements locaux (schémas)
 - **Priorité** : BASSE (phase 4)

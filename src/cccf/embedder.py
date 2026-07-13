@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from cccf.models import Finding
+from cccf.models import Finding, MessageEndpoint
 
 
 class EmbeddingError(Exception):
@@ -16,6 +16,17 @@ def finding_to_text(f: Finding) -> str:
         f"{f.rule_id} | {f.severity} | {f.message} | "
         f"{' '.join(f.cwe + f.owasp)} | {f.path} | "
         f"{' '.join(f.snippet.split())[:500]}"
+    )
+
+
+def endpoint_to_text(e: MessageEndpoint) -> str:
+    """BACKLOG-10 K3 : rôle + topic/route + framework + extrait normalisé —
+    même esprit que `finding_to_text`, pour la recherche NL sur les
+    endpoints (résolution `cccf flow` en dernier recours, quand aucune
+    correspondance textuelle exacte/non ambiguë n'existe)."""
+    return (
+        f"{e.role} {e.system} | {e.topic} | {e.framework or ''} | "
+        f"{' '.join(e.snippet.split())[:500]}"
     )
 
 

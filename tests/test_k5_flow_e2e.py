@@ -75,14 +75,48 @@ def test_flow_reports_warning_when_a_federated_service_is_not_indexed(
 
 
 @pytest.mark.integration
-def test_flow_unresolved_topic_exits_with_error(
+def test_flow_falls_back_to_similarity_when_textual_resolution_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """BACKLOG-10 K3 : quand `resolve_topic` échoue, `cccf flow` retente via
+    `resolve_topic_by_similarity` — vérifié en substituant cette fonction
+    (déjà testée isolément dans tests/test_flow.py avec des vecteurs
+    contrôlés) pour ne pas dépendre du comportement d'un embedder réel/faux
+    sur du texte arbitraire (non calibré, voir test_flow.py)."""
+    import cccf.cli as cli_module
+
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
     monkeypatch.chdir(dest / "order-service")
     assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
+    assert runner.invoke(app, ["index"]).exit_code == 0
+
+    monkeypatch.setattr(
+        cli_module, "resolve_topic_by_similarity", lambda *a, **kw: "orders.created"
+    )
+    result = runner.invoke(app, ["flow", "who creates an order", "--json"])
+    assert result.exit_code == 0, result.output
+
+    import json
+
+    payload = json.loads(result.output)
+    assert payload["resolved_topic"] == "orders.created"
+
+
+@pytest.mark.integration
+def test_flow_unresolved_topic_exits_with_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Aucun endpoint indexé (pack de règles vide) : la résolution textuelle
+    échoue, et le repli par similarité (K3) échoue lui aussi de façon
+    déterministe (aucun endpoint embeddé) — pas de dépendance à un seuil de
+    similarité calibré sur un modèle réel."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "empty.yaml").write_text("rules: []\n")
+
+    assert runner.invoke(app, ["init", "--rules", "rules/empty.yaml"]).exit_code == 0
     assert runner.invoke(app, ["index"]).exit_code == 0
 
     result = runner.invoke(app, ["flow", "does-not-exist"])

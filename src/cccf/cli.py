@@ -9,7 +9,7 @@ from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.coco_indexer import index_repo_with_cocoindex
-from cccf.flow import FlowError, trace_flow
+from cccf.flow import FlowError, resolve_topic_by_similarity, trace_flow
 from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
 from cccf.indexer import index_repo
 from cccf.render import (
@@ -338,33 +338,51 @@ def flow_cmd(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Résout un topic Kafka ou une route REST (nom exact, sinon sous-chaîne
-    non ambiguë parmi les endpoints indexés) et liste tous ses sites
+    non ambiguë parmi les endpoints indexés, sinon plus proche voisin par
+    similarité vectorielle — BACKLOG-10 K3) et liste tous ses sites
     (producteurs/consommateurs Kafka, ou serveurs/appelants REST) avec les
     findings Semgrep qui les recouvrent (BACKLOG-10 K5). Sans `--workspace`,
-    ne cherche que dans le projet courant ; avec `--workspace <root>`, fédère
-    les autres microservices du répertoire (lecture seule, BACKLOG-11 A2)
-    pour un flux qui traverse plusieurs services.
+    ne cherche que dans le projet courant (la similarité vectorielle n'est
+    disponible que dans ce mode) ; avec `--workspace <root>`, fédère les
+    autres microservices du répertoire (lecture seule, BACKLOG-11 A2) pour
+    un flux qui traverse plusieurs services.
     """
     repo_root = Path.cwd()
-    warnings: list[str] = []
 
     if workspace is not None:
         services = discover_maven_services(workspace)
         federation = load_federation(services)
         endpoints_by_service = dict(federation.endpoints_by_service)
         findings_by_service = dict(federation.findings_by_service)
-        warnings = federation.warnings
+        try:
+            result = trace_flow(
+                query, endpoints_by_service, findings_by_service, federation.warnings
+            )
+        except FlowError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
     else:
         _require_index(repo_root)
         with Store(repo_root) as store:
-            endpoints_by_service = {None: store.all_endpoints()}
+            endpoints = store.all_endpoints()
+            endpoints_by_service = {None: endpoints}
             findings_by_service = {None: store.all_findings()}
-
-    try:
-        result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
-    except FlowError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=2) from exc
+            try:
+                result = trace_flow(query, endpoints_by_service, findings_by_service)
+            except FlowError as exc:
+                fallback_topic = None
+                try:
+                    config = load_config(repo_root)
+                    embedder = make_embedder(config.embedding_model)
+                    fallback_topic = resolve_topic_by_similarity(
+                        store, embedder, query, endpoints
+                    )
+                except (ConfigError, EmbeddingError):
+                    pass
+                if fallback_topic is None:
+                    typer.echo(str(exc), err=True)
+                    raise typer.Exit(code=2) from exc
+                result = trace_flow(fallback_topic, endpoints_by_service, findings_by_service)
 
     rendered = render_flow_json(result)
     if json_output:

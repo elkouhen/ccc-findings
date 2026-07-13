@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 
 from cccf.config import Config
-from cccf.embedder import EmbeddingError, finding_to_text
+from cccf.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from cccf.models import Finding, MessageEndpoint
 from cccf.scanner import (
     SEVERITY_ORDER,
@@ -78,6 +78,18 @@ def _embed_findings(
         )
     for finding, vector in zip(findings, vectors, strict=True):
         store.set_embedding(finding.id, vector)
+    return dim
+
+
+def _embed_endpoints(
+    embedder: EmbedderLike, store: Store, endpoints: list[MessageEndpoint]
+) -> int | None:
+    if not endpoints:
+        return None
+    vectors = embedder.embed_texts([endpoint_to_text(e) for e in endpoints])
+    dim = int(vectors.shape[1]) if vectors.ndim == 2 else int(vectors.shape[0])
+    for endpoint, vector in zip(endpoints, vectors, strict=True):
+        store.set_endpoint_embedding(endpoint.id, vector)
     return dim
 
 
@@ -189,6 +201,7 @@ def index_repo(
     findings_added = 0
     endpoints_added = 0
     findings: list[Finding] = []
+    endpoints: list[MessageEndpoint] = []
     if changed:
         findings_removed += store.count_findings_for_paths(changed)
         endpoints_removed += store.count_endpoints_for_paths(changed)
@@ -204,7 +217,7 @@ def index_repo(
             for f in parse_semgrep_json(raw, repo_root)
             if SEVERITY_ORDER.index(f.severity) >= min_index
         ]
-        endpoints: list[MessageEndpoint] = parse_semgrep_endpoints(raw, repo_root)
+        endpoints = parse_semgrep_endpoints(raw, repo_root)
 
         store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
@@ -235,6 +248,9 @@ def index_repo(
         dim = _embed_findings(embedder, store, store.all_findings())
         if dim is not None:
             store.set_meta("embedding_dim", str(dim))
+        endpoint_dim = _embed_endpoints(embedder, store, store.all_endpoints())
+        if endpoint_dim is not None:
+            store.set_meta("endpoint_embedding_dim", str(endpoint_dim))
     else:
         embedded_ids = {finding_id for finding_id, _ in store.iter_embeddings()}
         dim = _embed_findings(
@@ -242,6 +258,17 @@ def index_repo(
         )
         if dim is not None and store.get_meta("embedding_dim") != str(dim):
             store.set_meta("embedding_dim", str(dim))
+
+        embedded_endpoint_ids = {
+            endpoint_id for endpoint_id, _ in store.iter_endpoint_embeddings()
+        }
+        endpoint_dim = _embed_endpoints(
+            embedder, store, [e for e in endpoints if e.id not in embedded_endpoint_ids]
+        )
+        if endpoint_dim is not None and store.get_meta("endpoint_embedding_dim") != str(
+            endpoint_dim
+        ):
+            store.set_meta("endpoint_embedding_dim", str(endpoint_dim))
 
     return IndexReport(
         scanned=len(changed),

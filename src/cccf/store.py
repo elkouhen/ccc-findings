@@ -352,7 +352,9 @@ class Store:
         self, paths: list[str], endpoints: list[MessageEndpoint]
     ) -> None:
         if paths:
+            removed_ids = self._endpoint_ids_for_paths(paths)
             self._delete_rows_for_paths("endpoints", paths)
+            self._delete_endpoint_embeddings(removed_ids)
         for endpoint in endpoints:
             self.conn.execute(
                 """
@@ -434,6 +436,17 @@ class Store:
         )
         self.set_meta("embedding_dim", str(dim))
 
+    def _ensure_endpoint_vec_table(self, dim: int) -> None:
+        raw_dim = self.get_meta("endpoint_embedding_dim")
+        if raw_dim and int(raw_dim) == dim:
+            return
+        self.conn.execute("DROP TABLE IF EXISTS vec_endpoints")
+        self.conn.execute(
+            f"CREATE VIRTUAL TABLE vec_endpoints USING vec0("
+            f"embedding float[{dim}] distance_metric=cosine, +endpoint_id TEXT)"
+        )
+        self.set_meta("endpoint_embedding_dim", str(dim))
+
     def _ensure_code_vec_table(self, dim: int) -> None:
         raw_dim = self.get_meta("code_embedding_dim")
         if raw_dim and int(raw_dim) == dim:
@@ -454,6 +467,15 @@ class Store:
                 f"DELETE FROM vec_findings WHERE finding_id IN ({placeholders})", chunk
             )
 
+    def _delete_endpoint_embeddings(self, endpoint_ids: list[str]) -> None:
+        if not endpoint_ids or self.get_meta("endpoint_embedding_dim") is None:
+            return
+        for chunk in _chunked(endpoint_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            self.conn.execute(
+                f"DELETE FROM vec_endpoints WHERE endpoint_id IN ({placeholders})", chunk
+            )
+
     def _delete_code_chunk_embeddings(self, chunk_ids: list[str]) -> None:
         if not chunk_ids or self.get_meta("code_embedding_dim") is None:
             return
@@ -470,6 +492,15 @@ class Store:
         self.conn.execute(
             "INSERT INTO vec_findings (embedding, finding_id) VALUES (?, ?)",
             (sqlite_vec.serialize_float32(vector.tolist()), finding_id),
+        )
+
+    def set_endpoint_embedding(self, endpoint_id: str, vector: np.ndarray) -> None:
+        vector = vector.astype(np.float32)
+        self._ensure_endpoint_vec_table(vector.shape[0])
+        self.conn.execute("DELETE FROM vec_endpoints WHERE endpoint_id = ?", (endpoint_id,))
+        self.conn.execute(
+            "INSERT INTO vec_endpoints (embedding, endpoint_id) VALUES (?, ?)",
+            (sqlite_vec.serialize_float32(vector.tolist()), endpoint_id),
         )
 
     def set_code_chunk_embedding(self, chunk_id: str, vector: np.ndarray) -> None:
@@ -492,6 +523,31 @@ class Store:
         if self.get_embedding_dim() is None:
             return 0
         return self.conn.execute("SELECT COUNT(*) AS c FROM vec_findings").fetchone()["c"]
+
+    def iter_endpoint_embeddings(self) -> Iterable[tuple[str, np.ndarray]]:
+        if self.get_meta("endpoint_embedding_dim") is None:
+            return
+        cur = self.conn.execute("SELECT endpoint_id, embedding FROM vec_endpoints")
+        for row in cur.fetchall():
+            yield row["endpoint_id"], np.frombuffer(row["embedding"], dtype=np.float32)
+
+    def endpoint_embedding_count(self) -> int:
+        if self.get_meta("endpoint_embedding_dim") is None:
+            return 0
+        return self.conn.execute("SELECT COUNT(*) AS c FROM vec_endpoints").fetchone()["c"]
+
+    def knn_search_endpoints(self, query_vec: np.ndarray, top_k: int) -> list[tuple[str, float]]:
+        """Plus proches voisins parmi les endpoints indexés (BACKLOG-10 K3),
+        même convention que `knn_search` : score = 1 - distance cosinus."""
+        if top_k <= 0 or self.get_meta("endpoint_embedding_dim") is None:
+            return []
+        query_blob = sqlite_vec.serialize_float32(query_vec.astype(np.float32).tolist())
+        cur = self.conn.execute(
+            "SELECT endpoint_id, distance FROM vec_endpoints "
+            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (query_blob, top_k),
+        )
+        return [(row["endpoint_id"], 1.0 - row["distance"]) for row in cur.fetchall()]
 
     def code_chunk_embedding_count(self) -> int:
         if self.get_meta("code_embedding_dim") is None:

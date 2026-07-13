@@ -281,3 +281,53 @@ def test_index_repo_removes_endpoints_of_deleted_file(endpoint_repo_copy: Path) 
     assert report.deleted_files == 1
     assert report.endpoints_removed == 2
     assert endpoints == []
+
+
+# -- BACKLOG-10 K3 : embeddings dédiés pour les endpoints --
+
+
+@pytest.mark.integration
+def test_index_repo_embeds_all_endpoints(endpoint_repo_copy: Path) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        embeddings = dict(store.iter_endpoint_embeddings())
+        endpoints = store.all_endpoints()
+
+    assert len(embeddings) == len(endpoints) == 2
+    for endpoint in endpoints:
+        assert endpoint.id in embeddings
+
+
+@pytest.mark.integration
+def test_index_repo_second_run_does_not_reembed_unchanged_endpoints(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+    embedder = FakeEmbedder()
+
+    with Store(endpoint_repo_copy) as store:
+        index_repo(endpoint_repo_copy, config, store, embedder)
+        calls_after_first_run = embedder.calls
+
+        index_repo(endpoint_repo_copy, config, store, embedder)
+
+    assert embedder.calls == calls_after_first_run
+
+
+@pytest.mark.integration
+def test_index_repo_removes_endpoint_embeddings_of_deleted_file(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+
+        (endpoint_repo_copy / "app" / "OrderConsumer.java").unlink()
+
+        index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        remaining = store.endpoint_embedding_count()
+
+    assert remaining == 0

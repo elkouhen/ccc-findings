@@ -89,7 +89,7 @@ un champ dédié dans le hash.
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 -- clés utilisées : schema_version ("4"), embedding_model,
 -- embedding_signature, embedding_dim, index_engine,
--- code_embedding_signature, code_embedding_dim
+-- code_embedding_signature, code_embedding_dim, endpoint_embedding_dim
 
 CREATE TABLE files (
     path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, indexed_at TEXT NOT NULL
@@ -132,6 +132,12 @@ CREATE VIRTUAL TABLE vec_code_chunks USING vec0(
     embedding float[N] distance_metric=cosine,
     +chunk_id TEXT
 );
+
+-- BACKLOG-10 K3 : même mécanique paresseuse, gatée par meta.endpoint_embedding_dim.
+CREATE VIRTUAL TABLE vec_endpoints USING vec0(
+    embedding float[N] distance_metric=cosine,
+    +endpoint_id TEXT
+);
 ```
 
 `Store` est un context manager : ouverture = connexion + chargement de
@@ -155,9 +161,12 @@ commande de migration séparée n'est requise.
 
 **Migration schema v3 → v4** (ADR-25) : `Store` crée `endpoints`
 (`CREATE TABLE IF NOT EXISTS`), purement additive — aucune donnée existante
-touchée, pas de table vectorielle associée (K1 ne fait pas d'embeddings, ça
-reste dans le périmètre de K3). Une base v3 rouverte gagne juste la table,
-vide jusqu'au premier `replace_endpoints_for_files`.
+touchée. `vec_endpoints` (BACKLOG-10 K3) arrive après, sans bump de
+`SCHEMA_VERSION` : comme `vec_findings`/`vec_code_chunks`, elle est créée
+paresseusement au premier `set_endpoint_embedding()`, gatée par
+`meta.endpoint_embedding_dim` — même raisonnement que pour l'ajout de
+`vec_code_chunks` en v2→v3 (ADR-21), qui n'avait pas non plus nécessité de
+bump séparé pour sa propre table vectorielle.
 
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
@@ -485,9 +494,20 @@ Fonctions pures, aucune écriture SQLite :
 - `resolve_topic(query, all_topics) -> str | None` — nom exact d'abord ;
   sinon sous-chaîne insensible à la casse, seulement si elle désigne un
   **unique** topic/route parmi `all_topics` (ambigu → `None`, jamais un choix
-  arbitraire). La similarité vectorielle (BACKLOG-10 K3) prendra le relais
-  ici quand aucun candidat textuel unique n'existe, sans changer la
-  signature de `trace_flow`.
+  arbitraire).
+- `resolve_topic_by_similarity(store, embedder, query, endpoints,
+  min_score=0.35) -> str | None` (BACKLOG-10 K3) — dernier recours quand
+  `resolve_topic` échoue : plus proche voisin parmi les endpoints déjà
+  embeddés dans `store` (`Store.knn_search_endpoints`, §2 `vec_endpoints`),
+  mais seulement si son score dépasse `min_score` — sous ce seuil, `None`
+  plutôt qu'un candidat non pertinent (même philosophie que
+  `topic_dynamic` : jamais résolu au hasard). Contrairement à
+  `resolve_topic`/`trace_flow`, cette fonction touche SQLite et l'embedder :
+  elle vit dans `flow.py` (cohérence thématique) mais n'est pas pure — les
+  appelants CLI/MCP l'invoquent explicitement en retombant du `FlowError`
+  de `trace_flow`, jamais `trace_flow` elle-même. Seuil non calibré
+  empiriquement contre un modèle réel (point de départ documenté) — voir
+  `archive/BACKLOG-10.md` K3 pour le détail de cette réserve.
 - `trace_flow(query, endpoints_by_service, findings_by_service, warnings=None)
   -> FlowResult` — résout `query` via `resolve_topic` (échec →
   `FlowError`), puis pour chaque endpoint dont `topic == resolved_topic`
@@ -510,6 +530,19 @@ projet courant ; avec `--workspace`, réutilise `discover_maven_services`/
 `load_federation` (§6ter) tel quel. `render_flow_json`/`render_flow_text`
 (`render.py`) forment le contrat `--json`/texte, partagé avec le tool MCP
 `trace_message_flow` (BACKLOG-10 K6).
+
+**Repli par similarité (BACKLOG-10 K3)**, uniquement en mode projet courant
+(pas de fédération — chaque service fédéré aurait besoin de sa propre
+requête KNN sur son propre store, non câblé) : quand `trace_flow` lève
+`FlowError`, le CLI/MCP retente via `resolve_topic_by_similarity` avant
+d'abandonner ; `ConfigError`/`EmbeddingError` pendant cette tentative
+(config absente, modèle indisponible) sont absorbées silencieusement
+**seulement pour retomber sur l'erreur textuelle d'origine**, jamais pour
+masquer un autre problème — testé dans `tests/test_flow.py` (seuil, avec
+des vecteurs construits directement) et `tests/test_k5_flow_e2e.py`/
+`tests/test_mcp_server.py` (câblage CLI/MCP, en substituant
+`resolve_topic_by_similarity` plutôt qu'en dépendant d'un embedder réel/faux
+sur du texte arbitraire — non calibré, voir `archive/BACKLOG-10.md` K3).
 
 ## 7. Contrat JSON (F4.2 — figé)
 

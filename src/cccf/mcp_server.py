@@ -4,9 +4,9 @@ from mcp.server.fastmcp import FastMCP
 
 from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
-from cccf.config import load_config
-from cccf.embedder import make_embedder
-from cccf.flow import trace_flow
+from cccf.config import ConfigError, load_config
+from cccf.embedder import EmbeddingError, make_embedder
+from cccf.flow import FlowError, resolve_topic_by_similarity, trace_flow
 from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
 from cccf.indexer import IndexReport, index_repo
 from cccf.render import (
@@ -202,19 +202,33 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
     deviner un topic au hasard.
     """
     repo_root = _repo_root()
-    warnings: list[str] = []
 
     if workspace_root is None:
         _require_index(repo_root)
         with Store(repo_root) as store:
-            endpoints_by_service: dict[str | None, list] = {None: store.all_endpoints()}
+            endpoints = store.all_endpoints()
+            endpoints_by_service: dict[str | None, list] = {None: endpoints}
             findings_by_service: dict[str | None, list] = {None: store.all_findings()}
-    else:
-        services = discover_maven_services(Path(workspace_root))
-        federation = load_federation(services)
-        endpoints_by_service = dict(federation.endpoints_by_service)
-        findings_by_service = dict(federation.findings_by_service)
-        warnings = federation.warnings
+            try:
+                result = trace_flow(query, endpoints_by_service, findings_by_service)
+            except FlowError as exc:
+                fallback_topic = None
+                try:
+                    config = load_config(repo_root)
+                    embedder = make_embedder(config.embedding_model)
+                    fallback_topic = resolve_topic_by_similarity(
+                        store, embedder, query, endpoints
+                    )
+                except (ConfigError, EmbeddingError):
+                    pass
+                if fallback_topic is None:
+                    raise exc
+                result = trace_flow(fallback_topic, endpoints_by_service, findings_by_service)
+        return render_flow_json(result)
 
-    result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
+    services = discover_maven_services(Path(workspace_root))
+    federation = load_federation(services)
+    endpoints_by_service = dict(federation.endpoints_by_service)
+    findings_by_service = dict(federation.findings_by_service)
+    result = trace_flow(query, endpoints_by_service, findings_by_service, federation.warnings)
     return render_flow_json(result)

@@ -1,5 +1,10 @@
-from cccf.flow import FlowError, resolve_topic, trace_flow
+from pathlib import Path
+
+import numpy as np
+
+from cccf.flow import FlowError, resolve_topic, resolve_topic_by_similarity, trace_flow
 from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
+from cccf.store import Store
 
 
 def make_endpoint(
@@ -138,3 +143,62 @@ def test_trace_flow_ambiguous_query_raises_flow_error() -> None:
         pass
     else:
         raise AssertionError("expected FlowError")
+
+
+# -- resolve_topic_by_similarity (K3) --
+#
+# Vecteurs construits directement (pas de texte via un vrai/faux embedder de
+# texte) : la similarité cosinus d'un embedder de texte réel ou basé sur un
+# hash n'est pas calibrée pour des chaînes arbitraires (deux textes courts et
+# sans rapport peuvent se retrouver à une similarité élevée selon le modèle
+# ou la dimension), donc pas fiable pour prouver le comportement du seuil.
+
+
+class _StubEmbedder:
+    def __init__(self, vector: np.ndarray) -> None:
+        self._vector = vector
+
+    def embed_query(self, text: str) -> np.ndarray:
+        return self._vector
+
+
+def test_resolve_topic_by_similarity_returns_closest_endpoint_above_threshold(
+    tmp_path: Path,
+) -> None:
+    endpoint = make_endpoint("produce", "kafka", "orders.created", "a.java", 1, 1)
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["a.java"], [endpoint])
+        store.set_endpoint_embedding(endpoint.id, np.array([1.0, 0.0], dtype=np.float32))
+
+        embedder = _StubEmbedder(np.array([0.9, 0.1], dtype=np.float32))
+        resolved = resolve_topic_by_similarity(store, embedder, "query", [endpoint])
+
+    assert resolved == "orders.created"
+
+
+def test_resolve_topic_by_similarity_rejects_low_similarity_match(tmp_path: Path) -> None:
+    endpoint = make_endpoint("produce", "kafka", "orders.created", "a.java", 1, 1)
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["a.java"], [endpoint])
+        store.set_endpoint_embedding(endpoint.id, np.array([1.0, 0.0], dtype=np.float32))
+
+        # orthogonal : score = 1 - 1 = 0, très en dessous du seuil par défaut
+        embedder = _StubEmbedder(np.array([0.0, 1.0], dtype=np.float32))
+        resolved = resolve_topic_by_similarity(store, embedder, "query", [endpoint])
+
+    assert resolved is None
+
+
+def test_resolve_topic_by_similarity_returns_none_without_any_embedded_endpoint(
+    tmp_path: Path,
+) -> None:
+    with Store(tmp_path):
+        pass
+
+    with Store(tmp_path) as store:
+        embedder = _StubEmbedder(np.array([1.0, 0.0], dtype=np.float32))
+        resolved = resolve_topic_by_similarity(store, embedder, "query", [])
+
+    assert resolved is None

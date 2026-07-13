@@ -336,3 +336,62 @@ def test_remove_files_batches_large_path_lists_over_sqlite_bind_limit(tmp_path: 
     with Store(tmp_path) as store:
         assert store.all_findings() == []
         assert store.all_endpoints() == []
+
+
+def test_set_and_iter_endpoint_embeddings(tmp_path: Path) -> None:
+    endpoint = make_endpoint()
+    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/producer.py"], [endpoint])
+        store.set_endpoint_embedding(endpoint.id, vector)
+
+    with Store(tmp_path) as store:
+        embeddings = dict(store.iter_endpoint_embeddings())
+        assert store.endpoint_embedding_count() == 1
+
+    assert endpoint.id in embeddings
+    assert np.allclose(embeddings[endpoint.id], vector)
+
+
+def test_knn_search_endpoints_returns_closest_first(tmp_path: Path) -> None:
+    orders = make_endpoint(path="app/orders.py", topic="orders.created")
+    payments = make_endpoint(path="app/payments.py", topic="payments.made", start_line=20, end_line=20)
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/orders.py", "app/payments.py"], [orders, payments])
+        store.set_endpoint_embedding(orders.id, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        store.set_endpoint_embedding(payments.id, np.array([0.0, 1.0, 0.0], dtype=np.float32))
+
+        query_vec = np.array([0.9, 0.1, 0.0], dtype=np.float32)
+        results = store.knn_search_endpoints(query_vec, top_k=2)
+
+    assert [endpoint_id for endpoint_id, _ in results] == [orders.id, payments.id]
+
+
+def test_replace_endpoints_for_files_removes_embeddings_of_replaced_endpoints(
+    tmp_path: Path,
+) -> None:
+    endpoint = make_endpoint(path="app/producer.py")
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/producer.py"], [endpoint])
+        store.set_endpoint_embedding(endpoint.id, np.array([0.1, 0.2, 0.3], dtype=np.float32))
+        # le fichier est réindexé sans endpoint (topic supprimé du code)
+        store.replace_endpoints_for_files(["app/producer.py"], [])
+
+    with Store(tmp_path) as store:
+        assert store.endpoint_embedding_count() == 0
+
+
+def test_remove_files_purges_endpoint_embeddings(tmp_path: Path) -> None:
+    endpoint = make_endpoint(path="app/producer.py")
+
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/producer.py"], [endpoint])
+        store.set_endpoint_embedding(endpoint.id, np.array([0.1, 0.2, 0.3], dtype=np.float32))
+        store.set_file_hash("app/producer.py", "deadbeef")
+        store.remove_files(["app/producer.py"])
+
+    with Store(tmp_path) as store:
+        assert store.endpoint_embedding_count() == 0

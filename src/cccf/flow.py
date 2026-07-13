@@ -5,16 +5,29 @@ ses sites — producteurs/consommateurs Kafka, ou serveurs/appelants REST —
 avec les findings Semgrep qui recouvrent chaque site (même jointure
 fichier + lignes que `graph.find_hotspots`, esprit ADR-19).
 
-Résolution purement textuelle pour l'instant (égalité exacte, puis
-sous-chaîne insensible à la casse si le résultat est non ambigu) : la
-similarité vectorielle sur les endpoints arrive avec K3 (BACKLOG-10) et
-prendra le relais quand la résolution textuelle ne trouve aucun candidat
-unique, sans changer ce contrat.
+Résolution textuelle d'abord (égalité exacte, puis sous-chaîne insensible
+à la casse si le résultat est non ambigu) ; `resolve_topic_by_similarity`
+(BACKLOG-10 K3) prend le relais en dernier recours, quand aucun candidat
+textuel n'existe, via la similarité vectorielle sur les endpoints
+(`Store.knn_search_endpoints`) — utile pour une requête en langage naturel
+qui ne correspond à aucun nom de topic/route littéral (ex. « qui traite le
+paiement d'une commande » plutôt que le nom exact du topic). Seulement
+disponible pour le projet courant (pas de fédération multi-services : le
+support serait une extension future, pas un manque documenté ici en
+détail) — voir `docs/SPEC-TECH.md`.
 """
 
 from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
 
 from cccf.models import Finding, MessageEndpoint
+from cccf.store import Store
+
+
+class EmbedderLike(Protocol):
+    def embed_query(self, text: str) -> np.ndarray: ...
 
 
 class FlowError(Exception):
@@ -43,6 +56,35 @@ def _overlaps(finding: Finding, endpoint: MessageEndpoint) -> bool:
         and finding.start_line <= endpoint.end_line
         and finding.end_line >= endpoint.start_line
     )
+
+
+_DEFAULT_SIMILARITY_THRESHOLD = 0.35
+
+
+def resolve_topic_by_similarity(
+    store: Store,
+    embedder: EmbedderLike,
+    query: str,
+    endpoints: list[MessageEndpoint],
+    min_score: float = _DEFAULT_SIMILARITY_THRESHOLD,
+) -> str | None:
+    """Dernier recours (BACKLOG-10 K3) quand `resolve_topic` ne trouve aucun
+    candidat textuel unique : plus proche voisin parmi les endpoints déjà
+    embeddés (`cccf index`) dans `store`, mais seulement si son score dépasse
+    `min_score` — sous ce seuil, aucun résultat n'est un meilleur signal
+    qu'une requête qui ne ressemble à rien d'indexé, mieux vaut échouer
+    explicitement que renvoyer un candidat non pertinent (même philosophie
+    que `topic_dynamic` : jamais résolu au hasard). `endpoints` sert
+    uniquement à retrouver le topic associé à l'endpoint gagnant (le KNN
+    lui-même interroge `store` directement) — aucun résultat si le store n'a
+    aucun endpoint embeddé (repo sans pack d'inventaire, ou pas encore
+    réindexé)."""
+    topic_by_id = {e.id: e.topic for e in endpoints}
+    query_vec = embedder.embed_query(query)
+    for endpoint_id, score in store.knn_search_endpoints(query_vec, top_k=1):
+        if score >= min_score and endpoint_id in topic_by_id:
+            return topic_by_id[endpoint_id]
+    return None
 
 
 def resolve_topic(query: str, all_topics: set[str]) -> str | None:

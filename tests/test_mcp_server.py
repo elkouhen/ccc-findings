@@ -310,6 +310,42 @@ def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
     assert result["warnings"] == []
 
 
+def test_trace_message_flow_tool_falls_back_to_similarity_when_textual_resolution_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-10 K3 : substitue `resolve_topic_by_similarity` (déjà testée
+    isolément avec des vecteurs contrôlés dans tests/test_flow.py) pour
+    vérifier le câblage sans dépendre d'un embedder réel/faux sur du texte
+    arbitraire."""
+    import cccf.mcp_server as mcp_server_module
+
+    monkeypatch.chdir(tmp_path)
+    produce = MessageEndpoint(
+        id=compute_endpoint_id("produce", "orders.created", "app/Producer.java", 10, 10),
+        role="produce",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Producer.java",
+        start_line=10,
+        end_line=10,
+        snippet="",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Producer.java"], [produce])
+
+    runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+    monkeypatch.setattr(
+        mcp_server_module, "resolve_topic_by_similarity", lambda *a, **kw: "orders.created"
+    )
+
+    result = trace_message_flow("who creates an order")
+
+    assert result["resolved_topic"] == "orders.created"
+
+
 def test_trace_message_flow_tool_unknown_query_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

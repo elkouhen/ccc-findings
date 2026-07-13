@@ -313,9 +313,18 @@ Résout `<requête>` en topic Kafka ou route REST (BACKLOG-10 K5) : nom exact
 d'abord, sinon sous-chaîne insensible à la casse **si elle désigne un
 unique topic/route** parmi les endpoints indexés — une correspondance
 ambiguë (plusieurs topics contiennent la sous-chaîne) échoue plutôt que de
-choisir arbitrairement. Résolution purement textuelle pour l'instant ; la
-similarité vectorielle prendra le relais quand le texte ne trouve aucun
-candidat unique (BACKLOG-10 K3).
+choisir arbitrairement.
+
+Sans `--workspace` uniquement : si la résolution textuelle échoue, un
+dernier recours par **similarité vectorielle** (BACKLOG-10 K3) cherche le
+plus proche voisin parmi les endpoints déjà embeddés par `cccf index`
+(`cccf endpoints`/`cccf graph` en dépendent aussi indirectement, même
+pipeline d'indexation) — utile pour une requête en langage naturel qui ne
+contient aucun nom de topic/route littéral. En dessous d'un seuil de
+similarité minimal, aucun résultat n'est retenu (même politique que
+`topic_dynamic` : jamais résolu au hasard) et l'échec reste le même message
+que pour une résolution textuelle infructueuse. Ce repli n'est pas
+disponible avec `--workspace` (fédération multi-services).
 
 Sans `--workspace` : ne cherche que dans le projet courant (`service` vaut
 `null` dans le rendu JSON). Avec `--workspace ROOT` : fédère les
