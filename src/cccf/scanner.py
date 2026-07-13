@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from cccf.config import Config
+from cccf.gradle import gradle_service_for_path
 from cccf.maven import module_name_for_path
 from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 
@@ -84,6 +85,17 @@ def _java_qualified_name(repo_root_str: str, rel_path: str) -> str | None:
     return f"{match.group(1)}.{class_name}"
 
 
+def _module_for_path(repo_root: Path, rel_path: str) -> str | None:
+    """Module Maven (`pom.xml`) en priorité (choix explicite, ADR-32) ;
+    repli sur la détection de service Gradle (BACKLOG-15 H1, ADR-33) quand
+    aucun `pom.xml` n'est trouvé — un repo purement Maven ou purement
+    Gradle n'a jamais les deux à interroger, un repo mixte essaie les deux
+    dans cet ordre par fichier."""
+    return module_name_for_path(repo_root, rel_path) or gradle_service_for_path(
+        repo_root, rel_path
+    )
+
+
 def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
     try:
         data = json.loads(raw)
@@ -133,7 +145,7 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
                 fix=extra.get("fix"),
                 cwe=_normalize_str_or_list(metadata.get("cwe")),
                 owasp=_normalize_str_or_list(metadata.get("owasp")),
-                module=module_name_for_path(repo_root, path),
+                module=_module_for_path(repo_root, path),
                 qualified_name=_java_qualified_name(str(repo_root), path),
             )
         )
@@ -442,7 +454,7 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 start_line=start_line,
                 end_line=end_line,
                 snippet=snippet,
-                module=module_name_for_path(repo_root, path),
+                module=_module_for_path(repo_root, path),
                 qualified_name=_java_qualified_name(str(repo_root), path),
             )
         )

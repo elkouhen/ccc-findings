@@ -1025,3 +1025,93 @@ champ pour une inspection directe. Testé de bout en bout dans
 (`rest_cycle_workspace`) qui prouve le cycle en mode fédéré
 (`test_k12_graph_workspace_e2e.py`) prouve le même cycle indexé une seule
 fois au parent, sans `--workspace`.
+
+---
+
+## ADR-33 — Détection de service Gradle par classe `main()` Spring Boot,
+pas par le contenu de `build.gradle`
+
+**Statut** : Acté.
+
+**Contexte** : ADR-30/ADR-32 attribuent un module/service en cherchant
+`spring-boot-maven-plugin` dans le texte d'un `pom.xml` — fiable pour
+Maven car cette chaîne est un marqueur quasi universel. Retour utilisateur
+direct (2026-07-13, audit de
+`eventuate-tram-examples-customers-and-orders`) : ce repo est 100% Gradle
+(zéro `pom.xml`), donc ni la fédération (A2) ni l'attribution de module
+(M1) ne trouvent jamais rien, quel que soit l'index. Or Gradle n'a pas
+d'équivalent universel : ce repo applique un plugin de convention custom
+(`ServicePlugin`, défini dans `buildSrc/`) plutôt que `org.springframework.
+boot` directement — un grep du texte de `build.gradle` ne peut pas
+détecter ça de façon générale. L'utilisateur a explicitement demandé de
+détecter un microservice par la classe Java qui le démarre réellement
+(`main()` + `SpringApplication.run(...)`), plutôt que par une convention
+de build.
+
+**Décision** : `gradle.gradle_service_for_path` (nouveau, BACKLOG-15 H1)
+cherche, dans tout le repo, les classes Java portant un `main()` qui
+appelle `SpringApplication.run(...)` (regex, pas d'AST — même esprit
+qu'ADR-26). Le premier segment de chemin (répertoire de premier niveau
+sous la racine indexée) de chaque classe ainsi trouvée devient un nom de
+service ; tout fichier sous ce même premier segment y est rattaché — un
+microservice Gradle réparti sur plusieurs sous-projets (`<service>/
+<service>-domain`, `-restapi`, ... `-main`) est ainsi regroupé sous un
+seul nom, à la même granularité que ce qu'un seul `pom.xml` Maven donne
+pour un microservice équivalent. `scanner._module_for_path` essaie
+d'abord `maven.module_name_for_path` (inchangé — l'utilisateur a
+explicitement choisi de garder la détection `pom.xml`/`spring-boot-maven-
+plugin` pour Maven plutôt que de basculer aussi ce cas sur une détection
+par classe `main()`) et ne retombe sur la détection Gradle que si aucun
+`pom.xml` n'est trouvé sur le chemin.
+
+**Conséquences** : un repo mixte (certains modules Maven, d'autres
+Gradle) fonctionne fichier par fichier, sans configuration explicite du
+build tool. La granularité « premier segment de chemin » suppose qu'un
+microservice Gradle multi-sous-projets vit sous un unique répertoire de
+premier niveau (convention observée dans le repo qui a motivé cette
+tâche) — un layout Gradle qui met tous les sous-projets à plat à la
+racine sans regroupement par service ne serait pas correctement détecté ;
+non traité ici, à revisiter si un tel layout se présente. Pas de
+distinction microservice/module-partagé côté Gradle (contrairement à
+Maven, ADR-30 CA5) : tout répertoire portant une classe `main()` Spring
+Boot devient un service, sans notion de bibliothèque interne exclue des
+endpoints — accepté pour ce premier support, à affiner si nécessaire.
+
+---
+
+## ADR-34 — Exclusion du code de test de tout le scan (findings et
+endpoints), en rupture avec ADR-14/R2
+
+**Statut** : Acté.
+
+**Contexte** : ADR-14 (BACKLOG-2 R2) avait délibérément choisi de **ne
+jamais** exclure silencieusement les répertoires de test d'un scan de
+sécurité, pour ne pas manquer des vulnérabilités dans des helpers de test.
+Retour utilisateur direct (2026-07-13) sur le même audit Gradle : un appel
+REST dans un fichier de test (`ApiGatewayComponentTest.java`, un appel
+`WebClient` du harnais de test vers l'API) ressortait comme site
+d'interaction réel dans l'inventaire endpoints, polluant le graphe
+services ↔ services d'appels qui n'existent pas en production. Question
+explicitement posée à l'utilisateur avant d'agir : exclure uniquement de
+l'inventaire endpoints (préserve ADR-14/R2), ou de tout le scan y compris
+les findings de sécurité (revient sur ADR-14/R2) — l'utilisateur a choisi
+la seconde option en toute connaissance du compromis annoncé.
+
+**Décision** : `indexer._is_test_source(rel_path)` (BACKLOG-15 H2) exclut
+tout fichier sous un répertoire `src/<jeu-de-sources>` où `<jeu-de-
+sources> != "main"` (convention Maven/Gradle : `main` est le seul nom de
+source set universel ; `test`, `componentTest`, `contractTest`,
+`endToEndTest`, etc. sont tous des variantes de test) — appliqué dans
+`_list_repo_files`, en amont de `config.exclude`/`include`, donc jamais
+scanné du tout par Semgrep (findings **et** endpoints). Décision basée sur
+les segments du chemin plutôt qu'un pattern glob `fnmatch` : `*` ne
+respecte pas les frontières de répertoire dans ce projet (voir
+`indexer._matches_any`), ce qui confondrait un vrai jeu de sources de
+test avec un simple paquet nommé `testutils` sous `src/main`.
+
+**Conséquences** : une vulnérabilité qui n'existe que dans un helper de
+test redevient invisible sans aucun signal — exactement le risque
+qu'ADR-14/R2 visait à éliminer, désormais accepté explicitement plutôt que
+subi silencieusement. Un fichier déjà indexé qui devient exclu par ce
+changement est purgé au prochain `cccf index` via le mécanisme existant
+`deleted = previous_paths - current_paths`, sans migration dédiée.

@@ -12,7 +12,8 @@
 |---|---|---|
 | `models.py` | `Finding` (dataclass gelée) + `compute_finding_id` ; `MessageEndpoint` (BACKLOG-10 K1) + `compute_endpoint_id` | — |
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
-| `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` → `MessageEndpoint` (règles `metadata.category: endpoint-inventory`, REST K11 + Kafka K2) ; `resolve_spring_property` (K2, ADR-28) | `models`, `config` |
+| `scanner.py` | Exécution Semgrep (subprocess) + parsing JSON → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` → `MessageEndpoint` (règles `metadata.category: endpoint-inventory`, REST K11 + Kafka K2) ; `resolve_spring_property` (K2, ADR-28) ; `_module_for_path` (Maven puis repli Gradle, BACKLOG-15 H1) | `models`, `config`, `maven`, `gradle` |
+| `gradle.py` | Détection de service Gradle par classe `main()` Spring Boot, en complément de `maven.py` quand aucun `pom.xml` n'existe (BACKLOG-15 H1, ADR-33) : `gradle_service_for_path` | — |
 | `store.py` | `Store` : persistance SQLite (findings, endpoints, chunks de code expérimentaux, hashs de fichiers, meta, embeddings) | `models` |
 | `indexer.py` | `index_repo` : orchestration incrémentale (diff de fichiers → scan ciblé → findings + endpoints (A1) → embedding ; peut aussi indexer des chunks de code) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Adaptateur expérimental `--engine cocoindex` : findings + chunks de code comme états cibles typés | `config`, `indexer`, `store` |
@@ -92,6 +93,11 @@ hash (comme `snippet` pour `Finding`) : ce sont des métadonnées dérivées de
 **`module`/`qualified_name` (BACKLOG-13 M1)** — calculés dans `scanner.py`
 au moment de construire chaque `Finding`/`MessageEndpoint` (`parse_semgrep_json`/
 `parse_semgrep_endpoints`), pas par `Store` :
+- `scanner._module_for_path(repo_root, rel_path) -> str | None` (BACKLOG-15
+  H1, ADR-33) — essaie d'abord `maven.module_name_for_path` (ci-dessous),
+  puis retombe sur `gradle.gradle_service_for_path` si aucun `pom.xml`
+  n'est trouvé. Un repo mixte fonctionne fichier par fichier ; un repo
+  purement Maven ou purement Gradle n'a jamais besoin du second mécanisme.
 - `maven.module_name_for_path(repo_root, rel_path) -> str | None` — nom du
   module (artifactId, repli sur le nom du répertoire) du `pom.xml` le plus
   proche en remontant depuis `rel_path` jusqu'à `repo_root` inclus, même
@@ -101,6 +107,19 @@ au moment de construire chaque `Finding`/`MessageEndpoint` (`parse_semgrep_json`
   (lecture XML minimale : `artifactId`, présence de
   `spring-boot-maven-plugin`) est partagée avec `workspace.py`
   (`discover_maven_services`) — plus de duplication depuis cette tâche.
+- `gradle.gradle_service_for_path(repo_root, rel_path) -> str | None`
+  (BACKLOG-15 H1, ADR-33) — un `build.gradle` n'a pas de marqueur universel
+  équivalent à `spring-boot-maven-plugin` (plugins de convention custom via
+  `buildSrc`). Signal utilisé à la place : `gradle._service_roots(repo_root)`
+  parcourt tout le repo (`rglob("*.java")`, caché par `repo_root`) pour
+  trouver les classes portant un `main()` qui appelle
+  `SpringApplication.run(...)` (regex, pas d'AST) ; le premier segment de
+  chemin (répertoire de premier niveau) de chaque classe ainsi trouvée
+  devient un nom de service, et tout fichier sous ce même premier segment y
+  est rattaché — un microservice Gradle réparti sur plusieurs sous-projets
+  (`<service>/<service>-domain`, `-restapi`, ... `-main`) est ainsi regroupé
+  sous un seul nom. `None` si le premier segment ne correspond à aucun
+  service détecté.
 - `scanner._java_qualified_name(repo_root_str, rel_path) -> str | None` —
   `None` pour un fichier non-`.java` ; sinon `package + "." + nom_de_fichier`
   si une déclaration `package ...;` est trouvée par regex (pas d'AST),
@@ -211,9 +230,15 @@ initial.
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
 ```
-1. Lister les fichiers du repo (rglob) matchant include/exclude (fnmatch),
+1. Lister les fichiers du repo (rglob), en excluant d'abord tout fichier
+   sous un répertoire src/<jeu-de-sources> avec <jeu-de-sources> != "main"
+   (indexer._is_test_source, BACKLOG-15 H2, ADR-34 — revient sur ADR-14/R2,
+   décision explicite), puis matchant include/exclude (fnmatch),
    calculer leur sha256.
 2. Comparer aux hashs stockés (table files) → deleted / changed / unchanged.
+   Un fichier exclu par _is_test_source qui était indexé avant cette
+   décision se retrouve dans deleted (absent de current_hashes) et est
+   purgé au prochain index, sans mécanisme dédié.
    Si full=True : changed = tous les fichiers actuels.
 3. store.remove_files(deleted)  — purge fichiers + findings + endpoints
    associés (K1).

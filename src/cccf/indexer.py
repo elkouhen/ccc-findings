@@ -45,12 +45,32 @@ def _matches_any(rel_path: str, patterns: list[str]) -> bool:
     return any(pattern == "**/*" or fnmatch.fnmatch(rel_path, pattern) for pattern in patterns)
 
 
+def _is_test_source(rel_path: str) -> bool:
+    """BACKLOG-15 H2 (ADR-34) : tout fichier sous un dossier `src/<jeu-de-
+    sources>` où `<jeu-de-sources> != "main"` (`test`, `componentTest`,
+    `contractTest`, `endToEndTest`, ... — convention Maven/Gradle : `main`
+    est le seul nom de source set universel, tout le reste est un variant
+    de test) est exclu du scan, findings et endpoints confondus. Décision
+    explicite qui revient sur BACKLOG-2 R2/ADR-14 (« ne jamais exclure
+    silencieusement les tests ») — voir ADR-34. Basé sur les segments du
+    chemin, pas un pattern glob : un `fnmatch` avec `*` ne respecte pas les
+    frontières de répertoire et confondrait un paquet nommé `testutils`
+    sous `src/main/...` avec un vrai jeu de sources de test."""
+    segments = rel_path.split("/")
+    return any(
+        segment == "src" and i + 1 < len(segments) and segments[i + 1] != "main"
+        for i, segment in enumerate(segments)
+    )
+
+
 def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for path in sorted(repo_root.rglob("*")):
         if not path.is_file():
             continue
         rel_path = path.relative_to(repo_root).as_posix()
+        if _is_test_source(rel_path):
+            continue
         if config.exclude and _matches_any(rel_path, config.exclude):
             continue
         if config.include and not _matches_any(rel_path, config.include):

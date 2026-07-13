@@ -13,6 +13,7 @@ from cccf.store import Store
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
 ENDPOINT_INDEX_REPO = FIXTURES_DIR / "endpoint_index_repo"
+TEST_SOURCE_EXCLUSION_REPO = FIXTURES_DIR / "test_source_exclusion_repo"
 
 
 class FakeEmbedder:
@@ -264,6 +265,34 @@ def test_index_repo_second_run_without_changes_leaves_endpoints_untouched(
     assert report.scanned == 0
     assert report.endpoints_added == 0
     assert len(endpoints) == 2
+
+
+@pytest.fixture
+def test_source_exclusion_repo_copy(tmp_path: Path) -> Path:
+    dest = tmp_path / "test_source_exclusion_repo"
+    shutil.copytree(TEST_SOURCE_EXCLUSION_REPO, dest)
+    return dest
+
+
+@pytest.mark.integration
+def test_index_repo_excludes_files_under_a_non_main_source_set(
+    test_source_exclusion_repo_copy: Path,
+) -> None:
+    """BACKLOG-15 H2 : `service/src/test/java/OrderConsumerTest.java` porte
+    la même règle System.out.println/Kafka listener que
+    `service/src/main/java/OrderConsumer.java`, mais ne doit produire ni
+    finding ni endpoint — seul `src/main` est scanné (ADR-34)."""
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(test_source_exclusion_repo_copy) as store:
+        report = index_repo(test_source_exclusion_repo_copy, config, store, FakeEmbedder())
+        findings = store.all_findings()
+        endpoints = store.all_endpoints()
+
+    assert report.findings_added == 1
+    assert report.endpoints_added == 1
+    assert [f.path for f in findings] == ["service/src/main/java/OrderConsumer.java"]
+    assert [e.path for e in endpoints] == ["service/src/main/java/OrderConsumer.java"]
 
 
 @pytest.mark.integration

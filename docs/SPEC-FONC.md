@@ -30,6 +30,13 @@ semgrep_timeout_s: 120
   bloquante.
 - Tous les autres champs ont une valeur par défaut appliquée silencieusement
   si absents du fichier.
+- Indépendamment de `include`/`exclude` : tout fichier sous un répertoire
+  `src/<jeu-de-sources>` où `<jeu-de-sources> != "main"` (`test`,
+  `componentTest`, `contractTest`, `endToEndTest`, ... — convention
+  Maven/Gradle) est **toujours** exclu du scan, findings et endpoints
+  confondus (BACKLOG-15 H2, ADR-34) — ni configurable, ni contournable via
+  `include`. Un fichier déjà indexé qui devient exclu par cette règle est
+  purgé au prochain `cccf index`, comme un fichier supprimé du disque.
 
 ## 2. CLI `cccf`
 
@@ -215,7 +222,7 @@ Filtres optionnels combinables :
 | `--role` | `serve`/`call` (rest) ou `produce`/`consume` (kafka) |
 | `--topic` | égalité exacte sur `topic` (ex. `"GET /orders/{id}"`, `"orders.created"`) |
 | `--path` | motif de chemin (`fnmatch`), même style que `cccf search --path` |
-| `--module` | nom du module Maven (artifactId, BACKLOG-13) — `None` si le repo n'a pas de layout Maven |
+| `--module` | nom du module Maven (artifactId, BACKLOG-13) ou du service Gradle détecté (BACKLOG-15 H1) — `None` si ni l'un ni l'autre ne s'applique |
 
 Rendu texte, une ligne par endpoint :
 `[<system>/<role>] <topic>[ (dynamique)][ [<module>]]  <path>:<start>-<end>`
@@ -228,9 +235,14 @@ son préfixe de route normalisé.
 
 Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
-`module`, `qualified_name`). `module` (artifactId du `pom.xml` le plus
-proche) et `qualified_name` (package + classe Java) sont `None` quand non
-applicables (repo non-Maven, fichier non-Java) — voir BACKLOG-13.
+`module`, `qualified_name`). `module` vient d'abord du `pom.xml` Maven le
+plus proche (artifactId, BACKLOG-13) ; si le repo n'a aucun `pom.xml`,
+repli sur la détection Gradle (BACKLOG-15 H1, ADR-33) — le répertoire de
+premier niveau qui contient, quelque part dans son arbre, une classe Java
+avec un `main()` démarrant Spring Boot (`SpringApplication.run(...)`),
+regroupant ainsi tous les sous-projets Gradle d'un même microservice.
+`qualified_name` (package + classe Java) est `None` pour un fichier
+non-Java.
 
 Mêmes règles d'index absent que `findings` (message identique, code 2) —
 `endpoints` vit dans la même base que `findings`.
