@@ -218,3 +218,35 @@ def test_list_workspace_services_tool_discovers_and_flags_unindexed(tmp_path: Pa
     assert by_name["order-service"]["indexed"] is True
     assert by_name["common-lib"]["kind"] == "shared-module"
     assert any("payment-service" in w for w in result["warnings"])
+
+
+@pytest.mark.integration
+def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BACKLOG-10 K12 : graph(workspace_root=...) rapporte un cycle réel
+    une fois fédéré, pas seulement les endpoints du projet courant (voir
+    aussi tests/test_k12_graph_workspace_e2e.py, côté CLI, pour le détail
+    des sites et des hotspots)."""
+    from cccf.cli import app as cli_app
+
+    rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
+    dest = tmp_path / "rest_cycle_workspace"
+    shutil.copytree(rest_cycle_workspace, dest)
+    for service in ("service-x", "service-y", "service-z"):
+        monkeypatch.chdir(dest / service)
+        runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"])
+        index_result = runner.invoke(cli_app, ["index"])
+        assert index_result.exit_code == 0
+
+    monkeypatch.chdir(dest / "service-x")
+    result = graph(workspace_root=str(dest))
+
+    assert len(result["cycles"]) == 1
+    assert set(result["cycles"][0]["services"][:-1]) == {
+        "service-x",
+        "service-y",
+        "service-z",
+    }
+    assert len(result["hotspots"]) >= 1
+    assert result["note"] == ""

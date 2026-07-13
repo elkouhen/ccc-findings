@@ -1,0 +1,42 @@
+rules:
+  - id: cccf.rest.java.serve-get
+    languages: [java]
+    severity: INFO
+    message: Route REST exposée (GET).
+    metadata:
+      category: endpoint-inventory
+      system: rest
+      role: serve
+      http_method: GET
+      framework: spring
+    patterns:
+      - pattern: |
+          @GetMapping(...)
+          $RET $METHOD(...) { ... }
+
+  - id: cccf.rest.java.call-get
+    languages: [java]
+    severity: INFO
+    message: Appel REST client (GET).
+    metadata:
+      category: endpoint-inventory
+      system: rest
+      role: call
+      http_method: GET
+      framework: resttemplate
+    patterns:
+      - pattern-either:
+          - pattern: $REST.getForObject(...)
+          - pattern: $REST.getForEntity(...)
+
+  - id: cccf.liveness.java.new-resttemplate-no-timeout
+    languages: [java]
+    severity: WARNING
+    message: >-
+      new RestTemplate() sans configuration de timeout : par défaut, aucune
+      limite de temps de connexion/lecture, un service distant qui ne répond
+      jamais bloque le thread indéfiniment.
+    metadata:
+      category: liveness
+    patterns:
+      - pattern: new RestTemplate()

@@ -414,7 +414,7 @@ l'ordre :
   exposées dans le graphe. Reste à couvrir : `@RequestMapping` méthodes
   non-GET, `WebClient`/Feign.
 
-### [ ] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
+### [x] K12 — Graphe d'interactions et hotspots de blocage (`cccf graph`)
 - **Priorité** : HAUTE (phase 3 — la réponse directe à « où sont les
   endroits problématiques »)
 - **Fichiers** : `src/cccf/graph.py` (nouveau), `src/cccf/cli.py`,
@@ -444,16 +444,20 @@ l'ordre :
      absente, jamais d'erreur ni de fausse arête.
   5. Aucune table de graphe dans le schéma SQLite (dérivation pure à la
      requête).
-- **Statut** : `src/cccf/graph.py` livré — `build_graph`/`paths_match`
-  (appariement littéral↔template, best-effort, CA4), `find_cycles` (DFS,
-  déduplication par ensemble d'arêtes), `find_outbound_calls_in_consumers`
-  (CA2), `find_hotspots`/`rank_hotspots` (CA3) ; testés sur fixture 3
-  services avec cycle A→B→C→A (CA1), aucune table graphe en base (CA5,
-  ADR-27). `cccf graph`/tool MCP `graph` livrés (CLI + MCP), mais ne
-  rapportent aujourd'hui que CA2 (`find_outbound_calls_in_consumers`) : CA1/
-  CA3 (cycles, hotspots) demandent des endpoints de **plusieurs services**,
-  donc K7 (fédération multi-dépôts, non livré) — `cycles`/`hotspots` sont
-  vides dans la sortie réelle, avec une `note` explicite plutôt qu'un vide
-  silencieux. L'algorithme lui-même (testé en isolation avec des endpoints
-  multi-services construits à la main) est prêt à recevoir K7 sans
-  modification.
+- **Statut** : livré, câblage compris. `src/cccf/graph.py` :
+  `build_graph`/`paths_match` (appariement littéral↔template, best-effort,
+  CA4), `find_cycles` (DFS, déduplication par ensemble d'arêtes),
+  `find_outbound_calls_in_consumers` (CA2), `find_hotspots`/`rank_hotspots`
+  (CA3) ; aucune table graphe en base (CA5, ADR-27). `cccf graph`/tool MCP
+  `graph` acceptent désormais `--workspace ROOT`/`workspace_root` : quand
+  fourni, fédère via A2 (`discover_maven_services`/`load_federation`) et
+  rapporte de vrais cycles/hotspots (sans, `cycles`/`hotspots` restent vides
+  avec une `note` explicite — pas de comportement caché). CA1 et CA3
+  démontrés de bout en bout (pas seulement en isolation) dans
+  `tests/test_k12_graph_workspace_e2e.py` et `tests/test_mcp_server.py` :
+  trois microservices Maven réels indexés séparément
+  (`tests/fixtures/rest_cycle_workspace/`), cycle REST A→B→C→A détecté avec
+  les sites des trois arêtes, et un site du cycle recouvert par un finding
+  liveness (`new-resttemplate-no-timeout`) remonte en hotspot. CA2 (K7)
+  reste aussi validé de bout en bout dans
+  `tests/test_k7_federation_e2e.py`.

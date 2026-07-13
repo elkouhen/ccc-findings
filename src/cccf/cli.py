@@ -9,7 +9,7 @@ from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.coco_indexer import index_repo_with_cocoindex
-from cccf.graph import find_outbound_calls_in_consumers
+from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
 from cccf.indexer import index_repo
 from cccf.render import (
     render_code_search_text,
@@ -251,13 +251,21 @@ def endpoints_cmd(
 
 
 @app.command(name="graph")
-def graph_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
+def graph_cmd(
+    workspace: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--workspace",
+        help="Répertoire parent Maven à fédérer (BACKLOG-11 A2) pour les "
+        "cycles/hotspots inter-services.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
     """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
     K12) : appels REST synchrones détectés dans un handler de consommation
-    Kafka. Les cycles d'appels inter-services et les hotspots nécessitent
-    plusieurs projets indexés (fédération multi-dépôts, K7, pas encore
-    livré) — cette commande ne les rapporte pas tant qu'un seul projet est
-    indexé.
+    Kafka du projet courant. Avec `--workspace <root>`, fédère aussi les
+    autres microservices du répertoire (BACKLOG-11 A2, lecture seule) pour
+    rapporter les cycles d'appels inter-services et les hotspots (site sur
+    un cycle recouvert par un finding).
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
@@ -267,10 +275,29 @@ def graph_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
+    cycles = []
+    hotspots = []
+    warnings: list[str] = []
+    if workspace is not None:
+        services = discover_maven_services(workspace)
+        federation = load_federation(services)
+        warnings = federation.warnings
+        edges = build_graph(federation.endpoints_by_service)
+        cycles = find_cycles(edges)
+        hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
+
+    result = render_graph_json(
+        outbound_calls,
+        cycles=cycles,
+        hotspots=hotspots,
+        workspace_warnings=warnings,
+        workspace_provided=workspace is not None,
+    )
+
     if json_output:
-        typer.echo(json.dumps(render_graph_json(outbound_calls)))
+        typer.echo(json.dumps(result))
     else:
-        typer.echo(render_graph_text(render_graph_json(outbound_calls)))
+        typer.echo(render_graph_text(result))
 
 
 @app.command(name="workspace")

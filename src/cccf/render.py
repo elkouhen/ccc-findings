@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from cccf.ccc_bridge import CodeHitWithFindings
-from cccf.graph import OutboundCallInConsumer
+from cccf.graph import Cycle, Hotspot, OutboundCallInConsumer
 from cccf.models import MessageEndpoint
 from cccf.search import SearchHit, Summary, get_context
 from cccf.workspace import DiscoveredService, FederationResult
@@ -173,25 +173,46 @@ class OutboundCallHit(TypedDict):
     call: GraphSite
 
 
+class CycleEdgeInfo(TypedDict):
+    kind: str  # "rest" | "kafka"
+    from_service: str
+    to_service: str
+    from_site: GraphSite
+    to_site: GraphSite
+
+
+class CycleInfo(TypedDict):
+    services: list[str]
+    edges: list[CycleEdgeInfo]
+    has_synchronous_rest: bool
+
+
+class HotspotInfo(TypedDict):
+    service: str
+    site: GraphSite
+    finding_rule_id: str
+    finding_severity: str
+
+
 class GraphResult(TypedDict):
     """Shape returned by `cccf graph --json` and the `graph` MCP tool.
 
-    `cycles`/`hotspots` sont toujours vides pour un seul projet indexé : la
-    détection de cycles inter-services nécessite plusieurs projets (fédération
-    multi-dépôts, BACKLOG-10 K7, pas encore livré) — voir `note`.
+    `cycles`/`hotspots` restent vides tant qu'aucun workspace n'est fourni
+    (`--workspace`/`workspace_root`, BACKLOG-11 A2) : la détection de cycles
+    inter-services a besoin des endpoints de plusieurs services fédérés —
+    voir `note`.
     """
 
     outbound_calls_in_consumers: list[OutboundCallHit]
-    cycles: list[dict]
-    hotspots: list[dict]
+    cycles: list[CycleInfo]
+    hotspots: list[HotspotInfo]
     note: str
 
 
-_K7_NOTE = (
-    "Cycles et hotspots inter-services nécessitent plusieurs projets indexés "
-    "(fédération multi-dépôts, BACKLOG-10 K7, pas encore livré) — seuls les "
-    "appels REST détectés dans un handler Kafka de ce projet sont remontés "
-    "pour l'instant."
+_NO_WORKSPACE_NOTE = (
+    "Cycles et hotspots inter-services nécessitent un répertoire multi-services "
+    "fédéré (--workspace/workspace_root, BACKLOG-11 A2) — seuls les appels REST "
+    "détectés dans un handler Kafka de ce projet sont remontés pour l'instant."
 )
 
 
@@ -204,7 +225,45 @@ def _endpoint_to_site(endpoint: MessageEndpoint) -> GraphSite:
     )
 
 
-def render_graph_json(outbound_calls: list[OutboundCallInConsumer]) -> GraphResult:
+def _cycle_to_info(cycle: Cycle) -> CycleInfo:
+    return CycleInfo(
+        services=list(cycle.services),
+        edges=[
+            CycleEdgeInfo(
+                kind=edge.kind,
+                from_service=edge.from_service,
+                to_service=edge.to_service,
+                from_site=_endpoint_to_site(edge.from_endpoint),
+                to_site=_endpoint_to_site(edge.to_endpoint),
+            )
+            for edge in cycle.edges
+        ],
+        has_synchronous_rest=cycle.has_synchronous_rest,
+    )
+
+
+def _hotspot_to_info(hotspot: Hotspot) -> HotspotInfo:
+    return HotspotInfo(
+        service=hotspot.service,
+        site=_endpoint_to_site(hotspot.endpoint),
+        finding_rule_id=hotspot.finding.rule_id,
+        finding_severity=hotspot.finding.severity,
+    )
+
+
+def render_graph_json(
+    outbound_calls: list[OutboundCallInConsumer],
+    cycles: list[Cycle] | None = None,
+    hotspots: list[Hotspot] | None = None,
+    workspace_warnings: list[str] | None = None,
+    workspace_provided: bool = False,
+) -> GraphResult:
+    cycles = cycles or []
+    hotspots = hotspots or []
+    if workspace_provided:
+        note = " ".join(f"⚠ {w}" for w in (workspace_warnings or []))
+    else:
+        note = _NO_WORKSPACE_NOTE
     return GraphResult(
         outbound_calls_in_consumers=[
             OutboundCallHit(
@@ -212,9 +271,9 @@ def render_graph_json(outbound_calls: list[OutboundCallInConsumer]) -> GraphResu
             )
             for hit in outbound_calls
         ],
-        cycles=[],
-        hotspots=[],
-        note=_K7_NOTE,
+        cycles=[_cycle_to_info(c) for c in cycles],
+        hotspots=[_hotspot_to_info(h) for h in hotspots],
+        note=note,
     )
 
 
@@ -232,7 +291,34 @@ def render_graph_text(result: GraphResult) -> str:
             )
     else:
         lines.append("Aucun appel REST détecté dans un handler Kafka.")
-    lines.append(result["note"])
+
+    cycles = result["cycles"]
+    if cycles:
+        lines.append(f"Cycles inter-services ({len(cycles)}) :")
+        for cycle in cycles:
+            chain = " -> ".join(cycle["services"])
+            sync_marker = " [synchrone]" if cycle["has_synchronous_rest"] else ""
+            lines.append(f"  {chain}{sync_marker}")
+            for edge in cycle["edges"]:
+                lines.append(
+                    f"    [{edge['kind']}] {edge['from_service']} "
+                    f"({edge['from_site']['path']}:{edge['from_site']['start_line']}) -> "
+                    f"{edge['to_service']} "
+                    f"({edge['to_site']['path']}:{edge['to_site']['start_line']})"
+                )
+
+    hotspots = result["hotspots"]
+    if hotspots:
+        lines.append(f"Hotspots ({len(hotspots)}, classés par sévérité) :")
+        for hotspot in hotspots:
+            site = hotspot["site"]
+            lines.append(
+                f"  [{hotspot['finding_severity']}] {hotspot['service']} "
+                f"{site['path']}:{site['start_line']} — {hotspot['finding_rule_id']}"
+            )
+
+    if result["note"]:
+        lines.append(result["note"])
     return "\n".join(lines)
 
 

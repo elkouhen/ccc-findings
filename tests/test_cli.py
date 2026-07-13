@@ -368,7 +368,7 @@ def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
     assert hit["consumer"]["topic"] == "orders.created"
     assert data["cycles"] == []
     assert data["hotspots"] == []
-    assert "K7" in data["note"]
+    assert "--workspace" in data["note"]
 
 
 def test_graph_text_reports_no_outbound_calls_when_none_found(

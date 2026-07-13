@@ -231,17 +231,22 @@ Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
 Mêmes règles d'index absent que `findings` (message identique, code 2) —
 `endpoints` vit dans la même base que `findings`.
 
-### `cccf graph [--json]`
-Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12) :
-appels REST synchrones détectés dans un handler de consommation Kafka (même
-fichier, site d'appel dans la plage de lignes du handler). Les cycles
-d'appels inter-services et les hotspots (site sur un cycle + finding
-liveness K8) nécessitent plusieurs projets indexés — la fédération
-multi-services existe désormais (`cccf workspace`, BACKLOG-11 A2) mais
-`cccf graph` ne la consomme pas encore (câblage restant, voir K12 dans
-`archive/BACKLOG-10.md`) — donc toujours vides pour l'instant (voir
-ADR-27) : la réponse le dit explicitement plutôt que de laisser deviner
-une absence de résultat.
+### `cccf graph [--workspace ROOT] [--json]`
+Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12).
+Sans `--workspace` : uniquement les appels REST synchrones détectés dans un
+handler de consommation Kafka **du projet courant** (même fichier, site
+d'appel dans la plage de lignes du handler) — `cycles`/`hotspots` restent
+vides, avec une `note` qui le dit explicitement (voir ADR-27) plutôt que de
+laisser deviner une absence de résultat.
+
+Avec `--workspace ROOT` : fédère aussi les microservices Maven sous `ROOT`
+(BACKLOG-11 A2, lecture seule — `discover_maven_services`/
+`load_federation`), construit le graphe REST/Kafka inter-services
+(`graph.build_graph`) et rapporte :
+- **cycles** : cycles simples contenant au moins une arête REST synchrone,
+  avec les sites (fichier:lignes) de chaque arête ;
+- **hotspots** : sites sur un cycle recouverts par un finding (fichier+lignes
+  qui se chevauchent, même service), classés par sévérité décroissante.
 
 Rendu `--json` :
 ```json
@@ -250,15 +255,29 @@ Rendu `--json` :
     {"consumer": {"path": "...", "start_line": 15, "end_line": 25, "topic": "orders.created"},
      "call": {"path": "...", "start_line": 20, "end_line": 20, "topic": "POST /payments"}}
   ],
-  "cycles": [],
-  "hotspots": [],
-  "note": "Cycles et hotspots inter-services nécessitent plusieurs projets indexés (...)"
+  "cycles": [
+    {"services": ["service-x", "service-y", "service-z", "service-x"],
+     "has_synchronous_rest": true,
+     "edges": [{"kind": "rest", "from_service": "service-x", "to_service": "service-y",
+                "from_site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
+                "to_site": {"path": "...", "start_line": 9, "end_line": 11, "topic": "GET /y-status"}}]}
+  ],
+  "hotspots": [
+    {"service": "service-x", "site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
+     "finding_rule_id": "rules.cccf.liveness.java.new-resttemplate-no-timeout", "finding_severity": "WARNING"}
+  ],
+  "note": ""
 }
 ```
+`note` est vide dès que `--workspace` est fourni et qu'aucun service listé
+n'a posé problème ; sinon elle porte les avertissements de fédération
+(service non indexé, base incompatible — préfixés `⚠`).
 
 Mêmes règles d'index absent que `findings`/`summary` (message identique,
 code 2) — `endpoints` vit dans la même base que `findings` (`.cccf/
-findings.db`).
+findings.db`). `--workspace` ne fait jamais échouer la commande : un
+service fédéré manquant ou incompatible est signalé dans `note`, pas une
+erreur (K7 CA2).
 
 ### `cccf workspace <root> [--json]`
 Découvre les modules Maven sous `root` (BACKLOG-11 A2, ADR-30) : un module
@@ -316,7 +335,7 @@ un résultat normal, indiscernable d'un succès sans convention côté client).
 | `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Recherche de code annotée des findings qui recouvrent chaque résultat — même nom de tool, mêmes paramètres et même comportement que le `search` de ccc, et équivalent à la CLI `cccf search` (implémentation partagée, `code_search.py`) | Utilise l'index code expérimental s'il existe, sinon `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Liste filtrable des endpoints REST/Kafka indexés — équivalent à la CLI `cccf endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
-| `graph()` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph` | `cycles`/`hotspots` vides tant que `cccf graph` ne consomme pas la fédération A2 (ADR-27) |
+| `graph(workspace_root=None)` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccf graph`/`cccf graph --workspace` | `cycles`/`hotspots` vides sans `workspace_root` (ADR-27) ; réels sinon (fédération A2) |
 | `list_workspace_services(root)` | `WorkspaceResult` | Découverte de modules Maven + comptage endpoints/findings par service — équivalent à la CLI `cccf workspace` | Lecture seule (ADR-30) ; BACKLOG-11 A2 |
 
 `search` ajoute à chaque résultat de code :

@@ -6,7 +6,7 @@ from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
 from cccf.config import load_config
 from cccf.embedder import make_embedder
-from cccf.graph import find_outbound_calls_in_consumers
+from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
 from cccf.indexer import IndexReport, index_repo
 from cccf.render import (
     EndpointHit,
@@ -136,20 +136,37 @@ def list_endpoints(
 
 
 @mcp.tool()
-def graph() -> GraphResult:
+def graph(workspace_root: str | None = None) -> GraphResult:
     """Points de blocage probables à partir des endpoints indexés
     (BACKLOG-10 K12) : appels REST synchrones dans un handler de
-    consommation Kafka. Utiliser pour localiser les endroits d'une
-    architecture distribuée susceptibles de causer un verrouillage
-    intermittent. `cycles`/`hotspots` restent vides tant qu'un seul projet
-    est indexé (fédération multi-dépôts K7, pas encore livrée) — voir
-    `note` dans la réponse.
+    consommation Kafka du projet courant. Utiliser pour localiser les
+    endroits d'une architecture distribuée susceptibles de causer un
+    verrouillage intermittent. Avec `workspace_root`, fédère aussi les
+    autres microservices du répertoire donné (BACKLOG-11 A2, lecture
+    seule) pour rapporter les cycles d'appels inter-services et les
+    hotspots — sinon `cycles`/`hotspots` restent vides, voir `note`.
     """
     repo_root = _repo_root()
     _require_index(repo_root)
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
-    return render_graph_json(find_outbound_calls_in_consumers(endpoints))
+    outbound_calls = find_outbound_calls_in_consumers(endpoints)
+
+    if workspace_root is None:
+        return render_graph_json(outbound_calls)
+
+    services = discover_maven_services(Path(workspace_root))
+    federation = load_federation(services)
+    edges = build_graph(federation.endpoints_by_service)
+    cycles = find_cycles(edges)
+    hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
+    return render_graph_json(
+        outbound_calls,
+        cycles=cycles,
+        hotspots=hotspots,
+        workspace_warnings=federation.warnings,
+        workspace_provided=True,
+    )
 
 
 @mcp.tool()
