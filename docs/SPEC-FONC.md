@@ -205,7 +205,7 @@ Rendu `--json` :
 
 Mêmes règles d'index absent que `findings` (message identique, code 2).
 
-### `cccf endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--json]`
+### `cccf endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
 Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1).
 Filtres optionnels combinables :
 
@@ -215,9 +215,10 @@ Filtres optionnels combinables :
 | `--role` | `serve`/`call` (rest) ou `produce`/`consume` (kafka) |
 | `--topic` | égalité exacte sur `topic` (ex. `"GET /orders/{id}"`, `"orders.created"`) |
 | `--path` | motif de chemin (`fnmatch`), même style que `cccf search --path` |
+| `--module` | nom du module Maven (artifactId, BACKLOG-13) — `None` si le repo n'a pas de layout Maven |
 
 Rendu texte, une ligne par endpoint :
-`[<system>/<role>] <topic>[ (dynamique)]  <path>:<start>-<end>`
+`[<system>/<role>] <topic>[ (dynamique)][ [<module>]]  <path>:<start>-<end>`
 
 Pour les endpoints REST, `topic` est toujours canonique côté graphe :
 `METHOD /path`. Les URLs absolues appelantes (`http://service/orders`) sont
@@ -226,27 +227,45 @@ Un appel concaténé à une variable reste `topic_dynamic=True`, mais conserve
 son préfixe de route normalisé.
 
 Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
-`topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`).
+`topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
+`module`, `qualified_name`). `module` (artifactId du `pom.xml` le plus
+proche) et `qualified_name` (package + classe Java) sont `None` quand non
+applicables (repo non-Maven, fichier non-Java) — voir BACKLOG-13.
 
 Mêmes règles d'index absent que `findings` (message identique, code 2) —
 `endpoints` vit dans la même base que `findings`.
 
 ### `cccf graph [--workspace ROOT] [--json]`
 Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12).
-Sans `--workspace` : uniquement les appels REST synchrones détectés dans un
-handler de consommation Kafka **du projet courant** (même fichier, site
-d'appel dans la plage de lignes du handler) — `cycles`/`hotspots` restent
-vides, avec une `note` qui le dit explicitement (voir ADR-27) plutôt que de
-laisser deviner une absence de résultat.
+Toujours : les appels REST synchrones détectés dans un handler de
+consommation Kafka **du projet courant** (même fichier, site d'appel dans
+la plage de lignes du handler).
 
-Avec `--workspace ROOT` : fédère aussi les microservices Maven sous `ROOT`
-(BACKLOG-11 A2, lecture seule — `discover_maven_services`/
-`load_federation`), construit le graphe REST/Kafka inter-services
-(`graph.build_graph`) et rapporte :
-- **cycles** : cycles simples contenant au moins une arête REST synchrone,
+Pour les cycles/hotspots inter-services, deux sources possibles, essayées
+dans cet ordre :
+1. **Sans `--workspace`** : si l'index couvre un répertoire multi-modules
+   Maven (`cccf index` lancé au répertoire parent, endpoints/findings
+   attribués à un module par l'indexation — BACKLOG-13), les endpoints/
+   findings sont groupés par module et le graphe est construit directement
+   à partir de cet unique index — pas de fédération nécessaire pour un
+   monorepo.
+2. **Avec `--workspace ROOT`** : fédère aussi les microservices Maven sous
+   `ROOT`, indexés **séparément** (BACKLOG-11 A2, lecture seule —
+   `discover_maven_services`/`load_federation`) — le chemin pour des
+   services qui vivent dans des dépôts réellement distincts.
+
+Les deux sources alimentent le même algorithme (`graph.build_graph`) et
+rapportent :
+- **cycles** : cycles simples contenant au moins une arête REST synchrone
+  (une arête `WebClient`, non bloquante par nature, ne compte pas — K11),
   avec les sites (fichier:lignes) de chaque arête ;
 - **hotspots** : sites sur un cycle recouverts par un finding (fichier+lignes
-  qui se chevauchent, même service), classés par sévérité décroissante.
+  qui se chevauchent, même module/service), classés par sévérité décroissante.
+
+Si ni l'un ni l'autre n'est disponible (repo non-Maven sans `--workspace`,
+ou aucun module Maven détecté), `cycles`/`hotspots` restent vides, avec une
+`note` qui le dit explicitement (voir ADR-27) plutôt que de laisser deviner
+une absence de résultat.
 
 Rendu `--json` :
 ```json
@@ -269,9 +288,10 @@ Rendu `--json` :
   "note": ""
 }
 ```
-`note` est vide dès que `--workspace` est fourni et qu'aucun service listé
-n'a posé problème ; sinon elle porte les avertissements de fédération
-(service non indexé, base incompatible — préfixés `⚠`).
+`note` est vide dès qu'une source de données inter-modules (module Maven ou
+`--workspace`) a produit un résultat ; avec `--workspace`, elle porte aussi
+les avertissements de fédération (service non indexé, base incompatible —
+préfixés `⚠`).
 
 Mêmes règles d'index absent que `findings`/`summary` (message identique,
 code 2) — `endpoints` vit dans la même base que `findings` (`.cccf/
@@ -326,13 +346,17 @@ similarité minimal, aucun résultat n'est retenu (même politique que
 que pour une résolution textuelle infructueuse. Ce repli n'est pas
 disponible avec `--workspace` (fédération multi-services).
 
-Sans `--workspace` : ne cherche que dans le projet courant (`service` vaut
-`null` dans le rendu JSON). Avec `--workspace ROOT` : fédère les
-microservices Maven sous `ROOT` (BACKLOG-11 A2, lecture seule) — chaque
-site du flux (producteur/consommateur Kafka, ou serveur/appelant REST)
-apparaît attribué à son service. Pour chaque site, les findings Semgrep qui
-le recouvrent (fichier + lignes qui se chevauchent, même service — esprit
-ADR-19) sont listés par `rule_id`.
+Sans `--workspace` : ne cherche que dans le projet courant, mais `service`
+reflète désormais le module Maven de chaque site (`endpoint.module`,
+BACKLOG-13) quand l'index couvre un répertoire multi-modules — `null`
+seulement pour un repo non-Maven ou un site hors arborescence Maven,
+jamais pour dissimuler la fédération. Avec `--workspace ROOT` : fédère en
+plus les microservices Maven indexés séparément sous `ROOT` (BACKLOG-11
+A2, lecture seule). Dans les deux cas, chaque site du flux (producteur/
+consommateur Kafka, ou serveur/appelant REST) apparaît attribué à son
+service, et pour chaque site, les findings Semgrep qui le recouvrent
+(fichier + lignes qui se chevauchent, même service — esprit ADR-19) sont
+listés par `rule_id`.
 
 Rendu `--json` :
 ```json

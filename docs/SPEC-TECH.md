@@ -47,6 +47,8 @@ class Finding:
     fix: str | None
     cwe: list[str]
     owasp: list[str]
+    module: str | None = None          # artifactId Maven (BACKLOG-13 M1)
+    qualified_name: str | None = None  # package + classe Java (BACKLOG-13 M1)
 ```
 
 `compute_finding_id(rule_id, path, snippet, start_line, end_line)` : normalise
@@ -72,6 +74,8 @@ class MessageEndpoint:
     start_line: int
     end_line: int
     snippet: str
+    module: str | None = None          # artifactId Maven (BACKLOG-13 M1)
+    qualified_name: str | None = None  # package + classe Java (BACKLOG-13 M1)
 ```
 
 `compute_endpoint_id(role, topic, path, start_line, end_line)` :
@@ -81,13 +85,32 @@ par *où* il est, pas par le texte exact du site d'appel. Un endpoint
 `source: manifest` (K10) et un endpoint `source: code` (K2/K11) pour le même
 topic ont des identités différentes car leurs `path` diffèrent (`TOPICS.md`
 vs le fichier de code) — coexistence sans collision par construction, pas par
-un champ dédié dans le hash.
+un champ dédié dans le hash. `module`/`qualified_name` n'entrent pas dans le
+hash (comme `snippet` pour `Finding`) : ce sont des métadonnées dérivées de
+`path`, pas une composante de l'identité du site.
+
+**`module`/`qualified_name` (BACKLOG-13 M1)** — calculés dans `scanner.py`
+au moment de construire chaque `Finding`/`MessageEndpoint` (`parse_semgrep_json`/
+`parse_semgrep_endpoints`), pas par `Store` :
+- `maven.module_name_for_path(repo_root, rel_path) -> str | None` — nom du
+  module (artifactId, repli sur le nom du répertoire) du `pom.xml` le plus
+  proche en remontant depuis `rel_path` jusqu'à `repo_root` inclus, même
+  bornage que `scanner._candidate_spring_roots` (jamais au-delà de
+  `repo_root`). `None` si aucun `pom.xml` sur ce chemin. Résultat caché par
+  `pom.xml` (`lru_cache`, un pom lu une seule fois par process). `parse_pom`
+  (lecture XML minimale : `artifactId`, présence de
+  `spring-boot-maven-plugin`) est partagée avec `workspace.py`
+  (`discover_maven_services`) — plus de duplication depuis cette tâche.
+- `scanner._java_qualified_name(repo_root_str, rel_path) -> str | None` —
+  `None` pour un fichier non-`.java` ; sinon `package + "." + nom_de_fichier`
+  si une déclaration `package ...;` est trouvée par regex (pas d'AST),
+  sinon juste le nom de fichier. Caché par fichier (`lru_cache`).
 
 ### Schéma SQLite (`.cccf/findings.db`, géré par `Store`)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
--- clés utilisées : schema_version ("4"), embedding_model,
+-- clés utilisées : schema_version ("5"), embedding_model,
 -- embedding_signature, embedding_dim, index_engine,
 -- code_embedding_signature, code_embedding_dim, endpoint_embedding_dim
 
@@ -99,10 +122,12 @@ CREATE TABLE findings (
     id TEXT PRIMARY KEY, rule_id TEXT, severity TEXT, message TEXT,
     path TEXT, start_line INTEGER, end_line INTEGER, snippet TEXT,
     fix TEXT, cwe TEXT,      -- JSON-sérialisé
-    owasp TEXT               -- JSON-sérialisé
+    owasp TEXT,              -- JSON-sérialisé
+    module TEXT, qualified_name TEXT   -- BACKLOG-13 M1
 );
 CREATE INDEX idx_findings_path ON findings(path);
 CREATE INDEX idx_findings_severity ON findings(severity);
+CREATE INDEX idx_findings_module ON findings(module);
 
 CREATE TABLE code_chunks (
     id TEXT PRIMARY KEY, path TEXT, start_line INTEGER, end_line INTEGER,
@@ -114,9 +139,11 @@ CREATE TABLE endpoints (
     id TEXT PRIMARY KEY, role TEXT NOT NULL, system TEXT NOT NULL,
     topic TEXT NOT NULL, topic_dynamic INTEGER NOT NULL, source TEXT NOT NULL,
     framework TEXT, path TEXT NOT NULL, start_line INTEGER NOT NULL,
-    end_line INTEGER NOT NULL, snippet TEXT NOT NULL
+    end_line INTEGER NOT NULL, snippet TEXT NOT NULL,
+    module TEXT, qualified_name TEXT   -- BACKLOG-13 M1
 );
 CREATE INDEX idx_endpoints_path ON endpoints(path);
+CREATE INDEX idx_endpoints_module ON endpoints(module);
 CREATE INDEX idx_endpoints_topic ON endpoints(topic);
 
 -- Table virtuelle vec0 (extension sqlite-vec), créée paresseusement au
@@ -167,6 +194,19 @@ paresseusement au premier `set_endpoint_embedding()`, gatée par
 `meta.endpoint_embedding_dim` — même raisonnement que pour l'ajout de
 `vec_code_chunks` en v2→v3 (ADR-21), qui n'avait pas non plus nécessité de
 bump séparé pour sa propre table vectorielle.
+
+**Migration schema v4 → v5** (ADR-32, BACKLOG-13 M1) : `Store._migrate_module_columns`
+ajoute `module`/`qualified_name` à `findings`/`endpoints` via `ALTER TABLE
+... ADD COLUMN` (guardé par `PRAGMA table_info`, idempotent) puis crée les
+index associés — purement additif, `NULL` pour les lignes existantes
+jusqu'au prochain `cccf index` qui les recalcule. Contrainte d'ordonnancement
+notable : les `CREATE INDEX ... ON findings(module)`/`endpoints(module)` ne
+peuvent pas être dans le même `executescript` que les `CREATE TABLE IF NOT
+EXISTS` — sur une base v4 existante, la colonne `module` n'existe pas
+encore à ce moment-là (`CREATE TABLE IF NOT EXISTS` n'ajoute pas de colonne
+à une table déjà là) ; les deux `CREATE INDEX` vivent donc dans
+`_migrate_module_columns`, après l'`ALTER TABLE`, jamais dans le script
+initial.
 
 ## 3. Pipeline d'indexation (`indexer.index_repo`)
 
@@ -275,6 +315,10 @@ système est ignoré. Communs aux deux systèmes :
 - `source = "code"` toujours ici (pas de manifeste — K10).
 - Champ manquant dans les métadonnées d'une règle d'inventaire (`role`, et
   `http_method` en REST) → `SemgrepError` explicite, comme un JSON malformé.
+- `module`/`qualified_name` (BACKLOG-13 M1) calculés systématiquement à la
+  construction, pour `Finding` (`parse_semgrep_json`) comme pour
+  `MessageEndpoint` : `maven.module_name_for_path(repo_root, path)` et
+  `scanner._java_qualified_name(str(repo_root), path)` — voir §2.
 
 **REST** (`system: rest`, ou absent) — `_extract_rest_path(snippet)` :
 premier littéral entre guillemets de la première ligne du snippet (relu
@@ -468,22 +512,49 @@ Fonctions pures, aucune écriture SQLite (ADR-27) :
   même service** (même chevauchement inclusif qu'en §6) ; tri par sévérité
   décroissante (`INFO < WARNING < ERROR`), tri stable.
 
-`endpoints_by_service`/`findings_by_service` : un dict à une seule clé pour
-un projet unique (usage actuel via `cccf graph` seul), plusieurs clés une
-fois fédérées par `workspace.load_federation` (§6ter). Le graphe et les
-cycles ne dépendent pas de la fédération elle-même, seulement d'avoir
-plusieurs jeux d'endpoints à comparer.
+`endpoints_by_service`/`findings_by_service` : deux façons de produire ce
+dict multi-clés, consommées indifféremment par `build_graph`/`find_cycles`/
+`find_hotspots` — le graphe et les cycles ne dépendent que de la *forme* du
+dict, jamais de son origine :
+- `workspace.load_federation` (§6ter) — plusieurs services indexés
+  **séparément**, fédérés à la requête (BACKLOG-11 A2).
+- `group_endpoints_by_module(endpoints) -> dict[str, list[MessageEndpoint]]`
+  / `group_findings_by_module(findings) -> dict[str, list[Finding]]`
+  (BACKLOG-13 M2) — un **seul** index couvrant plusieurs modules Maven
+  (`endpoint.module`/`finding.module`, M1), sans fédération. Un endpoint/
+  finding sans module (`None`) est exclu du regroupement : sans nom stable,
+  il ne peut jamais former une arête inter-service fiable — choix
+  délibérément conservateur (moins de cycles détectés plutôt qu'un cycle
+  inventé entre deux sites non attribués qui se retrouveraient
+  arbitrairement dans le même compartiment `None`).
+
+CLI `cccf graph`/tool MCP `graph` (§2/§3) : sans `--workspace`/
+`workspace_root`, tentent d'abord `group_endpoints_by_module` sur les
+endpoints du projet courant ; si le résultat est non vide, construisent le
+graphe directement (pas de fédération). Sinon (aucun module Maven détecté),
+`cycles`/`hotspots` restent vides avec la note explicite — même
+comportement qu'avant BACKLOG-13. `--workspace`/`workspace_root` fourni
+déclenche toujours la fédération complète, inchangée.
 
 ### 6ter. Fédération multi-services (`workspace.py`, BACKLOG-11 A2, ADR-30)
 
+`maven.py` (nouveau, BACKLOG-13 M1, ADR-32) factorise la lecture minimale de
+`pom.xml` partagée entre `workspace.py` et `scanner.py` :
+- `parse_pom(pom_path) -> tuple[str | None, bool]` — `(artifactId,
+  is_spring_boot_app)`, `(None, False)` si le pom est illisible/mal formé
+  (un module cassé ne bloque jamais les autres).
+- `module_name_for_path(repo_root, rel_path) -> str | None` — utilisé par
+  `scanner.py` (§4bis), pas par `workspace.py` (voir §6bis).
+
 - `discover_maven_services(root: Path) -> list[DiscoveredService]` —
   `root.rglob("pom.xml")`, triés par chemin. Pour chaque `pom.xml` :
-  `artifactId` (XML, avec ou sans espace de noms Maven déclaré) comme nom
-  de service, repli sur le nom du répertoire si le pom est illisible/mal
-  formé/sans `artifactId`. `kind = "microservice"` si le texte du pom
-  contient `spring-boot-maven-plugin`, `"shared-module"` sinon — recherche
-  textuelle simple, pas de résolution de modèle Maven (parent POM,
-  profils). `indexed` : `<module>/.cccf/findings.db` existe.
+  `artifactId` (XML, avec ou sans espace de noms Maven déclaré, via
+  `maven.parse_pom`) comme nom de service, repli sur le nom du répertoire
+  si le pom est illisible/mal formé/sans `artifactId`. `kind =
+  "microservice"` si le texte du pom contient `spring-boot-maven-plugin`,
+  `"shared-module"` sinon — recherche textuelle simple, pas de résolution
+  de modèle Maven (parent POM, profils). `indexed` :
+  `<module>/.cccf/findings.db` existe.
 - `load_federation(services) -> FederationResult` — pour chaque service
   indexé, ouvre `Store(service.path, readonly=True)` : `findings_by_service`
   toujours peuplé (un module partagé peut porter des findings pertinents
@@ -549,9 +620,20 @@ Fonctions pures, aucune écriture SQLite :
   non fédéré doit rester visible, distinct d'une absence réelle de
   producteur/consommateur.
 
+- `group_endpoints_by_module_for_flow(endpoints) -> dict[str | None,
+  list[MessageEndpoint]]` / `group_findings_by_module_for_flow(findings)`
+  (BACKLOG-13 M3) — regroupe par `endpoint.module`/`finding.module`, mais
+  **sans exclure** les entrées sans module (clé `None` conservée),
+  contrairement à `graph.group_endpoints_by_module` : lister tous les sites
+  d'un topic est le contrat de `flow`, et `trace_flow` ne compare jamais
+  les clés entre elles (pas de risque de fausse arête à éviter ici,
+  contrairement au graphe).
+
 CLI `cccf flow <requête> [--workspace ROOT]` (§2 SPEC-FONC) : sans
-`--workspace`, `endpoints_by_service = {None: store.all_endpoints()}` sur le
-projet courant ; avec `--workspace`, réutilise `discover_maven_services`/
+`--workspace`, `endpoints_by_service = group_endpoints_by_module_for_flow
+(store.all_endpoints())` sur le projet courant — `service` reflète le
+module Maven de chaque site quand l'index en couvre plusieurs (BACKLOG-13),
+`None` sinon ; avec `--workspace`, réutilise `discover_maven_services`/
 `load_federation` (§6ter) tel quel. `render_flow_json`/`render_flow_text`
 (`render.py`) forment le contrat `--json`/texte, partagé avec le tool MCP
 `trace_message_flow` (BACKLOG-10 K6).

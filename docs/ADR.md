@@ -958,3 +958,70 @@ quelqu'un « simplifie » la regex vers des guillemets nus. Tout futur usage
 de `metavariable-regex` visant le contenu d'un littéral de chaîne Java (ou
 d'un langage à guillemets échappables similaire) doit garder ce piège en
 tête plutôt que de le redécouvrir.
+
+## ADR-32 — Attribution module/classe à l'indexation, en complément (pas en
+remplacement) de la fédération A2/K7
+
+**Statut** : Acté.
+
+**Contexte** : la fédération multi-services (ADR-30, BACKLOG-11 A2) exige
+d'indexer **chaque** module Maven séparément (`cccf init`/`cccf index`
+lancés dans chaque sous-répertoire), puis de fédérer à la requête via
+`--workspace`. Retour utilisateur direct (2026-07-13) : pour un monorepo —
+un seul dépôt Git contenant plusieurs modules Maven, pas des dépôts
+séparés — cette exigence est ressentie comme une charge artificielle : le
+répertoire parent est déjà indexé en un seul passage, mais `cccf
+graph`/`cccf flow` restent aveugles aux relations inter-modules tant que
+chaque module n'a pas sa propre base et que `--workspace` n'est pas fourni.
+
+**Décision** : indexer une fois le répertoire parent doit suffire à
+détecter les cycles/hotspots inter-modules, sans passer par la fédération.
+`Finding`/`MessageEndpoint` gagnent deux champs optionnels (schéma v4→v5,
+purement additif) :
+- `module: str | None` — nom du module Maven (artifactId) du `pom.xml` le
+  plus proche en remontant depuis le fichier jusqu'à la racine du repo
+  indexé (`maven.module_name_for_path`, borné comme
+  `scanner._candidate_spring_roots` — jamais de remontée au-delà de
+  `repo_root`) ; `None` si le repo n'a pas de layout Maven ou que le
+  fichier est hors arborescence Maven.
+- `qualified_name: str | None` — package + nom de classe Java
+  (`scanner._java_qualified_name`, regex sur `package ...;` + nom de
+  fichier, jamais d'AST), `None` pour les fichiers non-Java.
+
+`graph.group_endpoints_by_module`/`group_findings_by_module` transforment
+une liste plate en la même forme de dict (`dict[str, list[...]]`) que
+`workspace.load_federation` produit déjà — `build_graph`/`find_cycles`/
+`find_hotspots` n'ont **aucun** changement à faire, ils consomment
+indifféremment un dict issu de la fédération ou du regroupement par
+module. Un endpoint/finding sans module est exclu de ce regroupement
+(jamais une fausse arête entre deux sites non attribués qui se
+retrouveraient arbitrairement dans le même compartiment) — c'est un choix
+délibérément conservateur : moins de cycles détectés plutôt qu'un cycle
+inventé. `cccf flow` a besoin d'un regroupement différent
+(`flow.group_endpoints_by_module_for_flow`/`group_findings_by_module_for_flow`) :
+contrairement au graphe, lister tous les sites d'un topic est le contrat,
+donc un site sans module reste présent, sous la clé `None` — pas de risque
+de fausse arête ici puisque `trace_flow` ne compare jamais les clés entre
+elles.
+
+**Ce que cette décision ne remplace pas** : la fédération A2/K7 reste le
+seul chemin pour des services qui vivent dans des dépôts Git réellement
+séparés (pas de répertoire parent commun indexable en un seul passage). Les
+deux mécanismes coexistent : `cccf graph`/`cccf flow` sans `--workspace`
+tentent d'abord le regroupement par module (nouveau) ; `--workspace`
+déclenche toujours la fédération complète (inchangée) et prend le pas
+quand elle est fournie.
+
+**Conséquences** : `src/cccf/maven.py` (nouveau) factorise la lecture de
+`pom.xml` (`parse_pom`) partagée entre `workspace.py` (fédération) et
+`scanner.py` (attribution de module) — plus de duplication de
+`_parse_pom`. `render_graph_json`/`GraphResult.note` reflètent désormais
+« aucune donnée inter-module disponible » plutôt que « pas de
+`--workspace` » : le message reste correct même quand l'absence de
+cycles/hotspots vient d'un repo non-Maven, pas seulement de l'absence du
+flag. `cccf endpoints --module`/`EndpointHit.module` exposent le nouveau
+champ pour une inspection directe. Testé de bout en bout dans
+`tests/test_m3_module_graph_e2e.py` : la même fixture 3-services
+(`rest_cycle_workspace`) qui prouve le cycle en mode fédéré
+(`test_k12_graph_workspace_e2e.py`) prouve le même cycle indexé une seule
+fois au parent, sans `--workspace`.

@@ -30,6 +30,12 @@ class Finding:
     fix: str | None
     cwe: list[str]
     owasp: list[str]
+    # BACKLOG-13 M1 : module Maven (artifactId du pom.xml le plus proche) et
+    # nom qualifié Java (package + classe) du fichier — None si non
+    # applicable (repo non-Maven, fichier non-Java). Permet de grouper par
+    # module sans fédération multi-dépôts (voir graph.py).
+    module: str | None = None
+    qualified_name: str | None = None
 
 
 def compute_endpoint_id(
@@ -67,3 +73,6 @@ class MessageEndpoint:
     start_line: int
     end_line: int
     snippet: str
+    # BACKLOG-13 M1 : voir Finding.module/qualified_name — même principe.
+    module: str | None = None
+    qualified_name: str | None = None

@@ -40,6 +40,36 @@ class Hotspot:
     finding: Finding
 
 
+def group_endpoints_by_module(
+    endpoints: list[MessageEndpoint],
+) -> dict[str, list[MessageEndpoint]]:
+    """Regroupe des endpoints par module Maven (`endpoint.module`,
+    BACKLOG-13 M1) — même forme de dict que `workspace.load_federation`
+    produit, consommable telle quelle par `build_graph`/`find_hotspots`.
+    Permet de détecter des cycles/hotspots inter-modules à partir d'un seul
+    index (répertoire parent scanné en une fois), sans fédération
+    multi-dépôts (A2/K7). Un endpoint sans module (`None` — repo non-Maven,
+    ou fichier hors arborescence Maven) est ignoré : sans nom stable, il ne
+    peut jamais former une arête inter-service fiable."""
+    grouped: dict[str, list[MessageEndpoint]] = {}
+    for endpoint in endpoints:
+        if endpoint.module is None:
+            continue
+        grouped.setdefault(endpoint.module, []).append(endpoint)
+    return grouped
+
+
+def group_findings_by_module(findings: list[Finding]) -> dict[str, list[Finding]]:
+    """Même principe que `group_endpoints_by_module`, pour les findings
+    utilisés par `find_hotspots`."""
+    grouped: dict[str, list[Finding]] = {}
+    for finding in findings:
+        if finding.module is None:
+            continue
+        grouped.setdefault(finding.module, []).append(finding)
+    return grouped
+
+
 def _split_path(path: str) -> list[str]:
     return [segment for segment in path.split("/") if segment]
 

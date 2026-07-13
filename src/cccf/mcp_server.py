@@ -6,8 +6,22 @@ from cccf.code_search import CodeSearchResult
 from cccf.code_search import search_code_with_findings as run_code_search
 from cccf.config import ConfigError, load_config
 from cccf.embedder import EmbeddingError, make_embedder
-from cccf.flow import FlowError, resolve_topic_by_similarity, trace_flow
-from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
+from cccf.flow import (
+    FlowError,
+    group_endpoints_by_module_for_flow,
+    group_findings_by_module_for_flow,
+    resolve_topic_by_similarity,
+    trace_flow,
+)
+from cccf.graph import (
+    build_graph,
+    find_cycles,
+    find_hotspots,
+    find_outbound_calls_in_consumers,
+    group_endpoints_by_module,
+    group_findings_by_module,
+    rank_hotspots,
+)
 from cccf.indexer import IndexReport, index_repo
 from cccf.render import (
     EndpointHit,
@@ -144,19 +158,35 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     (BACKLOG-10 K12) : appels REST synchrones dans un handler de
     consommation Kafka du projet courant. Utiliser pour localiser les
     endroits d'une architecture distribuée susceptibles de causer un
-    verrouillage intermittent. Avec `workspace_root`, fédère aussi les
-    autres microservices du répertoire donné (BACKLOG-11 A2, lecture
-    seule) pour rapporter les cycles d'appels inter-services et les
-    hotspots — sinon `cycles`/`hotspots` restent vides, voir `note`.
+    verrouillage intermittent. Sans `workspace_root`, si l'index couvre un
+    répertoire multi-modules Maven (`cccf index` lancé au parent,
+    BACKLOG-13), les endpoints/findings attribués à un module sont
+    automatiquement groupés pour rapporter de vrais cycles/hotspots
+    inter-modules. Avec `workspace_root`, fédère en plus les autres
+    microservices indexés séparément (BACKLOG-11 A2, lecture seule) — sinon
+    `cycles`/`hotspots` restent vides, voir `note`.
     """
     repo_root = _repo_root()
     _require_index(repo_root)
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
+        findings = store.all_findings()
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
     if workspace_root is None:
-        return render_graph_json(outbound_calls)
+        grouped_endpoints = group_endpoints_by_module(endpoints)
+        if not grouped_endpoints:
+            return render_graph_json(outbound_calls)
+        edges = build_graph(grouped_endpoints)
+        cycles = find_cycles(edges)
+        grouped_findings = group_findings_by_module(findings)
+        hotspots = rank_hotspots(find_hotspots(cycles, grouped_findings))
+        return render_graph_json(
+            outbound_calls,
+            cycles=cycles,
+            hotspots=hotspots,
+            cross_module_data_available=True,
+        )
 
     services = discover_maven_services(Path(workspace_root))
     federation = load_federation(services)
@@ -167,8 +197,8 @@ def graph(workspace_root: str | None = None) -> GraphResult:
         outbound_calls,
         cycles=cycles,
         hotspots=hotspots,
-        workspace_warnings=federation.warnings,
-        workspace_provided=True,
+        warnings=federation.warnings,
+        cross_module_data_available=True,
     )
 
 
@@ -195,11 +225,13 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
     serveurs/appelants REST) avec les findings Semgrep qui les recouvrent.
     Utiliser pour comprendre qui produit/consomme un topic donné, ou qui
     appelle une route donnée, avant de plonger dans le code. Sans
-    `workspace_root`, ne cherche que dans le projet courant ; avec, fédère
-    les autres microservices du répertoire (BACKLOG-11 A2, lecture seule)
-    pour un flux qui traverse plusieurs services. Requête sans
-    correspondance, ou ambiguë, lève une erreur explicite plutôt que de
-    deviner un topic au hasard.
+    `workspace_root`, ne cherche que dans le projet courant — chaque site
+    est attribué à son module Maven si l'index couvre un répertoire
+    multi-modules (BACKLOG-13) ; avec, fédère en plus les autres
+    microservices indexés séparément (BACKLOG-11 A2, lecture seule) pour un
+    flux qui traverse plusieurs services. Requête sans correspondance, ou
+    ambiguë, lève une erreur explicite plutôt que de deviner un topic au
+    hasard.
     """
     repo_root = _repo_root()
 
@@ -207,8 +239,12 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
         _require_index(repo_root)
         with Store(repo_root) as store:
             endpoints = store.all_endpoints()
-            endpoints_by_service: dict[str | None, list] = {None: endpoints}
-            findings_by_service: dict[str | None, list] = {None: store.all_findings()}
+            endpoints_by_service: dict[str | None, list] = group_endpoints_by_module_for_flow(
+                endpoints
+            )
+            findings_by_service: dict[str | None, list] = group_findings_by_module_for_flow(
+                store.all_findings()
+            )
             try:
                 result = trace_flow(query, endpoints_by_service, findings_by_service)
             except FlowError as exc:

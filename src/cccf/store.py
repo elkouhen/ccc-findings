@@ -11,7 +11,7 @@ import sqlite_vec
 
 from cccf.models import Finding, MessageEndpoint
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -128,7 +128,9 @@ class Store:
                 snippet TEXT,
                 fix TEXT,
                 cwe TEXT,
-                owasp TEXT
+                owasp TEXT,
+                module TEXT,
+                qualified_name TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_findings_path ON findings(path);
             CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
@@ -152,13 +154,16 @@ class Store:
                 path TEXT NOT NULL,
                 start_line INTEGER NOT NULL,
                 end_line INTEGER NOT NULL,
-                snippet TEXT NOT NULL
+                snippet TEXT NOT NULL,
+                module TEXT,
+                qualified_name TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_endpoints_path ON endpoints(path);
             CREATE INDEX IF NOT EXISTS idx_endpoints_topic ON endpoints(topic);
             """
         )
         self._migrate_legacy_embeddings()
+        self._migrate_module_columns()
         if self.get_meta("schema_version") != SCHEMA_VERSION:
             self.set_meta("schema_version", SCHEMA_VERSION)
         self.conn.commit()
@@ -178,6 +183,21 @@ class Store:
             "DELETE FROM meta WHERE key IN ('embedding_signature', 'embedding_dim')"
         )
         self.set_meta("schema_version", SCHEMA_VERSION)
+
+    def _migrate_module_columns(self) -> None:
+        """Schema v4 -> v5 (BACKLOG-13 M1) : `module`/`qualified_name`
+        ajoutés à `findings`/`endpoints`, purement additifs (`NULL` pour les
+        lignes existantes jusqu'au prochain `cccf index` qui les
+        recalculera) — pas de ré-embedding forcé, contrairement à la
+        migration v1 -> v2."""
+        for table in ("findings", "endpoints"):
+            cols = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+            if "module" not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN module TEXT")
+            if "qualified_name" not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN qualified_name TEXT")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_module ON findings(module)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_endpoints_module ON endpoints(module)")
 
     # -- meta --
 
@@ -239,8 +259,8 @@ class Store:
                 """
                 INSERT INTO findings
                     (id, rule_id, severity, message, path, start_line, end_line,
-                     snippet, fix, cwe, owasp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     snippet, fix, cwe, owasp, module, qualified_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     rule_id = excluded.rule_id,
                     severity = excluded.severity,
@@ -251,7 +271,9 @@ class Store:
                     snippet = excluded.snippet,
                     fix = excluded.fix,
                     cwe = excluded.cwe,
-                    owasp = excluded.owasp
+                    owasp = excluded.owasp,
+                    module = excluded.module,
+                    qualified_name = excluded.qualified_name
                 """,
                 (
                     finding.id,
@@ -265,6 +287,8 @@ class Store:
                     finding.fix,
                     json.dumps(finding.cwe),
                     json.dumps(finding.owasp),
+                    finding.module,
+                    finding.qualified_name,
                 ),
             )
 
@@ -314,6 +338,7 @@ class Store:
         severity_at_least: str | None = None,
         rule_id: str | None = None,
         path_glob: str | None = None,
+        module: str | None = None,
     ) -> list[Finding]:
         query = "SELECT * FROM findings"
         clauses: list[str] = []
@@ -330,6 +355,9 @@ class Store:
         if path_glob:
             clauses.append("path GLOB ?")
             params.append(_glob_to_sqlite(path_glob))
+        if module:
+            clauses.append("module = ?")
+            params.append(module)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY path, start_line, end_line, id"
@@ -360,8 +388,8 @@ class Store:
                 """
                 INSERT INTO endpoints
                     (id, role, system, topic, topic_dynamic, source, framework,
-                     path, start_line, end_line, snippet)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     path, start_line, end_line, snippet, module, qualified_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     role = excluded.role,
                     system = excluded.system,
@@ -372,7 +400,9 @@ class Store:
                     path = excluded.path,
                     start_line = excluded.start_line,
                     end_line = excluded.end_line,
-                    snippet = excluded.snippet
+                    snippet = excluded.snippet,
+                    module = excluded.module,
+                    qualified_name = excluded.qualified_name
                 """,
                 (
                     endpoint.id,
@@ -386,6 +416,8 @@ class Store:
                     endpoint.start_line,
                     endpoint.end_line,
                     endpoint.snippet,
+                    endpoint.module,
+                    endpoint.qualified_name,
                 ),
             )
 
@@ -395,6 +427,7 @@ class Store:
         role: str | None = None,
         topic: str | None = None,
         path_glob: str | None = None,
+        module: str | None = None,
     ) -> list[MessageEndpoint]:
         query = "SELECT * FROM endpoints"
         clauses: list[str] = []
@@ -411,6 +444,9 @@ class Store:
         if path_glob:
             clauses.append("path GLOB ?")
             params.append(_glob_to_sqlite(path_glob))
+        if module:
+            clauses.append("module = ?")
+            params.append(module)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY path, start_line, end_line, id"
@@ -679,6 +715,8 @@ def _row_to_finding(row: sqlite3.Row) -> Finding:
         fix=row["fix"],
         cwe=json.loads(row["cwe"]) if row["cwe"] else [],
         owasp=json.loads(row["owasp"]) if row["owasp"] else [],
+        module=row["module"],
+        qualified_name=row["qualified_name"],
     )
 
 
@@ -706,4 +744,6 @@ def _row_to_endpoint(row: sqlite3.Row) -> MessageEndpoint:
         start_line=row["start_line"],
         end_line=row["end_line"],
         snippet=row["snippet"],
+        module=row["module"],
+        qualified_name=row["qualified_name"],
     )

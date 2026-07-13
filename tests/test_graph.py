@@ -5,6 +5,8 @@ from cccf.graph import (
     find_cycles,
     find_hotspots,
     find_outbound_calls_in_consumers,
+    group_endpoints_by_module,
+    group_findings_by_module,
     paths_match,
     rank_hotspots,
 )
@@ -20,6 +22,7 @@ def make_endpoint(
     end_line: int = 1,
     system: str = "rest",
     framework: str | None = None,
+    module: str | None = None,
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
@@ -33,10 +36,13 @@ def make_endpoint(
         start_line=start_line,
         end_line=end_line,
         snippet="",
+        module=module,
     )
 
 
-def make_finding(path: str, start_line: int, end_line: int, severity: str) -> Finding:
+def make_finding(
+    path: str, start_line: int, end_line: int, severity: str, module: str | None = None
+) -> Finding:
     return Finding(
         id=f"finding-{path}-{start_line}",
         rule_id="cccf.liveness.requests-no-timeout",
@@ -49,6 +55,7 @@ def make_finding(path: str, start_line: int, end_line: int, severity: str) -> Fi
         fix=None,
         cwe=[],
         owasp=[],
+        module=module,
     )
 
 
@@ -291,3 +298,66 @@ def test_no_graph_table_in_sqlite_schema(tmp_path: Path) -> None:
         }
 
     assert not any("graph" in name or "cycle" in name for name in tables)
+
+
+# -- group_endpoints_by_module / group_findings_by_module (BACKLOG-13 M2) --
+
+
+def test_group_endpoints_by_module_groups_by_maven_module() -> None:
+    order_endpoint = make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", module="order-service"
+    )
+    payment_endpoint = make_endpoint(
+        "consume", "orders.created", "payment-service/Consumer.java", module="payment-service"
+    )
+
+    grouped = group_endpoints_by_module([order_endpoint, payment_endpoint])
+
+    assert grouped == {
+        "order-service": [order_endpoint],
+        "payment-service": [payment_endpoint],
+    }
+
+
+def test_group_endpoints_by_module_ignores_endpoints_without_a_module() -> None:
+    unattributed = make_endpoint("serve", "GET /health", "app/Health.java", module=None)
+
+    assert group_endpoints_by_module([unattributed]) == {}
+
+
+def test_group_findings_by_module_groups_by_maven_module() -> None:
+    finding = make_finding("order-service/Producer.java", 10, 10, "ERROR", module="order-service")
+
+    assert group_findings_by_module([finding]) == {"order-service": [finding]}
+
+
+def test_group_findings_by_module_ignores_findings_without_a_module() -> None:
+    finding = make_finding("app/Legacy.java", 1, 1, "WARNING", module=None)
+
+    assert group_findings_by_module([finding]) == {}
+
+
+def test_build_graph_and_find_cycles_work_from_module_grouped_endpoints() -> None:
+    """Preuve de bout en bout (sans fédération A2/K7) : un seul index couvrant
+    plusieurs modules Maven, groupé par `module` via `group_endpoints_by_module`,
+    alimente `build_graph`/`find_cycles` exactement comme la fédération le
+    faisait déjà — même algorithme, deux façons différentes d'obtenir le dict
+    `endpoints_by_service` (BACKLOG-13 M2/M3)."""
+    endpoints = [
+        make_endpoint(
+            "produce", "orders.created", "order-service/Producer.java",
+            system="kafka", module="order-service",
+        ),
+        make_endpoint(
+            "consume", "orders.created", "payment-service/Consumer.java",
+            system="kafka", module="payment-service",
+        ),
+    ]
+
+    grouped = group_endpoints_by_module(endpoints)
+    edges = build_graph(grouped)
+
+    assert len(edges) == 1
+    assert edges[0].from_service == "order-service"
+    assert edges[0].to_service == "payment-service"
+    assert edges[0].kind == "kafka"

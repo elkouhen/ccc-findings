@@ -9,8 +9,22 @@ from cccf.code_search import search_code_with_findings
 from cccf.config import ConfigError, init_config, load_config
 from cccf.embedder import EmbeddingError, make_embedder
 from cccf.coco_indexer import index_repo_with_cocoindex
-from cccf.flow import FlowError, resolve_topic_by_similarity, trace_flow
-from cccf.graph import build_graph, find_cycles, find_hotspots, find_outbound_calls_in_consumers, rank_hotspots
+from cccf.flow import (
+    FlowError,
+    group_endpoints_by_module_for_flow,
+    group_findings_by_module_for_flow,
+    resolve_topic_by_similarity,
+    trace_flow,
+)
+from cccf.graph import (
+    build_graph,
+    find_cycles,
+    find_hotspots,
+    find_outbound_calls_in_consumers,
+    group_endpoints_by_module,
+    group_findings_by_module,
+    rank_hotspots,
+)
 from cccf.indexer import index_repo
 from cccf.render import (
     render_code_search_text,
@@ -234,17 +248,20 @@ def endpoints_cmd(
     role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
     topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
     path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
+    module: Optional[str] = typer.Option(  # noqa: UP007
+        None, "--module", help="Nom du module Maven (artifactId, BACKLOG-13)."
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1),
-    filtrable par système, rôle, topic exact ou motif de chemin.
+    filtrable par système, rôle, topic exact, motif de chemin, ou module Maven.
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
 
     with Store(repo_root) as store:
         endpoints = store.all_endpoints(
-            system=system, role=role, topic=topic, path_glob=path
+            system=system, role=role, topic=topic, path_glob=path, module=module
         )
 
     if json_output:
@@ -265,22 +282,27 @@ def graph_cmd(
 ) -> None:
     """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
     K12) : appels REST synchrones détectés dans un handler de consommation
-    Kafka du projet courant. Avec `--workspace <root>`, fédère aussi les
-    autres microservices du répertoire (BACKLOG-11 A2, lecture seule) pour
-    rapporter les cycles d'appels inter-services et les hotspots (site sur
-    un cycle recouvert par un finding).
+    Kafka du projet courant. Sans `--workspace`, si l'index couvre un
+    répertoire multi-modules Maven (`cccf index` lancé au parent, BACKLOG-13),
+    les endpoints/findings attribués à un module sont automatiquement
+    groupés pour rapporter de vrais cycles/hotspots inter-modules — pas
+    besoin de fédération pour un monorepo. Avec `--workspace <root>`, fédère
+    en plus les autres microservices indexés séparément (BACKLOG-11 A2,
+    lecture seule).
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
 
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
+        findings = store.all_findings()
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
     cycles = []
     hotspots = []
     warnings: list[str] = []
+    cross_module_data_available = False
     if workspace is not None:
         services = discover_maven_services(workspace)
         federation = load_federation(services)
@@ -288,13 +310,22 @@ def graph_cmd(
         edges = build_graph(federation.endpoints_by_service)
         cycles = find_cycles(edges)
         hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
+        cross_module_data_available = True
+    else:
+        grouped_endpoints = group_endpoints_by_module(endpoints)
+        if grouped_endpoints:
+            edges = build_graph(grouped_endpoints)
+            cycles = find_cycles(edges)
+            grouped_findings = group_findings_by_module(findings)
+            hotspots = rank_hotspots(find_hotspots(cycles, grouped_findings))
+            cross_module_data_available = True
 
     result = render_graph_json(
         outbound_calls,
         cycles=cycles,
         hotspots=hotspots,
-        workspace_warnings=warnings,
-        workspace_provided=workspace is not None,
+        warnings=warnings,
+        cross_module_data_available=cross_module_data_available,
     )
 
     if json_output:
@@ -343,9 +374,10 @@ def flow_cmd(
     (producteurs/consommateurs Kafka, ou serveurs/appelants REST) avec les
     findings Semgrep qui les recouvrent (BACKLOG-10 K5). Sans `--workspace`,
     ne cherche que dans le projet courant (la similarité vectorielle n'est
-    disponible que dans ce mode) ; avec `--workspace <root>`, fédère les
-    autres microservices du répertoire (lecture seule, BACKLOG-11 A2) pour
-    un flux qui traverse plusieurs services.
+    disponible que dans ce mode) — chaque site est attribué à son module
+    Maven si l'index couvre un répertoire multi-modules (BACKLOG-13) ;
+    avec `--workspace <root>`, fédère en plus les autres microservices
+    indexés séparément (lecture seule, BACKLOG-11 A2).
     """
     repo_root = Path.cwd()
 
@@ -365,8 +397,8 @@ def flow_cmd(
         _require_index(repo_root)
         with Store(repo_root) as store:
             endpoints = store.all_endpoints()
-            endpoints_by_service = {None: endpoints}
-            findings_by_service = {None: store.all_findings()}
+            endpoints_by_service = group_endpoints_by_module_for_flow(endpoints)
+            findings_by_service = group_findings_by_module_for_flow(store.all_findings())
             try:
                 result = trace_flow(query, endpoints_by_service, findings_by_service)
             except FlowError as exc:

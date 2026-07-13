@@ -61,6 +61,33 @@ def _overlaps(finding: Finding, endpoint: MessageEndpoint) -> bool:
 _DEFAULT_SIMILARITY_THRESHOLD = 0.35
 
 
+def group_endpoints_by_module_for_flow(
+    endpoints: list[MessageEndpoint],
+) -> dict[str | None, list[MessageEndpoint]]:
+    """Regroupe par module Maven (`endpoint.module`, BACKLOG-13 M1) pour
+    `cccf flow` (M3). Contrairement à `graph.group_endpoints_by_module`
+    (qui ignore les endpoints sans module — sans nom stable, ils ne
+    peuvent jamais former une arête inter-service fiable), `flow` ne
+    supprime jamais un site : lister tous les producteurs/consommateurs
+    d'un topic est le contrat, même ceux qu'aucune information de module
+    ne permet d'attribuer (regroupés sous la clé `None`, comme avant
+    l'attribution de module — BACKLOG-13)."""
+    grouped: dict[str | None, list[MessageEndpoint]] = {}
+    for endpoint in endpoints:
+        grouped.setdefault(endpoint.module, []).append(endpoint)
+    return grouped
+
+
+def group_findings_by_module_for_flow(findings: list[Finding]) -> dict[str | None, list[Finding]]:
+    """Même principe que `group_endpoints_by_module_for_flow`, pour les
+    findings recouvrant chaque site (jointure fichier + lignes, esprit
+    ADR-19)."""
+    grouped: dict[str | None, list[Finding]] = {}
+    for finding in findings:
+        grouped.setdefault(finding.module, []).append(finding)
+    return grouped
+
+
 def resolve_topic_by_similarity(
     store: Store,
     embedder: EmbedderLike,

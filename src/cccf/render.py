@@ -196,12 +196,13 @@ class HotspotInfo(TypedDict):
 
 
 class GraphResult(TypedDict):
-    """Shape returned by `cccf graph --json` and the `graph` MCP tool.
+    """Shape returned by `cccf graph --json` et le tool MCP `graph`.
 
-    `cycles`/`hotspots` restent vides tant qu'aucun workspace n'est fourni
-    (`--workspace`/`workspace_root`, BACKLOG-11 A2) : la détection de cycles
-    inter-services a besoin des endpoints de plusieurs services fédérés —
-    voir `note`.
+    `cycles`/`hotspots` restent vides tant qu'aucune donnée inter-module
+    n'est disponible : ni fédération explicite (`--workspace`/
+    `workspace_root`, BACKLOG-11 A2), ni endpoints/findings attribués à un
+    module Maven par l'indexation d'un répertoire parent multi-modules
+    (BACKLOG-13 M1/M2/M3) — voir `note`.
     """
 
     outbound_calls_in_consumers: list[OutboundCallHit]
@@ -210,10 +211,12 @@ class GraphResult(TypedDict):
     note: str
 
 
-_NO_WORKSPACE_NOTE = (
-    "Cycles et hotspots inter-services nécessitent un répertoire multi-services "
-    "fédéré (--workspace/workspace_root, BACKLOG-11 A2) — seuls les appels REST "
-    "détectés dans un handler Kafka de ce projet sont remontés pour l'instant."
+_NO_CROSS_MODULE_DATA_NOTE = (
+    "Cycles et hotspots inter-services nécessitent soit un répertoire multi-services "
+    "fédéré (--workspace/workspace_root, BACKLOG-11 A2), soit des endpoints/findings "
+    "attribués à un module Maven par une indexation multi-modules (BACKLOG-13) — "
+    "seuls les appels REST détectés dans un handler Kafka de ce projet sont remontés "
+    "pour l'instant."
 )
 
 
@@ -256,15 +259,15 @@ def render_graph_json(
     outbound_calls: list[OutboundCallInConsumer],
     cycles: list[Cycle] | None = None,
     hotspots: list[Hotspot] | None = None,
-    workspace_warnings: list[str] | None = None,
-    workspace_provided: bool = False,
+    warnings: list[str] | None = None,
+    cross_module_data_available: bool = False,
 ) -> GraphResult:
     cycles = cycles or []
     hotspots = hotspots or []
-    if workspace_provided:
-        note = " ".join(f"⚠ {w}" for w in (workspace_warnings or []))
+    if cross_module_data_available:
+        note = " ".join(f"⚠ {w}" for w in (warnings or []))
     else:
-        note = _NO_WORKSPACE_NOTE
+        note = _NO_CROSS_MODULE_DATA_NOTE
     return GraphResult(
         outbound_calls_in_consumers=[
             OutboundCallHit(
@@ -337,6 +340,8 @@ class EndpointHit(TypedDict):
     path: str
     start_line: int
     end_line: int
+    module: str | None
+    qualified_name: str | None
 
 
 def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]:
@@ -352,6 +357,8 @@ def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]
             path=e.path,
             start_line=e.start_line,
             end_line=e.end_line,
+            module=e.module,
+            qualified_name=e.qualified_name,
         )
         for e in endpoints
     ]
@@ -363,8 +370,9 @@ def render_endpoints_text(endpoints: list[MessageEndpoint]) -> str:
     lines = []
     for e in endpoints:
         dynamic_marker = " (dynamique)" if e.topic_dynamic else ""
+        module_marker = f" [{e.module}]" if e.module else ""
         lines.append(
-            f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}  "
+            f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}{module_marker}  "
             f"{e.path}:{e.start_line}-{e.end_line}"
         )
     return "\n".join(lines)

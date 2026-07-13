@@ -8,15 +8,12 @@ construire une vue fédérée (`endpoints_by_service`/`findings_by_service`)
 consommable par `graph.py`.
 """
 
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
+from cccf.maven import parse_pom
 from cccf.models import Finding, MessageEndpoint
 from cccf.store import Store, StoreError
-
-_MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
-_SPRING_BOOT_PLUGIN_MARKER = "spring-boot-maven-plugin"
 
 
 @dataclass(frozen=True)
@@ -34,27 +31,6 @@ class FederationResult:
     warnings: list[str]
 
 
-def _pom_child_text(root: ET.Element, tag: str) -> str | None:
-    element = root.find(f"{_MAVEN_NS}{tag}")
-    if element is None:
-        element = root.find(tag)  # pom sans espace de noms déclaré (rare)
-    return element.text.strip() if element is not None and element.text else None
-
-
-def _parse_pom(pom_path: Path) -> tuple[str | None, bool]:
-    """Renvoie (artifactId, is_spring_boot_app). Un pom.xml illisible ou mal
-    formé renvoie (None, False) plutôt que de faire échouer toute la
-    découverte — un seul module cassé ne doit pas bloquer les autres."""
-    try:
-        text = pom_path.read_text(encoding="utf-8", errors="replace")
-        root = ET.fromstring(text)
-    except (ET.ParseError, OSError):
-        return None, False
-    artifact_id = _pom_child_text(root, "artifactId")
-    is_spring_boot_app = _SPRING_BOOT_PLUGIN_MARKER in text
-    return artifact_id, is_spring_boot_app
-
-
 def discover_maven_services(root: Path) -> list[DiscoveredService]:
     """Explore `root` pour des `pom.xml` — chaque répertoire qui en porte un
     est un module. Nom de service : `artifactId` du pom (repli : nom du
@@ -65,7 +41,7 @@ def discover_maven_services(root: Path) -> list[DiscoveredService]:
     services: list[DiscoveredService] = []
     for pom_path in sorted(root.rglob("pom.xml")):
         module_dir = pom_path.parent
-        artifact_id, is_spring_boot_app = _parse_pom(pom_path)
+        artifact_id, is_spring_boot_app = parse_pom(pom_path)
         name = artifact_id or module_dir.name
         kind = "microservice" if is_spring_boot_app else "shared-module"
         indexed = (module_dir / ".cccf" / "findings.db").is_file()

@@ -322,7 +322,14 @@ def test_summary_json_has_expected_structure(
     assert data["by_severity"] == {"ERROR": 2, "WARNING": 2}
 
 
-def _make_endpoint(role: str, topic: str, path: str, start_line: int, end_line: int) -> MessageEndpoint:
+def _make_endpoint(
+    role: str,
+    topic: str,
+    path: str,
+    start_line: int,
+    end_line: int,
+    module: str | None = None,
+) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
         role=role,
@@ -335,6 +342,7 @@ def _make_endpoint(role: str, topic: str, path: str, start_line: int, end_line: 
         start_line=start_line,
         end_line=end_line,
         snippet="",
+        module=module,
     )
 
 
@@ -411,6 +419,43 @@ def test_endpoints_json_lists_and_filters(tmp_path: Path, monkeypatch: pytest.Mo
     hits = json.loads(result_filtered.output)
     assert len(hits) == 1
     assert hits[0]["topic"] == "orders.created"
+
+
+def test_endpoints_json_filters_by_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    order = _make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", 10, 10, module="order-service"
+    )
+    payment = _make_endpoint(
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7,
+        module="payment-service",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(
+            ["order-service/Producer.java", "payment-service/Consumer.java"], [order, payment]
+        )
+
+    result = runner.invoke(app, ["endpoints", "--module", "order-service", "--json"])
+
+    assert result.exit_code == 0
+    hits = json.loads(result.output)
+    assert len(hits) == 1
+    assert hits[0]["module"] == "order-service"
+    assert hits[0]["path"] == "order-service/Producer.java"
+
+
+def test_endpoints_text_shows_module_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    endpoint = _make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", 10, 10, module="order-service"
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["order-service/Producer.java"], [endpoint])
+
+    result = runner.invoke(app, ["endpoints"])
+
+    assert result.exit_code == 0
+    assert "[order-service]" in result.output
 
 
 def test_endpoints_text_reports_none_when_empty(

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from cccf.config import Config
+from cccf.maven import module_name_for_path
 from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
@@ -62,6 +63,27 @@ def _relative_path(raw_path: str, repo_root: Path) -> str:
     return path.as_posix()
 
 
+# BACKLOG-13 M1 : module Maven + nom qualifié Java attribués à chaque
+# finding/endpoint indexé, en plus de `path` — permet de grouper par module
+# sans fédération multi-dépôts (voir `graph.group_endpoints_by_module`).
+_JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
+
+
+@lru_cache(maxsize=2048)
+def _java_qualified_name(repo_root_str: str, rel_path: str) -> str | None:
+    if not rel_path.endswith(".java"):
+        return None
+    class_name = Path(rel_path).stem
+    try:
+        text = (Path(repo_root_str) / rel_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return class_name
+    match = _JAVA_PACKAGE_RE.search(text)
+    if match is None:
+        return class_name
+    return f"{match.group(1)}.{class_name}"
+
+
 def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
     try:
         data = json.loads(raw)
@@ -111,6 +133,8 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
                 fix=extra.get("fix"),
                 cwe=_normalize_str_or_list(metadata.get("cwe")),
                 owasp=_normalize_str_or_list(metadata.get("owasp")),
+                module=module_name_for_path(repo_root, path),
+                qualified_name=_java_qualified_name(str(repo_root), path),
             )
         )
 
@@ -414,6 +438,8 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 start_line=start_line,
                 end_line=end_line,
                 snippet=snippet,
+                module=module_name_for_path(repo_root, path),
+                qualified_name=_java_qualified_name(str(repo_root), path),
             )
         )
 

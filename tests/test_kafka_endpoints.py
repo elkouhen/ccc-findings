@@ -31,6 +31,10 @@ def test_kafka_consume_extracts_literal_topic_from_annotation() -> None:
     assert literal.framework == "spring-kafka"
     assert literal.topic == "orders.created"
     assert literal.topic_dynamic is False
+    # BACKLOG-13 M1 : kafka_repo n'a pas de pom.xml -> pas de module Maven ;
+    # OrderConsumer.java déclare `package com.example.app;`.
+    assert literal.module is None
+    assert literal.qualified_name == "com.example.app.OrderConsumer"
 
 
 @pytest.mark.integration
@@ -265,3 +269,27 @@ def test_resolve_spring_property_prefers_the_service_module_of_the_source_file(
         )
         == "orders-service"
     )
+
+
+# -- module Maven attribué à chaque endpoint (BACKLOG-13 M1) --
+
+
+@pytest.mark.integration
+def test_endpoints_are_attributed_to_their_own_maven_module_from_a_single_parent_scan() -> None:
+    """Indexer le répertoire *parent* directement (un seul scan Semgrep sur
+    les deux modules) doit attribuer à chaque endpoint le bon module —
+    order-service pour le producteur, payment-service pour le
+    consommateur — sans passer par la fédération multi-dépôts (K7/A2)."""
+    kafka_workspace = FIXTURES_DIR / "kafka_workspace"
+    endpoints = run_semgrep_endpoints(
+        kafka_workspace,
+        make_config(rules=["order-service/rules/java.yaml"]),
+        files=[
+            "order-service/app/OrderProducer.java",
+            "payment-service/app/OrderConsumer.java",
+        ],
+    )
+
+    by_path = {e.path: e for e in endpoints}
+    assert by_path["order-service/app/OrderProducer.java"].module == "order-service"
+    assert by_path["payment-service/app/OrderConsumer.java"].module == "payment-service"
