@@ -27,6 +27,7 @@ runner = CliRunner()
 def single_index_cycle_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(REST_CYCLE_WORKSPACE, dest)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest)
     init_result = runner.invoke(app, ["init", "--rules", "service-x/rules/java.yaml"])
     assert init_result.exit_code == 0

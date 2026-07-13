@@ -24,6 +24,7 @@ def test_flow_resolves_topic_across_federated_services_with_overlapping_finding(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
@@ -57,6 +58,7 @@ def test_flow_reports_warning_when_a_federated_service_is_not_indexed(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
     assert runner.invoke(app, ["index"]).exit_code == 0
@@ -88,6 +90,7 @@ def test_flow_falls_back_to_similarity_when_textual_resolution_fails(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
     assert runner.invoke(app, ["index"]).exit_code == 0
@@ -112,6 +115,7 @@ def test_flow_unresolved_topic_exits_with_error(
     échoue, et le repli par similarité (K3) échoue lui aussi de façon
     déterministe (aucun endpoint embeddé) — pas de dépendance à un seuil de
     similarité calibré sur un modèle réel."""
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "rules").mkdir()
     (tmp_path / "rules" / "empty.yaml").write_text("rules: []\n")

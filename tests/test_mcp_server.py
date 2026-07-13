@@ -235,6 +235,7 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
     rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(rest_cycle_workspace, dest)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     for service in ("service-x", "service-y", "service-z"):
         monkeypatch.chdir(dest / service)
         runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"])
@@ -387,6 +388,7 @@ def test_trace_message_flow_tool_with_workspace_root_traces_across_services(
     kafka_workspace = FIXTURES_DIR / "kafka_workspace"
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(kafka_workspace, dest)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         runner.invoke(app, ["init", "--rules", "rules/java.yaml"])

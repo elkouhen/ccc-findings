@@ -32,6 +32,7 @@ def test_two_independently_indexed_services_federate_with_a_kafka_edge_between_t
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     # K7 CA1 (adapté) : chaque service est indexé séparément, comme deux
     # dépôts distincts — cccf n'a jamais connaissance de l'autre pendant
     # cccf init/cccf index.
@@ -76,6 +77,7 @@ def test_missing_service_in_workspace_warns_without_failing_federation(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
     index_result = runner.invoke(app, ["index"])
@@ -97,6 +99,7 @@ def test_federation_never_writes_to_the_other_services_databases(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         runner.invoke(app, ["init", "--rules", "rules/java.yaml"])

@@ -24,6 +24,7 @@ runner = CliRunner()
 def indexed_cycle_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(REST_CYCLE_WORKSPACE, dest)
+    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
     for service in ("service-x", "service-y", "service-z"):
         monkeypatch.chdir(dest / service)
         init_result = runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
