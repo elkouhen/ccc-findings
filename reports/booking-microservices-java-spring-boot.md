@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/booking-microservices-java-spring-boot.svg`](assets/booking-microservices-java-spring-boot.svg) · [`assets/booking-microservices-java-spring-boot.d2`](assets/booking-microservices-java-spring-boot.d2)
 
-![Graph for booking-microservices-java-spring-boot](assets/booking-microservices-java-spring-boot.svg)
+<img src="assets/booking-microservices-java-spring-boot.svg" alt="Graph for booking-microservices-java-spring-boot" width="960">
 
 ## Graph notes and warnings
 

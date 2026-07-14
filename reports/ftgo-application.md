@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/ftgo-application.svg`](assets/ftgo-application.svg) · [`assets/ftgo-application.d2`](assets/ftgo-application.d2)
 
-![Graph for ftgo-application](assets/ftgo-application.svg)
+<img src="assets/ftgo-application.svg" alt="Graph for ftgo-application" width="960">
 
 ## Graph notes and warnings
 

@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/microservices-kafka-mq.svg`](assets/microservices-kafka-mq.svg) · [`assets/microservices-kafka-mq.d2`](assets/microservices-kafka-mq.d2)
 
-![Graph for microservices-kafka-mq](assets/microservices-kafka-mq.svg)
+<img src="assets/microservices-kafka-mq.svg" alt="Graph for microservices-kafka-mq" width="960">
 
 ## Graph notes and warnings
 

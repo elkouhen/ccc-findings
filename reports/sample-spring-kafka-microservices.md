@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/sample-spring-kafka-microservices.svg`](assets/sample-spring-kafka-microservices.svg) · [`assets/sample-spring-kafka-microservices.d2`](assets/sample-spring-kafka-microservices.d2)
 
-![Graph for sample-spring-kafka-microservices](assets/sample-spring-kafka-microservices.svg)
+<img src="assets/sample-spring-kafka-microservices.svg" alt="Graph for sample-spring-kafka-microservices" width="960">
 
 ## Graph notes and warnings
 

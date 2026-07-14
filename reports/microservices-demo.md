@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/microservices-demo.svg`](assets/microservices-demo.svg) · [`assets/microservices-demo.d2`](assets/microservices-demo.d2)
 
-![Graph for microservices-demo](assets/microservices-demo.svg)
+<img src="assets/microservices-demo.svg" alt="Graph for microservices-demo" width="960">
 
 ## Graph notes and warnings
 

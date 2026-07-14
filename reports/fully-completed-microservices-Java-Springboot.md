@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/fully-completed-microservices-Java-Springboot.svg`](assets/fully-completed-microservices-Java-Springboot.svg) · [`assets/fully-completed-microservices-Java-Springboot.d2`](assets/fully-completed-microservices-Java-Springboot.d2)
 
-![Graph for fully-completed-microservices-Java-Springboot](assets/fully-completed-microservices-Java-Springboot.svg)
+<img src="assets/fully-completed-microservices-Java-Springboot.svg" alt="Graph for fully-completed-microservices-Java-Springboot" width="960">
 
 ## Graph notes and warnings
 

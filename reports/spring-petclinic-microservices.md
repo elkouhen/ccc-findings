@@ -30,7 +30,7 @@
 
 Artifacts: [`assets/spring-petclinic-microservices.svg`](assets/spring-petclinic-microservices.svg) · [`assets/spring-petclinic-microservices.d2`](assets/spring-petclinic-microservices.d2)
 
-![Graph for spring-petclinic-microservices](assets/spring-petclinic-microservices.svg)
+<img src="assets/spring-petclinic-microservices.svg" alt="Graph for spring-petclinic-microservices" width="960">
 
 ## Graph notes and warnings
 
