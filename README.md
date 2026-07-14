@@ -1,10 +1,10 @@
 # ccc-radar (`cccr`)
 
-Natural-language-queryable Semgrep findings index, combined with [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) (`ccc`).
+Index Semgrep et inventaire d'architecture Java/Spring, complétés par [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) (`ccc`) pour la recherche de code.
 
 `cccr` locally indexes a project's Semgrep findings (in a SQLite database
-`.cccr/findings.db`), makes them queryable in natural language (embedding-based
-search), and joins them with `ccc` code search results at query time.
+`.cccr/findings.db`), interroge les findings avec une recherche lexicale
+précise, et annote les résultats de `ccc` à la requête.
 
 The chosen positioning is intentionally **two-layered**:
 
@@ -109,6 +109,10 @@ functional behavior remains documented in
 
 ## Installation
 
+Prérequis : `uv` et `pipx`. `ccc` est optionnel : il ne sert qu'à
+`cccr search`; les commandes d'audit (`index`, `endpoints`, `graph`, `audit`)
+n'en dépendent pas.
+
 ```bash
 uv tool install ccc-radar
 uv tool install cocoindex-code
@@ -119,6 +123,23 @@ env -u SSL_CERT_FILE uvx --from huggingface_hub hf download jinaai/jina-code-emb
 The default `embedding_model` points to `~/models/jina-code-embeddings-1.5b`.
 When downloading via `hf`, removing `SSL_CERT_FILE` from the environment avoids
 TLS failures observed on some workstations.
+
+## Préflight d'un audit Java/Spring
+
+Installez le skill puis indiquez explicitement l'emplacement de ses packs :
+
+```bash
+npx skills add elkouhen/ccc-radar-skill
+export CCCR_RULES_ROOT="/chemin/vers/ccc-radar-skill/skills/cccr/rules"
+cccr init
+cccr doctor
+cccr index
+cccr audit
+```
+
+`cccr doctor` doit confirmer les packs REST, Kafka, liveness et Kafka security
+avant de conclure sur un graphe. Sans eux, le fallback `p/security-audit` reste
+valable pour les findings, mais pas pour une cartographie d'architecture.
 
 ## Upgrade
 
@@ -133,6 +154,7 @@ uv tool upgrade --all       # upgrades all tools installed via uv (including coc
 
 ```bash
 cccr init                       # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
+cccr doctor                     # validates prerequisites and active architecture packs
 cccr index                      # incremental scan + progress + embeddings
 ccc index                       # required for cccr search
 cccr search "user auth flow"    # exact ccc result set + findings from its source file/class
@@ -154,6 +176,7 @@ Semgrep scan, persistence, embedding) before the final
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr endpoints                  # indexed REST/Kafka inventory
 cccr graph                      # inter-service REST/Kafka topology
+cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr modules                    # all Maven/Gradle modules, versions and synthetic config templates
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
@@ -165,10 +188,10 @@ For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `cccr summary` → `cccr endpoints` → `cccr graph` → `cccr findings` /
 `cccr search`.
 
-`cccr search` is a **superset of `ccc search`**: same options (`--limit`,
-`--offset`, `--lang`, `--path`, `--refresh`), same results, same format, each
-result enriched with overlapping Semgrep findings and ranked while taking their
-severity into account. On the MCP side, the tool has the same name as `ccc`'s
+`cccr search` is a **presentation superset of `ccc search`**: same options
+(`--limit`, `--offset`, `--lang`, `--path`, `--refresh`), same results, same
+order and same pagination. Each result is annotated with findings from its
+source file or class; findings never alter ranking. On the MCP side, the tool has the same name as `ccc`'s
 (`search`) and takes the same parameters. When `cccr` falls back to the `ccc`
 bridge, a ready `ccc` index (`.cocoindex_code/target_sqlite.db`, usually built
 via `ccc index`) must already exist; otherwise `cccr search` now fails

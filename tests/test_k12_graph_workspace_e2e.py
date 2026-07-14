@@ -104,7 +104,12 @@ def test_graph_drawio_writes_a_valid_mxgraph_file(
 
     root = ET.fromstring(out_file.read_text(encoding="utf-8"))
     node_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
-    assert node_values == {"<b>service-x</b>", "<b>service-y</b>", "<b>service-z</b>"}
+    # Les nœuds Drawio incluent désormais une table HTML qui récapitule les
+    # ressources exposées. Le contrat utile est la présence de chaque service,
+    # pas l'ancien libellé HTML minimal.
+    assert {name for name in ("service-x", "service-y", "service-z") if any(
+        f"<b>{name}</b>" in (value or "") for value in node_values
+    )} == {"service-x", "service-y", "service-z"}
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
     assert len(edge_cells) == 3
     assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)

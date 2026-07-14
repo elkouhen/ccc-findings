@@ -237,8 +237,6 @@ def index_repo(
     # The module inventory is intentionally materialized with the index rather
     # than reconstructed by `cccr modules`: its configuration examples describe
     # the exact repository state that was audited.
-    store.replace_modules(discover_modules(repo_root))
-
     current_paths = set(current_hashes)
     previous_paths = set(previous_hashes)
 
@@ -303,6 +301,12 @@ def index_repo(
             store.set_file_hash(path, current_hashes[path])
 
     store.set_meta("endpoint_inventory_signature", endpoint_signature)
+
+    # Persist only after the scan path has completed.  The inventory remains
+    # transactional with the rest of the index and represents the audited
+    # repository state, not a partially failed scan.
+    _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
+    store.replace_modules(discover_modules(repo_root))
 
     if index_code_chunks:
         chunk_paths = changed

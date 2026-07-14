@@ -56,16 +56,20 @@ semgrep_timeout_s: 120
 ### `cccr version`
 Displays the package version (`0.1.0`).
 
-### `cccr init [--rules PATH]...`
+### `cccr init [--rules PATH]... [--rules-root DIR]`
 Creates `.cccr/config.yml`.
 
 - Repeatable `--rules`: paths or Semgrep config identifiers (e.g.
   `rules/rules.yml`, `p/security-audit`).
+- `--rules-root`: directory containing the five bundled packs; takes precedence
+  over automatic skill discovery. `CCCR_RULES_ROOT` supplies the same explicit,
+  portable location.
 - Without `--rules`: automatic detection in the order `.semgrep.yml` →
   `semgrep.yml` → `.semgrep`. If nothing is found, `cccr init` first looks for a
   local `ccc-radar-skill` repo (supported candidates:
   `~/ccc-radar-skill/skills/cccr/rules/` then
-  `~/cocoindex-ext-skill/skills/cccr/rules/`) and, if it finds the five
+  `~/cocoindex-ext-skill/skills/cccr/rules/`, plus common agent skill roots)
+  and, if it finds the five
   expected packs `default`, `liveness`, `rest`, `kafka`, `kafka-security`, it
   copies them into `.cccr/rules/` in the target repo and writes `rules:` with
   those **relative** paths (`.cccr/rules/<pack>`). If the skill is missing or
@@ -76,8 +80,21 @@ Creates `.cccr/config.yml`.
   extension (`endpoints` / `graph` / `workspace` / `flow`). Priority order:
   explicit `--rules` > detected local config > copied skill packs > default
   registry pack.
+- Each automatic copy writes `.cccr/rules/manifest.json`, recording the source
+  and SHA-256 of every pack file. It makes the copied rule set auditable and
+  lets a future update command compare it without relying on an absolute path
+  in `config.yml`.
 - If `.cccr/config.yml` already exists: explicit error, exit code 1, and the
   existing file is never overwritten.
+
+### `cccr doctor [--json]`
+
+Read-only preflight for an architecture audit. It reports the availability of
+Semgrep (blocking), `ccc` (warning: only code search needs it), the
+configuration, the active `liveness`/`rest`/`kafka`/`kafka-security` packs,
+the local embedding model and index state. Any blocking check yields exit code
+2. A graph must not be interpreted as a full REST/Kafka topology while the
+architecture-pack check fails.
 
 ### `cccr index [--full] [--engine manual|cocoindex]`
 Indexes the project (Semgrep findings **and** REST/Kafka endpoints).
@@ -170,8 +187,10 @@ Degraded modes:
   by the warning `findings index absent (run: cccr index): results without findings`,
   exit code 0.
 
-### `cccr findings "<query>" [options]`
-Precision-first lexical search in indexed findings **only** (no code search) —
+### `cccr findings ["<query>"] [options]`
+Without a query, lists indexed findings in deterministic severity/location
+order, with the same filters and pagination. With a query, performs a
+precision-first lexical search in indexed findings **only** (no code search) —
 the old `cccr search`, renamed when `search` became the superset of `ccc search`.
 Every query token must match a finding's `rule_id`, message, path,
 `CWE`/`OWASP`, snippet or severity. Exact and full-field matches rank first.
@@ -460,6 +479,14 @@ error.
 
 The configuration example is generated during that indexation and follows
 the same no-real-values policy as `microservices.configuration_examples`.
+
+### `cccr audit [--workspace ROOT] [--json]`
+
+Produces conservative architecture risks from the static inventory: Kafka
+producer or consumer with no indexed counterpart, dynamic Kafka/HTTP targets,
+and synchronous HTTP dependency cycles. Every result carries evidence and a
+confidence level; it is not an execution trace and never claims to prove a
+runtime path.
 
 ```json
 [

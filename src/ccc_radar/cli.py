@@ -1,5 +1,7 @@
 import json
+import os
 import shutil
+import hashlib
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -7,6 +9,7 @@ import typer
 
 from ccc_radar import __version__
 from ccc_radar.code_search import search_code_with_findings
+from ccc_radar.audit import assess_architecture, render_audit_json, render_audit_text
 from ccc_radar.config import ConfigError, init_config, load_config
 from ccc_radar.embedder import EmbeddingError, make_embedder, resolve_embedding_model
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
@@ -55,6 +58,7 @@ from ccc_radar.search import summary as compute_summary
 from ccc_radar.paths import config_path, db_path, state_dir
 from ccc_radar.store import Store, StoreError
 from ccc_radar.workspace import discover_maven_services, load_federation
+from ccc_radar.doctor import has_errors, run_doctor
 
 app = typer.Typer(
     help="ccc-radar: indexe findings, code associé et signaux d'architecture exploitables par agent"
@@ -90,6 +94,24 @@ def version() -> None:
     typer.echo(__version__)
 
 
+@app.command(name="doctor")
+def doctor_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Vérifie les prérequis d'un audit d'architecture, sans modifier le projet."""
+    checks = run_doctor(Path.cwd())
+    result = [
+        {"name": check.name, "status": check.status, "detail": check.detail}
+        for check in checks
+    ]
+    if json_output:
+        typer.echo(json.dumps(result))
+    else:
+        for check in checks:
+            marker = {"ok": "✓", "warning": "⚠", "error": "✗"}[check.status]
+            typer.echo(f"{marker} {check.name}: {check.detail}")
+    if has_errors(checks):
+        raise typer.Exit(code=2)
+
+
 def _detect_semgrep_config(repo_root: Path) -> str | None:
     for candidate in _SEMGREP_CONFIG_CANDIDATES:
         if (repo_root / candidate).exists():
@@ -98,9 +120,23 @@ def _detect_semgrep_config(repo_root: Path) -> str | None:
 
 
 def _find_skill_rules_root() -> Path | None:
+    configured = os.environ.get("CCCR_RULES_ROOT")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_dir():
+            return candidate
     home = Path.home()
     for parts in _SKILL_RULES_ROOT_CANDIDATES:
         candidate = home.joinpath(*parts)
+        if candidate.is_dir():
+            return candidate
+    # Common skill installation roots. `CCCR_RULES_ROOT` remains the
+    # deterministic escape hatch for other clients/installers.
+    for candidate in (
+        home / ".codex" / "skills" / "cccr" / "rules",
+        home / ".agents" / "skills" / "cccr" / "rules",
+        home / ".claude" / "skills" / "cccr" / "rules",
+    ):
         if candidate.is_dir():
             return candidate
     return None
@@ -122,6 +158,20 @@ def _install_default_rule_packs(repo_root: Path, rules_root: Path) -> list[str]:
         target_dir = destination_root / pack
         shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
         installed_paths.append(f".cccr/rules/{pack}")
+    manifest = {
+        "source": str(rules_root),
+        "packs": {
+            pack: {
+                path.relative_to(rules_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted((rules_root / pack).rglob("*"))
+                if path.is_file()
+            }
+            for pack in DEFAULT_RULE_PACKS
+        },
+    }
+    (destination_root / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return installed_paths
 
 
@@ -129,6 +179,9 @@ def _install_default_rule_packs(repo_root: Path, rules_root: Path) -> list[str]:
 def init(
     rules: Optional[list[str]] = typer.Option(  # noqa: UP007 (Typer nécessite Optional)
         None, "--rules", help="Chemin ou pack de règles Semgrep (répétable)."
+    ),
+    rules_root: Optional[Path] = typer.Option(
+        None, "--rules-root", help="Répertoire contenant les packs cccr (default/, rest/, kafka/, ...)."
     ),
 ) -> None:
     """Initialise la configuration .cccr/config.yml du projet."""
@@ -143,17 +196,16 @@ def init(
         if detected is not None:
             rules_paths = [detected]
         else:
-            rules_root = _find_skill_rules_root()
+            rules_root = rules_root or _find_skill_rules_root()
             if rules_root is not None:
                 try:
                     rules_paths = _install_default_rule_packs(repo_root, rules_root)
                 except ConfigError:
                     rules_paths = [DEFAULT_REGISTRY_PACK]
                     typer.echo(
-                        "Aucune config Semgrep détectée et les packs du skill sont "
-                        f"incomplets sous {rules_root}. Utilisation du pack par défaut "
-                        f"'{DEFAULT_REGISTRY_PACK}' (relancez avec --rules "
-                        "<chemin-ou-pack> pour le personnaliser)."
+                    "Aucune config Semgrep détectée et les packs d'architecture sont "
+                    f"incomplets sous {rules_root}. Utilisation du pack par défaut "
+                    f"'{DEFAULT_REGISTRY_PACK}' : `cccr doctor` signalera que le graphe REST/Kafka n'est pas prêt."
                     )
                 else:
                     typer.echo(
@@ -163,9 +215,9 @@ def init(
             else:
                 rules_paths = [DEFAULT_REGISTRY_PACK]
                 typer.echo(
-                    f"Aucune config Semgrep détectée et repo skill introuvable. "
+                    f"Aucune config Semgrep détectée et packs du skill introuvables. "
                     f"Utilisation du pack par défaut '{DEFAULT_REGISTRY_PACK}' "
-                    "(relancez avec --rules <chemin-ou-pack> pour le personnaliser)."
+                    "(pour un audit architecture, définissez CCCR_RULES_ROOT ou passez --rules-root)."
                 )
 
     try:
@@ -239,9 +291,8 @@ def search(
     refresh: bool = typer.Option(False, "--refresh"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Recherche sémantique de code (mêmes résultats et mêmes paramètres que
-    `ccc search`), enrichie des findings Semgrep qui recouvrent chaque
-    résultat et classée en tenant compte de leur sévérité.
+    """Recherche de code via `ccc`, dans le même ordre et avec la même limite,
+    annotée des findings du même fichier ou de la même classe.
     """
     repo_root = Path.cwd()
 
@@ -266,7 +317,9 @@ def search(
 
 @app.command(name="findings")
 def findings_cmd(
-    query: str,
+    query: Optional[str] = typer.Argument(  # noqa: UP007 (Typer nécessite Optional)
+        None, help="Requête précision-first. Omettre pour lister les findings."
+    ),
     severity: Optional[str] = typer.Option(None, "--severity"),  # noqa: UP007
     rule: Optional[str] = typer.Option(None, "--rule"),  # noqa: UP007
     path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
@@ -275,20 +328,17 @@ def findings_cmd(
     context: bool = typer.Option(False, "--context"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Recherche en langage naturel dans les findings Semgrep indexés (seuls,
-    sans recherche de code — pour la recherche code + findings, voir `search`).
+    """Liste les findings indexés ou les filtre par requête précision-first,
+    sans recherche de code — pour la recherche code + findings, voir `search`.
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
-
-    config = load_config(repo_root)
-    embedder = make_embedder(config.embedding_model)
 
     try:
         with Store(repo_root) as store:
             hits = search_findings(
                 store,
-                embedder,
+                object(),  # recherche findings lexicale ; aucun modèle requis
                 query,
                 severity=severity,
                 rule=rule,
@@ -296,7 +346,7 @@ def findings_cmd(
                 limit=limit,
                 offset=offset,
             )
-    except (EmbeddingError, SearchError) as exc:
+    except SearchError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
 
@@ -452,6 +502,30 @@ def graph_cmd(
         typer.echo(json.dumps(result))
     else:
         typer.echo(render_graph_text(result))
+
+
+@app.command(name="audit")
+def audit_cmd(
+    workspace: Optional[Path] = typer.Option(
+        None, "--workspace", help="Workspace de services indexés séparément."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Signale les risques d'architecture statiquement démontrables.
+
+    Les constats sont volontairement conservateurs : topics dynamiques,
+    producteurs/consommateurs Kafka orphelins et cycles HTTP synchrones.
+    """
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+    if workspace is not None:
+        federation = load_federation(discover_maven_services(workspace))
+        endpoints_by_service = dict(federation.endpoints_by_service)
+    else:
+        with Store(repo_root, readonly=True) as store:
+            endpoints_by_service = group_endpoints_by_module(store.all_endpoints())
+    risks = assess_architecture(endpoints_by_service, build_graph(endpoints_by_service))
+    typer.echo(json.dumps(render_audit_json(risks)) if json_output else render_audit_text(risks))
 
 
 @app.command(name="microservices")

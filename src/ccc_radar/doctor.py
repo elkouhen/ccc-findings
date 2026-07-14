@@ -1,0 +1,74 @@
+"""Preflight checks for a reproducible architecture audit."""
+
+from __future__ import annotations
+
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+from ccc_radar.config import Config, ConfigError, load_config
+from ccc_radar.paths import db_path
+
+ARCHITECTURE_PACKS = ("liveness", "rest", "kafka", "kafka-security")
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    status: str  # ok | warning | error
+    detail: str
+
+
+def _has_pack(config: Config, name: str) -> bool:
+    return any(f"/{name}/" in rule.replace("\\", "/") for rule in config.rules)
+
+
+def run_doctor(repo_root: Path) -> list[Check]:
+    """Report readiness without creating files or downloading models."""
+    checks = [
+        Check("cccr", "ok", "CLI disponible."),
+        Check(
+            "semgrep",
+            "ok" if shutil.which("semgrep") else "error",
+            "Moteur Semgrep disponible." if shutil.which("semgrep") else "Installez Semgrep : pipx install semgrep.",
+        ),
+        Check(
+            "ccc (optionnel)",
+            "ok" if shutil.which("ccc") else "warning",
+            "Recherche de code disponible." if shutil.which("ccc") else "Nécessaire uniquement pour `cccr search` : uv tool install cocoindex-code.",
+        ),
+    ]
+    try:
+        config = load_config(repo_root)
+    except ConfigError as exc:
+        checks.append(Check("configuration", "error", str(exc)))
+        return checks
+
+    checks.append(Check("configuration", "ok", "Configuration .cccr/config.yml chargée."))
+    missing = [pack for pack in ARCHITECTURE_PACKS if not _has_pack(config, pack)]
+    if missing:
+        checks.append(Check(
+            "packs architecture", "error",
+            "Packs manquants pour l'inventaire REST/Kafka : " + ", ".join(missing) + ".",
+        ))
+    else:
+        checks.append(Check("packs architecture", "ok", "Packs REST, Kafka, liveness et Kafka security actifs."))
+
+    model = Path(config.embedding_model).expanduser()
+    checks.append(Check(
+        "modèle d'embeddings",
+        "ok" if model.exists() else "warning",
+        f"Modèle local : {model}." if model.exists() else (
+            f"Modèle local absent : {model}. L'indexation peut le télécharger ou échouer hors ligne."
+        ),
+    ))
+    checks.append(Check(
+        "index",
+        "ok" if db_path(repo_root).is_file() else "warning",
+        "Index présent." if db_path(repo_root).is_file() else "Index absent : lancez `cccr index` après le préflight.",
+    ))
+    return checks
+
+
+def has_errors(checks: list[Check]) -> bool:
+    return any(check.status == "error" for check in checks)

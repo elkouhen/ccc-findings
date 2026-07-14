@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 import ccc_radar.embedder as embedder_module
 import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_RULE_PACKS, app
-from ccc_radar.models import MessageEndpoint, compute_endpoint_id
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -179,6 +179,25 @@ def test_findings_without_index_fails_with_exact_message_and_code_2(
     assert "Index absent. Lancez d'abord: cccr index" in result.output
 
 
+def test_findings_without_query_lists_indexed_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    finding = Finding(
+        id="listed-finding", rule_id="custom.listed", severity="ERROR",
+        message="Finding de liste", path="app/Main.java", start_line=3, end_line=3,
+        snippet="dangerous();", fix=None, cwe=[], owasp=[],
+    )
+    with Store(tmp_path) as store:
+        store.replace_findings_for_files([finding.path], [finding])
+
+    result = runner.invoke(app, ["findings", "--json", "--limit", "10"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)[0]["rule_id"] == "custom.listed"
+
+
 @pytest.mark.integration
 def test_findings_json_output_matches_contract(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
@@ -191,7 +210,10 @@ def test_findings_json_output_matches_contract(
 
     assert result.exit_code == 0
     hits = json.loads(result.output)
-    assert len(hits) == 4
+    # La recherche findings est précision-first : « injection sql » ne doit
+    # pas ramener les findings qui ne couvrent qu'un des deux termes.
+    assert len(hits) == 1
+    assert hits[0]["rule_id"].endswith("custom.sql-fstring")
     expected_keys = {
         "id",
         "rule_id",
@@ -312,12 +334,14 @@ def test_search_json_returns_stable_code_search_result_schema(
 
 @pytest.mark.integration
 def test_search_uses_ccc_even_when_experimental_code_index_is_available(
-    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+    fake_ccc_on_path: Path, repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     index_result = runner.invoke(app, ["index", "--engine", "cocoindex"])
     assert index_result.exit_code == 0
+    (repo_copy / ".cocoindex_code").mkdir()
+    (repo_copy / ".cocoindex_code" / "target_sqlite.db").write_text("")
 
     result = runner.invoke(app, ["search", "injection sql", "--json"])
 
@@ -691,7 +715,8 @@ def test_microservices_discovers_maven_modules_and_flags_unindexed(
     assert result.exit_code == 0
     data = json.loads(result.output)
     by_name = {s["name"]: s for s in data["services"]}
-    assert by_name["order-service"]["kind"] == "microservice"
+    # Un plugin Spring Boot sans classe main n'est pas un runtime déployable.
+    assert by_name["order-service"]["kind"] == "shared-module"
     assert by_name["order-service"]["indexed"] is True
     assert by_name["common-lib"]["kind"] == "shared-module"
     assert any("payment-service" in w for w in data["warnings"])
@@ -706,7 +731,7 @@ def test_microservices_text_reports_no_modules_for_empty_directory(
     result = runner.invoke(app, ["microservices", str(empty)])
 
     assert result.exit_code == 0
-    assert "Aucun module Maven découvert" in result.output
+    assert "Aucun service workspace découvert" in result.output
 
 
 def test_microservices_defaults_to_current_directory(
@@ -723,11 +748,14 @@ def test_microservices_defaults_to_current_directory(
     assert result.exit_code == 0
     data = json.loads(result.output)
     by_name = {s["name"]: s for s in data["services"]}
-    assert by_name["order-service"]["kind"] == "microservice"
+    assert by_name["order-service"]["kind"] == "shared-module"
 
 
 def test_microservices_discovers_gradle_services(tmp_path: Path) -> None:
-    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    project = tmp_path / "billing-service" / "billing-service-main"
+    (project / "build.gradle").parent.mkdir(parents=True)
+    (project / "build.gradle").write_text("archivesName = 'billing-service'\n")
+    service = project / "src" / "main" / "java"
     service.mkdir(parents=True)
     (service / "BillingServiceMain.java").write_text(
         """
@@ -750,7 +778,7 @@ public class BillingServiceMain {
     assert data["services"] == [
         {
             "name": "billing-service",
-            "path": str((tmp_path / "billing-service").resolve()),
+            "path": str(project.resolve()),
             "kind": "microservice",
             "indexed": True,
             "endpoint_count": 0,

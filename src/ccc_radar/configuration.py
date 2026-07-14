@@ -18,6 +18,12 @@ _CONDITIONAL_PROPERTY_RE = re.compile(
     r"@ConditionalOnProperty\s*\([^)]*?\b(?:name|value)\s*=\s*['\"]([A-Za-z0-9_.-]+)['\"]",
     re.DOTALL,
 )
+_CONFIGURATION_PROPERTIES_RE = re.compile(
+    r"@ConfigurationProperties\s*\(\s*(?:prefix\s*=\s*)?['\"]([A-Za-z0-9_.-]+)['\"]"
+)
+# Spring Boot beans often expose the complete prefix with a field name.  The
+# field-level shape is deliberately not guessed: a prefix is still useful in
+# a template and avoids inventing configuration keys.
 _BOOLEAN_KEY_RE = re.compile(r"(?:enabled?|ssl|secure|debug)$", re.IGNORECASE)
 _NUMBER_KEY_RE = re.compile(r"(?:port|timeout|retries|count|size|interval|duration)$", re.IGNORECASE)
 
@@ -53,6 +59,7 @@ def _property_keys_from_file(path: Path) -> set[str]:
         *(_PLACEHOLDER_RE.findall(text)),
         *(_GET_PROPERTY_RE.findall(text)),
         *(_CONDITIONAL_PROPERTY_RE.findall(text)),
+        *(_CONFIGURATION_PROPERTIES_RE.findall(text)),
     }
 
 

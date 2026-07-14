@@ -107,7 +107,7 @@ def _keyword_hits(candidates: list[Finding], query: str) -> list[SearchHit]:
 def search_findings(
     store: Store,
     embedder: object,
-    query: str,
+    query: str | None,
     severity: str | None = None,
     rule: str | None = None,
     path_glob: str | None = None,
@@ -130,6 +130,14 @@ def search_findings(
     )
     if not candidates:
         return []
+
+    # `cccr findings` without a query is an inventory view. Keep the same
+    # deterministic severity/location ordering as a searched result while
+    # preserving all filters and pagination.
+    if query is None or not query.strip():
+        hits = [SearchHit(finding=finding, score=0.0) for finding in candidates]
+        hits.sort(key=lambda hit: _finding_sort_key(hit.finding))
+        return hits[offset : offset + limit]
 
     keyword_hits = _keyword_hits(candidates, query)
     return keyword_hits[offset : offset + limit]

@@ -44,7 +44,10 @@ def indexed_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
     result = search_findings("injection sql")
 
-    assert len(result) == 4
+    # La recherche est précision-first : tous les termes de la requête doivent
+    # être couverts par un finding, comme pour la commande `cccr findings`.
+    assert len(result) == 1
+    assert result[0]["rule_id"].endswith("custom.sql-fstring")
     assert {"id", "rule_id", "severity", "path", "score"} <= set(result[0].keys())
 
 
@@ -266,7 +269,10 @@ def test_list_workspace_services_tool_discovers_and_flags_unindexed(tmp_path: Pa
 
 
 def test_list_workspace_services_tool_discovers_gradle_services(tmp_path: Path) -> None:
-    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    project = tmp_path / "billing-service" / "billing-service-main"
+    (project / "build.gradle").parent.mkdir(parents=True)
+    (project / "build.gradle").write_text("archivesName = 'billing-service'\n")
+    service = project / "src" / "main" / "java"
     service.mkdir(parents=True)
     (service / "BillingServiceMain.java").write_text(
         """
@@ -287,7 +293,7 @@ public class BillingServiceMain {
     assert result["services"] == [
         {
             "name": "billing-service",
-            "path": str((tmp_path / "billing-service").resolve()),
+            "path": str(project.resolve()),
             "kind": "microservice",
             "indexed": True,
             "endpoint_count": 0,

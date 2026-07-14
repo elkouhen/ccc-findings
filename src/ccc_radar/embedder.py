@@ -51,7 +51,13 @@ class Embedder:
         embeddings = model.encode(
             texts, batch_size=32, normalize_embeddings=True, convert_to_numpy=True
         )
-        return embeddings.astype(np.float32)
+        # Some model backends normalize in a wider dtype then round during the
+        # float32 conversion. Re-normalize the stored representation: cosine
+        # indexes and callers can rely on unit vectors, independently of the
+        # backend's numerical details.
+        vectors = embeddings.astype(np.float32)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        return np.divide(vectors, norms, out=vectors, where=norms != 0)
 
     def embed_query(self, text: str) -> np.ndarray:
         return self.embed_texts([text])[0]
