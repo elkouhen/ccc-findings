@@ -1,105 +1,112 @@
 # ccc-radar (`cccr`)
 
-Index Semgrep interrogeable en langage naturel, combiné à [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) (`ccc`).
+Natural-language-queryable Semgrep findings index, combined with [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) (`ccc`).
 
-`cccr` indexe localement les findings Semgrep d'un projet (dans une base
-SQLite `.cccr/findings.db`), les rend interrogeables en langage naturel
-(recherche par embeddings) et les joint aux résultats de recherche de code
-de `ccc` à la requête.
+`cccr` locally indexes a project's Semgrep findings (in a SQLite database
+`.cccr/findings.db`), makes them queryable in natural language (embedding-based
+search), and joins them with `ccc` code search results at query time.
 
-## Architecture — comment `cccr` étend `ccc`
+The chosen positioning is intentionally **two-layered**:
 
-`cccr` est un **package compagnon**, pas un fork : aucun import du code
-interne de `ccc` (ADR-1). Le moteur stable indexe les findings séparément et
-les joint aux résultats `ccc` à la requête. Un moteur expérimental
-`cccr index --engine cocoindex` prépare une extension plus native : il ajoute
-un index local de chunks de code dans le même store SQLite (`sqlite-vec`) pour
-que `cccr search` puisse éviter le parsing texte de `ccc search` quand cet
-index est disponible (ADR-21).
+- **Core product**: Semgrep findings index for agents and developers
+  (`init`, `index`, `findings`, `summary`, `search`, MCP `search_findings` /
+  `findings_summary` / `search` / `reindex_findings`).
+- **Java/Spring microservices audit extension**: REST/Kafka inventory,
+  inter-service graph, and flow tracing (`endpoints`, `graph`, `workspace`,
+  `flow`, `.drawio` export) built on top of the same index, but to be treated
+  as a microservices-focused extension still being stabilized.
+
+## Architecture — how `cccr` extends `ccc`
+
+`cccr` is a **companion package**, not a fork: it imports none of `ccc`'s
+internal code (ADR-1). The stable engine indexes findings separately and joins
+them with `ccc` results at query time. An experimental engine,
+`cccr index --engine cocoindex`, prepares a more native extension: it adds a
+local code chunk index in the same SQLite store (`sqlite-vec`) so that
+`cccr search` can avoid text parsing of `ccc search` when that index is
+available (ADR-21).
 
 ```mermaid
 flowchart LR
-    subgraph ccc["ccc · cocoindex-code — indexe le CODE"]
+    subgraph ccc["ccc · cocoindex-code — indexes CODE"]
         direction TB
-        CODE["fichiers source"] --> CIDX["ccc index
+        CODE["source files"] --> CIDX["ccc index
 chunks AST + embeddings"]
         CIDX --> CDB[("target_sqlite.db
 SQLite + sqlite-vec")]
         CDB --> CSEARCH["ccc search
-sémantique + structurel"]
+semantic + structural"]
         CSEARCH --> CMCP["ccc mcp"]
     end
 
-    subgraph cccr["cccr · ccc-radar — indexe findings + chunks expérimentaux"]
+    subgraph cccr["cccr · ccc-radar — indexes findings + experimental chunks"]
         direction TB
-        REPO["mêmes fichiers source"] --> SCAN["semgrep scan
+        REPO["same source files"] --> SCAN["semgrep scan
 scanner.py"]
         SCAN --> EMB["embedder.py
 sentence-transformers"]
         EMB --> FDB[("findings.db
 SQLite + sqlite-vec")]
         REPO --> XCHUNKS["--engine cocoindex
-chunks code expérimentaux"]
+experimental code chunks"]
         XCHUNKS --> FDB
         FDB --> FFIND["cccr findings
-langage naturel"]
+natural language"]
         FDB --> FSEARCH["cccr search
 code + findings"]
         FFIND --> FMCP["cccr mcp"]
         FSEARCH --> FMCP
     end
 
-    FSEARCH -. "fallback: ccc_bridge.py subprocess + parse texte (ADR-10)" .-> CSEARCH
-    FMCP == "search: jointure fichier + lignes" ==> CMCP
+    FSEARCH -. "fallback: ccc_bridge.py subprocess + text parsing (ADR-10)" .-> CSEARCH
+    FMCP == "search: file + line join" ==> CMCP
 
     CMCP --> AGENT["Claude Code
-skill + client MCP"]
+skill + MCP client"]
     FMCP --> AGENT
 ```
 
-Points clés :
+Key points:
 
-- **Pas de couplage de code interne à `ccc`** — le moteur stable utilise
-  toujours le binaire `ccc` en subprocess ; le moteur expérimental ajoute un
-  index local de chunks pour réduire cette dépendance sans importer d'API
-  interne de `cocoindex-code`.
-- **Deux index, une seule techno de stockage** — chacun garde son propre
-  fichier SQLite (`target_sqlite.db` pour les chunks de code, `findings.db`
-  pour les findings), mais tous deux via `sqlite-vec`/`vec0` pour la
-  recherche vectorielle (ADR-17), et le même modèle d'embedding par défaut
-  (`Snowflake/snowflake-arctic-embed-xs`, ADR-3).
-- **La jointure peut utiliser l'index local expérimental** — avec
-  `--engine cocoindex`, le tool MCP `search` interroge les chunks locaux
-  puis joint les findings par fichier + lignes ; sinon il garde le fallback
-  `ccc search`.
-- **L'agent (Claude Code) est le point de convergence** — via les deux
-  serveurs MCP (`ccc mcp`, `cccr mcp`) et le skill, qui orchestre recherche de
-  code, recherche de findings et boucle de correction.
+- **No coupling to `ccc` internal code** — the stable engine always uses the
+  `ccc` binary as a subprocess; the experimental engine adds a local chunk
+  index to reduce that dependency without importing any `cocoindex-code`
+  internal API.
+- **Two indexes, one storage technology** — each keeps its own SQLite file
+  (`target_sqlite.db` for code chunks, `findings.db` for findings), but both
+  use `sqlite-vec`/`vec0` for vector search (ADR-17), and the same default
+  embedding model (`~/models/jina-code-embeddings-1.5b`, ADR-3).
+- **The join can use the local experimental index** — with `--engine cocoindex`,
+  the MCP `search` tool queries local chunks first and then joins findings by
+  file + lines; otherwise it keeps the `ccc search` fallback.
+- **The agent (Claude Code) is the convergence point** — through the two MCP
+  servers (`ccc mcp`, `cccr mcp`) and the skill, which orchestrates code
+  search, findings search, and the remediation loop.
 
 ## Documentation
 
-- [`AGENT.md`](AGENT.md) — pour tout agent contribuant à ce repo : carte des documents et règle « tout changement se documente dans un BACKLOG ».
-- [`docs/PRD.md`](docs/PRD.md) — produit : problème, vision, personas, cas d'usage, métriques de succès.
-- [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — spécification fonctionnelle : commandes CLI, tools MCP, skill, comportements d'erreur.
-- [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — spécification technique : modules, modèle de données, schéma SQLite, algorithmes.
-- [`docs/ADR.md`](docs/ADR.md) — décisions d'architecture (contexte, choix, conséquences).
-- `archive/` — historique du plan d'implémentation (`BACKLOG.md`) et des findings de revue de code (`BACKLOG-2.md`).
+- [`AGENT.md`](AGENT.md) — for any agent contributing to this repo: document map and the rule “every change must be documented in a BACKLOG”.
+- [`docs/PRD.md`](docs/PRD.md) — product: problem, vision, personas, use cases, success metrics.
+- [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — functional specification: CLI commands, MCP tools, skill, error behaviors.
+- [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — technical specification: modules, data model, SQLite schema, algorithms.
+- [`docs/ADR.md`](docs/ADR.md) — architecture decisions (context, choice, consequences).
+- `archive/` — history of the implementation plan (`BACKLOG.md`) and code review findings (`BACKLOG-2.md`).
 
-Le skill Claude Code (`SKILL.md`) est distribué séparément de ce repo, dans
-[`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill) ; son
-comportement fonctionnel reste documenté dans
-[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#4-skill-claude-code).
+The Claude Code skill (`SKILL.md`) is distributed separately from this repo, in
+[`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill); its
+functional behavior remains documented in
+[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md).
 
-## Projets liés
+## Related projects
 
 - [`cocoindex-code`](https://github.com/cocoindex-io/cocoindex-code) (`ccc`)
-  — l'outil d'indexation et de recherche de code sémantique dont `cccr` est
-  le compagnon (voir « Architecture » ci-dessus). `cccr` ne fork pas ce
-  projet et n'importe aucun de ses modules internes (ADR-1) ; il l'appelle
-  en subprocess et réutilise sa techno de stockage (`sqlite-vec`).
+  — the semantic code indexing and search tool that `cccr` complements (see
+  “Architecture” above). `cccr` does not fork this project and imports none of
+  its internal modules (ADR-1); it calls it as a subprocess and reuses its
+  storage technology (`sqlite-vec`).
 - [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill) —
-  le skill Claude Code qui orchestre `ccc`/`cccr` depuis l'agent (voir
-  ci-dessus).
+  the Claude Code skill that orchestrates `ccc`/`cccr` from the agent (see
+  above).
 
 ## Installation
 
@@ -107,50 +114,69 @@ comportement fonctionnel reste documenté dans
 uv tool install ccc-radar
 uv tool install cocoindex-code
 pipx install semgrep
+env -u SSL_CERT_FILE uvx --from huggingface_hub hf download jinaai/jina-code-embeddings-1.5b --local-dir ~/models/jina-code-embeddings-1.5b
 ```
 
-## Mise à jour
+The default `embedding_model` points to `~/models/jina-code-embeddings-1.5b`.
+When downloading via `hf`, removing `SSL_CERT_FILE` from the environment avoids
+TLS failures observed on some workstations.
+
+## Upgrade
 
 ```bash
-uv tool upgrade ccc-radar   # met à jour uniquement cccr
-uv tool upgrade --all          # met à jour tous les outils installés via uv (dont cocoindex-code)
+uv tool upgrade ccc-radar   # upgrades cccr only
+uv tool upgrade --all       # upgrades all tools installed via uv (including cocoindex-code)
 ```
 
-## Démarrage
+## Getting started
+
+### Core product
 
 ```bash
-cccr init                       # détecte une config Semgrep, sinon utilise p/security-audit
-cccr index                      # scan Semgrep incrémental + embeddings
-cccr index --engine cocoindex   # expérimental : ajoute un index local de chunks code
-cccr endpoints                  # inventaire REST/Kafka indexé
-cccr graph                      # appels REST sortants dans handlers Kafka
-cccr search "user auth flow"    # recherche de code (via ccc) + findings qui la recouvrent
-cccr findings "injection sql"   # recherche en langage naturel dans les findings seuls
-cccr summary                    # vue agrégée (sévérités, top règles, top répertoires)
+cccr init                       # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
+cccr index                      # incremental Semgrep scan + embeddings
+cccr search "user auth flow"    # code search (via ccc) + findings that overlap it
+cccr findings "sql injection"   # natural-language search in findings only
+cccr summary                    # aggregated view (severities, top rules, top directories)
 ```
 
-Pour un **audit Java microservices** piloté par le skill `ccc-radar-skill`,
-le workflow recommandé n'est pas le fallback générique `p/security-audit` :
-le skill copie et active par défaut les packs `default`, `liveness`, `rest`
-et `kafka`, puis enchaîne `cccr summary` → `cccr endpoints` → `cccr graph` →
-`cccr findings` / `cccr search`.
+The `p/security-audit` fallback is enough for the **core product** (findings).
+For the microservices extension, `cccr init` must be able to copy the skill
+packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`); otherwise
+`cccr endpoints` / `graph` / `flow` have no usable inventory.
 
-`cccr search` est un **sur-ensemble de `ccc search`** : mêmes options
-(`--limit`, `--offset`, `--lang`, `--path`, `--refresh`), mêmes résultats,
-même format, chaque résultat enrichi des findings Semgrep qui le recouvrent
-et classé en tenant compte de leur sévérité. Côté MCP, le tool porte le même
-nom que celui de `ccc` (`search`) et prend les mêmes paramètres.
+### Java/Spring microservices extension
 
-Exemple avec des règles explicites et un scan complet :
+```bash
+cccr index --engine cocoindex   # experimental: adds a local code chunk index
+cccr endpoints                  # indexed REST/Kafka inventory
+cccr graph                      # cycles/hotspots and outbound REST calls inside Kafka handlers
+cccr workspace /path/root       # discovery of indexed Maven services
+cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
+```
+
+For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
+`cccr init` first tries to copy these packs from the skill repo into
+`.cccr/rules/`, then enables them in `rules:`. The audit workflow then remains
+`cccr summary` → `cccr endpoints` → `cccr graph` → `cccr findings` /
+`cccr search`.
+
+`cccr search` is a **superset of `ccc search`**: same options (`--limit`,
+`--offset`, `--lang`, `--path`, `--refresh`), same results, same format, each
+result enriched with overlapping Semgrep findings and ranked while taking their
+severity into account. On the MCP side, the tool has the same name as `ccc`'s
+(`search`) and takes the same parameters.
+
+Example with explicit rules and a full scan:
 
 ```bash
 cccr init --rules rules/rules.yml
 cccr index --full
-cccr findings "injection sql" --severity ERROR --path "app/*" --limit 5 --context
+cccr findings "sql injection" --severity ERROR --path "app/*" --limit 5 --context
 cccr search "user auth flow" --json
 ```
 
-## Développement (dans ce repo)
+## Development (in this repo)
 
 ```bash
 uv sync
@@ -158,29 +184,33 @@ uv run cccr version
 uv run pytest
 ```
 
-## Serveur MCP
+## MCP server
 
-`cccr` expose un serveur MCP (stdio) via `cccr mcp`, avec les tools
-`search_findings`, `findings_summary`, `search` (mêmes nom et paramètres que
-le `search` de `ccc`) et `reindex_findings`. Enregistrement client (ex. Claude
-Code) :
+`cccr` exposes an MCP server (stdio) via `cccr mcp`.
+
+- **Core product**: `search_findings`, `findings_summary`, `search`
+  (same name and parameters as `ccc`'s `search`), and `reindex_findings`.
+- **Java/Spring microservices extension**: `list_endpoints`, `graph`,
+  `list_workspace_services`, `trace_message_flow`.
+
+Client registration (e.g. Claude Code):
 
 ```json
 {"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
 ```
 
-Pour la vérification fraîche post-patch d'un fichier précis (boucle de
-correction, voir le skill [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill)),
-enregistrer en complément le MCP Semgrep officiel :
+For the post-patch freshness check of a specific file (remediation loop, see
+[`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill)), also
+register the official Semgrep MCP server:
 
 ```json
 {"mcpServers": {"semgrep": {"command": "uvx", "args": ["semgrep-mcp"]}}}
 ```
 
-Détail des champs de configuration `.cccr/config.yml` : voir
-[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md#1-configuration-du-projet).
+For `.cccr/config.yml` configuration field details, see
+[`docs/SPEC-FONC.md`](docs/SPEC-FONC.md).
 
-## Licence
+## License
 
-[Apache License 2.0](LICENSE), comme le projet amont
-[`cocoindex-code`](https://github.com/cocoindex-io/cocoindex-code).
+[Apache License 2.0](LICENSE), like the upstream
+[`cocoindex-code`](https://github.com/cocoindex-io/cocoindex-code) project.

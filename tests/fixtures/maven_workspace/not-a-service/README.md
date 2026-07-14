@@ -1,1 +1,1 @@
-Répertoire sans `pom.xml` : ne doit pas être découvert comme module Maven.
+Directory without `pom.xml`: must not be discovered as a Maven module.

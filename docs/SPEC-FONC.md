@@ -1,133 +1,147 @@
-# Spécification fonctionnelle — ccc-radar (`cccr`)
+# Functional specification — ccc-radar (`cccr`)
 
-> Décrit le comportement observable des trois surfaces livrées : CLI, serveur
-> MCP, skill Claude Code. Pour l'architecture interne (schémas, algorithmes),
-> voir [`SPEC-TECH.md`](./SPEC-TECH.md). Pour le pourquoi des choix, voir
-> [`ADR.md`](./ADR.md).
+> Describes the observable behavior of the three delivered surfaces: CLI, MCP
+> server, and Claude Code skill. The scope is intentionally read at two levels:
+> a **core product** (indexed Semgrep findings that can be searched and joined
+> to code) and a **Java/Spring microservices audit extension** (REST/Kafka
+> endpoints, graph, flow, workspace) built on top of the same index. For the
+> internal architecture (schemas, algorithms), see [`SPEC-TECH.md`](./SPEC-TECH.md).
+> For the reasoning behind the choices, see [`ADR.md`](./ADR.md).
 
-## 1. Configuration du projet
+## 1. Project configuration
 
-Fichier `.cccr/config.yml`, à la racine du repo cible :
+File `.cccr/config.yml`, at the root of the target repo:
 
 ```yaml
-rules:                  # requis — chemins ou identifiants de config Semgrep
+rules:                  # required — paths or Semgrep config identifiers
   - rules/rules.yml
-include:                 # défaut : ["**/*"]
+include:                # default: ["**/*"]
   - "**/*"
-exclude:                  # défaut : [".git/**", ".venv/**", "node_modules/**", ".cccr/**"]
+exclude:                # default: [".git/**", ".venv/**", "node_modules/**", ".cccr/**"]
   - ".git/**"
   - ".venv/**"
   - "node_modules/**"
   - ".cccr/**"
-min_severity: INFO        # INFO | WARNING | ERROR
-embedding_model: Snowflake/snowflake-arctic-embed-xs
+min_severity: INFO      # INFO | WARNING | ERROR
+embedding_model: ~/models/jina-code-embeddings-1.5b
 semgrep_timeout_s: 120
 ```
 
-- `rules` est le seul champ obligatoire ; son absence ou sa vacuité est une
-  erreur bloquante (`ConfigError`).
-- `min_severity` invalide (hors `INFO`/`WARNING`/`ERROR`) est une erreur
-  bloquante.
-- Tous les autres champs ont une valeur par défaut appliquée silencieusement
-  si absents du fichier.
-- Indépendamment de `include`/`exclude` : tout fichier sous un répertoire
-  `src/<jeu-de-sources>` où `<jeu-de-sources>` suit la convention
-  Maven/Gradle de nommage des source sets de test (`test`, `componentTest`,
-  `contractTest`, `endToEndTest`, ... — nom égal à `test` ou terminant par
-  `Test`) est **toujours** exclu du scan, findings et endpoints confondus
-  (BACKLOG-15 H2, ADR-34 ; règle resserrée en BACKLOG-16 P1) — ni
-  configurable, ni contournable via `include`. Un layout `src/<package>`
-  générique (Python, JS, Rust, ...) n'est **pas** concerné : `<package>`
-  ne suit pas cette convention. Un fichier déjà indexé qui devient exclu
-  par cette règle est purgé au prochain `cccr index`, comme un fichier
-  supprimé du disque.
+- `rules` is the only required field; if it is missing or empty, that is a
+  blocking error (`ConfigError`).
+- An invalid `min_severity` (outside `INFO`/`WARNING`/`ERROR`) is a blocking
+  error.
+- All other fields have a default value applied silently when absent from the
+  file.
+- The default `embedding_model` targets a model previously downloaded under
+  `~/models/jina-code-embeddings-1.5b`; `~` is resolved at runtime.
+- If `embedding_model` looks like a remote Hugging Face identifier
+  (`org/model`) but the default local model already exists, `cccr`
+  automatically reuses that local model to avoid fragile network/TLS downloads;
+  `cccr index` explicitly reports that fallback and the database stores the
+  model actually used.
+- Independently from `include`/`exclude`: any file under a
+  `src/<source-set>` directory where `<source-set>` follows the Maven/Gradle
+  naming convention for test source sets (`test`, `componentTest`,
+  `contractTest`, `endToEndTest`, ... — name equal to `test` or ending in
+  `Test`) is **always** excluded from scanning, for both findings and
+  endpoints (BACKLOG-15 H2, ADR-34; rule tightened in BACKLOG-16 P1) — neither
+  configurable nor bypassable through `include`. A generic `src/<package>`
+  layout (Python, JS, Rust, ...) is **not** concerned: `<package>` does not
+  follow that convention. A file that was already indexed and becomes excluded
+  by this rule is purged on the next `cccr index`, just like a file deleted from
+  disk.
 
-## 2. CLI `cccr`
+## 2. `cccr` CLI
 
 ### `cccr version`
-Affiche la version du package (`0.1.0`).
+Displays the package version (`0.1.0`).
 
 ### `cccr init [--rules PATH]...`
-Crée `.cccr/config.yml`.
+Creates `.cccr/config.yml`.
 
-- `--rules` répétable : chemins ou identifiants de config Semgrep (ex.
+- Repeatable `--rules`: paths or Semgrep config identifiers (e.g.
   `rules/rules.yml`, `p/security-audit`).
-- Sans `--rules` : détection automatique dans l'ordre `.semgrep.yml` →
-  `semgrep.yml` → `.semgrep`. Si rien n'est trouvé, repli sur le pack
-  registry Semgrep par défaut `p/security-audit` (pas d'erreur) : message
-  informatif sur stdout précisant le pack utilisé et comment le changer,
-  code de sortie 0. Ordre de priorité : `--rules` explicite > config locale
-  détectée > pack par défaut.
-- Ce fallback `p/security-audit` est le comportement **générique** du CLI.
-  Pour le workflow d'audit Java/Spring/Maven porté par le skill
-  `ccc-radar-skill`, l'initialisation recommandée consiste à copier puis
-  déclarer explicitement les packs `.cccr/rules/default/`,
-  `.cccr/rules/liveness/`, `.cccr/rules/rest/` et `.cccr/rules/kafka/`, afin
-  que `cccr index` produise findings **et** inventaire d'endpoints.
-- Si `.cccr/config.yml` existe déjà : erreur explicite, code de sortie 1, le
-  fichier existant n'est jamais écrasé.
+- Without `--rules`: automatic detection in the order `.semgrep.yml` →
+  `semgrep.yml` → `.semgrep`. If nothing is found, `cccr init` first looks for a
+  local `ccc-radar-skill` repo (supported candidates:
+  `~/ccc-radar-skill/skills/cccr/rules/` then
+  `~/cocoindex-ext-skill/skills/cccr/rules/`) and, if it finds the five
+  expected packs `default`, `liveness`, `rest`, `kafka`, `kafka-security`, it
+  copies them into `.cccr/rules/` in the target repo and writes `rules:` with
+  those **relative** paths (`.cccr/rules/<pack>`). If the skill is missing or
+  incomplete, it falls back to the default Semgrep registry pack
+  `p/security-audit` (no error): informational stdout message explaining the
+  fallback and how to customize it, exit code 0. This fallback keeps the
+  **core product** usable, but does not by itself activate the microservices
+  extension (`endpoints` / `graph` / `workspace` / `flow`). Priority order:
+  explicit `--rules` > detected local config > copied skill packs > default
+  registry pack.
+- If `.cccr/config.yml` already exists: explicit error, exit code 1, and the
+  existing file is never overwritten.
 
 ### `cccr index [--full] [--engine manual|cocoindex]`
-Indexe le projet (findings Semgrep **et** endpoints REST/Kafka —
+Indexes the project (Semgrep findings **and** REST/Kafka endpoints —
 BACKLOG-11 A1).
 
-- Par défaut : incrémental — ne re-scanne que les fichiers ajoutés ou
-  modifiés depuis la dernière indexation (hash SHA-256 par fichier) ; les
-  fichiers supprimés du disque voient leurs findings et endpoints purgés.
-- `--full` : force un scan complet, comme si tous les fichiers étaient
-  modifiés (les fichiers supprimés du disque sont quand même purgés).
-- `--engine manual` (défaut) : indexe les findings et les endpoints, avec le
-  moteur incrémental historique.
-- `--engine cocoindex` : mode expérimental inspiré de CocoIndex. Il indexe les
-  mêmes findings et endpoints, et ajoute un index local de chunks de code
-  (`code_chunks` + embeddings) utilisé ensuite par `cccr search` avant de
-  retomber sur `ccc`.
-- Un seul scan Semgrep par indexation : `config.rules` peut mélanger règles
-  de findings (`default`, `liveness`) et règles d'inventaire d'endpoints
-  (`rest`, `kafka`, `metadata.category: endpoint-inventory`) — chacune
-  finit dans la bonne table, sans se marcher dessus (voir
-  `docs/SPEC-TECH.md#3-pipeline-dindexation-indexerindex_repo`). Les règles
-  d'inventaire ne sont pas filtrées par `min_severity`.
-- Sortie sur une ligne :
+- Default: incremental — only re-scans files added or modified since the last
+  indexing (SHA-256 hash per file); files deleted from disk have their findings
+  and endpoints purged.
+- `--full`: forces a full scan, as if all files were modified (files deleted
+  from disk are still purged).
+- `--engine manual` (default): indexes findings and endpoints with the
+  historical incremental engine.
+- `--engine cocoindex`: experimental mode inspired by CocoIndex. It indexes the
+  same findings and endpoints, and adds a local code chunk index
+  (`code_chunks` + embeddings) later used by `cccr search` before falling back
+  to `ccc`.
+- If the endpoint extractor signature stored in the index is missing or stale,
+  `cccr index` implicitly forces a full repo re-scan even without modified
+  files, to refresh the REST/Kafka inventory before rewriting
+  `meta.endpoint_inventory_signature`.
+- Exactly one Semgrep scan per indexing: `config.rules` may mix findings rules
+  (`default`, `liveness`) and endpoint inventory rules (`rest`, `kafka`,
+  `metadata.category: endpoint-inventory`) — each ends up in the proper table
+  without colliding (see `docs/SPEC-TECH.md`, §3). Endpoint inventory rules are
+  not filtered by `min_severity`.
+- One-line output:
   `scanned=<N> skipped=<N> +findings=<N> -findings=<N> +endpoints=<N> -endpoints=<N>`
-  - `scanned` : nombre de fichiers (re)scannés.
-  - `skipped` : nombre de fichiers inchangés, non re-scannés.
-  - `+findings`/`-findings` : findings (ré)insérés / supprimés pour les
-    fichiers scannés ou supprimés du disque.
-  - `+endpoints`/`-endpoints` : endpoints (ré)insérés / supprimés, même
-    logique.
-- Code de sortie 0 en cas de succès.
-- Échec Semgrep (timeout, crash, code retour inattendu) : message d'erreur sur
-  stderr, **code de sortie 2**, la base `.cccr/findings.db` reste inchangée
-  (aucune écriture partielle, findings et endpoints compris).
-- `.cccr/config.yml` absent ou invalide : message d'erreur sur stderr, code de
-  sortie 1.
+  - `scanned`: number of files (re)scanned.
+  - `skipped`: number of unchanged files not re-scanned.
+  - `+findings`/`-findings`: findings (re)inserted / removed for scanned files
+    or files deleted from disk.
+  - `+endpoints`/`-endpoints`: endpoints (re)inserted / removed, same logic.
+- Exit code 0 on success.
+- Semgrep failure (timeout, crash, unexpected return code): error message on
+  stderr, **exit code 2**, `.cccr/findings.db` remains unchanged (no partial
+  write, including findings and endpoints).
+- Missing or invalid `.cccr/config.yml`: error message on stderr, exit code 1.
 
-### `cccr search "<requête>" [--limit N] [--offset N] [--lang L] [--path GLOB] [--refresh] [--json]`
-Recherche sémantique de code enrichie des findings Semgrep qui recouvrent
-chaque résultat, puis classée en tenant compte de leur sévérité (voir §3,
-`rank_by_severity`). Mêmes options, mêmes noms, que `ccc search` :
+### `cccr search "<query>" [--limit N] [--offset N] [--lang L] [--path GLOB] [--refresh] [--json]`
+Semantic code search enriched with Semgrep findings that overlap each result,
+then ranked while taking their severity into account (see §3,
+`rank_by_severity`). Same options, same names, as `ccc search`:
 
-| Option | Effet |
+| Option | Effect |
 |---|---|
-| `--limit N` | nombre maximum de résultats (défaut 5) |
-| `--offset N` | pagination (défaut 0) |
-| `--lang L` | ne garde que les résultats du langage `L` (égalité exacte) |
-| `--path GLOB` | ne garde que les résultats dont le chemin matche le glob (style `fnmatch`) |
-| `--refresh` | réindexe (incrémental) avant de chercher |
+| `--limit N` | maximum number of results (default 5) |
+| `--offset N` | pagination (default 0) |
+| `--lang L` | keeps only results in language `L` (exact equality) |
+| `--path GLOB` | keeps only results whose path matches the glob (style `fnmatch`) |
+| `--refresh` | reindexes (incrementally) before searching |
 
-Deux sources de code sont possibles :
-- si le repo a été indexé avec `cccr index --engine cocoindex`, `cccr search`
-  interroge d'abord l'index local de chunks de code (`vec_code_chunks`) et ne
-  dépend pas du format texte de `ccc search` — `--lang`/`--path`/`--offset`
-  filtrent et paginent localement, `--refresh` déclenche une réindexation
-  incrémentale locale (`cccr index --engine cocoindex`) avant la recherche ;
-- sinon, `cccr search` reste un **sur-ensemble de `ccc search`** : mêmes
-  résultats (mêmes extraits, même format d'affichage), enrichis des findings,
-  et toutes les options sont transmises telles quelles au binaire `ccc`.
+Two code sources are possible:
+- if the repo was indexed with `cccr index --engine cocoindex`, `cccr search`
+  first queries the local code chunk index (`vec_code_chunks`) and does not
+  depend on the text format of `ccc search` — `--lang`/`--path`/`--offset`
+  filter and paginate locally, `--refresh` triggers a local incremental reindex
+  (`cccr index --engine cocoindex`) before the search;
+- otherwise, `cccr search` remains a **superset of `ccc search`**: same results
+  (same snippets, same display format), enriched with findings, and every
+  option is forwarded unchanged to the `ccc` binary.
 
-Rendu texte — format identique à `ccc search`, plus un bloc findings sous
-chaque résultat concerné :
+Text rendering — identical format to `ccc search`, plus a findings block under
+each relevant result:
 ```
 --- Result 1 (score: 0.850) ---
 File: src/auth.py:12-34 [python]
@@ -136,76 +150,74 @@ def login(user, password):
 
   ⚠ findings (max: ERROR):
   [ERROR] custom.sql-fstring  src/auth.py:18-18
-    Une requête SQL construite par f-string permet une injection SQL.
+    An SQL query built with an f-string allows SQL injection.
 ```
-Le `score` affiché reste la pertinence sémantique brute de `ccc` ; le boost
-par sévérité n'affecte que l'ordre.
+The displayed `score` remains the raw semantic relevance from `ccc`; the
+severity boost only affects ordering.
 
-Rendu `--json` : objet `CodeSearchResult` (schéma unique et stable, voir §3).
+`--json` rendering: `CodeSearchResult` object (single stable schema, see §3).
 
-Dégradations :
-- **Index code expérimental absent** : comportement normal ; fallback sur
+Degraded modes:
+- **Experimental code index absent**: normal behavior; fallback to
   `ccc search`.
-- **`ccc` indisponible** (absent du PATH, ou en erreur) : erreur explicite,
-  stderr conserve la cause (`ccc introuvable...` ou code retour/stderr de
-  `ccc`), code de sortie 2. `cccr` ne retourne pas de résultat findings-only
-  success-shaped dans ce cas.
-- **Index findings absent** (mais `ccc` disponible) : résultats de code
-  bruts, précédés de l'avertissement
-  `index findings absent (lancez: cccr index) : résultats sans findings`,
-  code de sortie 0.
+- **`ccc` unavailable** (missing from PATH, or failing): explicit error,
+  stderr keeps the cause (`ccc not found in PATH...` or return code/stderr from
+  `ccc`), exit code 2. In this case `cccr` does not return a successful
+  findings-only-shaped result.
+- **Findings index absent** (but `ccc` available): raw code results, preceded
+  by the warning `findings index absent (run: cccr index): results without findings`,
+  exit code 0.
 
-### `cccr findings "<requête>" [options]`
-Recherche en langage naturel dans les findings indexés **seuls** (sans
-recherche de code) — l'ancienne `cccr search`, renommée quand `search` est
-devenue le sur-ensemble de `ccc search`.
+### `cccr findings "<query>" [options]`
+Natural-language search in indexed findings **only** (no code search) — the old
+`cccr search`, renamed when `search` became the superset of `ccc search`.
 
-| Option | Effet |
+| Option | Effect |
 |---|---|
-| `--severity S` | ne garde que les findings de sévérité ≥ S (S ∈ INFO/WARNING/ERROR ; une valeur hors de cet ensemble — ex. sévérité Semgrep brute `HIGH` — est une erreur bloquante, exit code 2, BACKLOG-16 P4) |
-| `--rule R` | ne garde que les findings de la règle `R` (égalité exacte sur `rule_id`) |
-| `--path GLOB` | ne garde que les findings dont le chemin matche le glob (style `fnmatch`) |
-| `--limit N` | nombre maximum de résultats (défaut 5) |
-| `--offset N` | pagination (défaut 0) |
-| `--context` | ajoute le contexte de code (5 lignes avant/après, bornées au fichier) |
-| `--json` | sortie JSON structurée au lieu du rendu texte |
+| `--severity S` | keeps only findings with severity ≥ S (S ∈ INFO/WARNING/ERROR ; a value outside this set — e.g. raw Semgrep severity `HIGH` — is a blocking error, exit code 2, BACKLOG-16 P4) |
+| `--rule R` | keeps only findings from rule `R` (exact equality on `rule_id`) |
+| `--path GLOB` | keeps only findings whose path matches the glob (style `fnmatch`) |
+| `--limit N` | maximum number of results (default 5) |
+| `--offset N` | pagination (default 0) |
+| `--context` | adds code context (5 lines before/after, bounded to the file) |
+| `--json` | structured JSON output instead of text rendering |
 
-Rendu texte, un bloc par résultat :
+Text rendering, one block per result:
 ```
 1. [ERROR] custom.sql-fstring  app/db.py:12-14  (0.83)
-   Une requête SQL construite par f-string permet une injection SQL.
+   An SQL query built with an f-string allows SQL injection.
 ```
-Avec `--context`, le bloc de code numéroté est ajouté à la suite (format
-`{n:>5}| {ligne}`). Si le fichier source a disparu ou n'est plus lisible depuis
-la dernière indexation, le finding reste affiché et le contexte est signalé
-comme indisponible pour ce résultat uniquement.
+With `--context`, the numbered code block is added afterwards (format
+`{n:>5}| {line}`). If the source file disappeared or is no longer readable
+since the last indexing, the finding is still displayed and the context is
+reported as unavailable for that result only.
 
-Rendu `--json` de `cccr findings` : liste d'objets — **contrat stable**
-(`FindingHit`, `render.py`), consommé aussi par le serveur MCP
-(`search_findings`) :
+`--json` rendering of `cccr findings`: list of objects — **stable contract**
+(`FindingHit`, `render.py`), also consumed by the MCP server
+(`search_findings`):
 ```json
 {
   "id": "...", "rule_id": "...", "severity": "...", "message": "...",
   "path": "...", "start_line": 0, "end_line": 0, "score": 0.0,
   "fix": null, "cwe": [], "owasp": [],
-  "context": null,        // toujours présent ; string si --context a réussi
-  "context_error": null   // toujours présent ; string si --context a échoué
+  "context": null,        // always present; string if --context succeeded
+  "context_error": null   // always present; string if --context failed
 }
 ```
-`context`/`context_error` sont toujours présents (valeur `null` par défaut) —
-schéma stable, plutôt que des clés apparaissant/disparaissant selon `--context`
-(nécessaire pour un `outputSchema` MCP correct, voir §3).
+`context`/`context_error` are always present (default value `null`) — stable
+schema rather than keys appearing/disappearing depending on `--context`
+(necessary for a correct MCP `outputSchema`, see §3).
 
-Si l'index n'existe pas (`.cccr/findings.db` absent) : message exact sur
-stderr `Index absent. Lancez d'abord: cccr index`, code de sortie 2.
+If the index does not exist (`.cccr/findings.db` absent): exact stderr message
+`Index absent. Run first: cccr index`, exit code 2.
 
 ### `cccr summary [--json]`
-Vue agrégée des findings.
+Aggregated view of findings.
 
-Rendu texte, 3 lignes : totaux par sévérité, top 10 des règles avec compte,
-compte par répertoire de premier niveau.
+Text rendering, 3 lines: totals by severity, top 10 rules with count, count by
+first-level directory.
 
-Rendu `--json` :
+`--json` rendering:
 ```json
 {
   "by_severity": {"ERROR": 2, "WARNING": 2},
@@ -214,76 +226,91 @@ Rendu `--json` :
 }
 ```
 
-Mêmes règles d'index absent que `findings` (message identique, code 2).
+Same “index absent” rules as `findings` (same message, code 2).
 
 ### `cccr endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
-Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1).
-Filtres optionnels combinables :
+*Java/Spring microservices extension — beta.*
 
-| Option | Effet |
+Lists indexed REST/Kafka endpoints (BACKLOG-10 K1, BACKLOG-11 A1).
+Optional combinable filters:
+
+| Option | Effect |
 |---|---|
-| `--system` | `rest` ou `kafka` |
-| `--role` | `serve`/`call` (rest) ou `produce`/`consume` (kafka) |
-| `--topic` | égalité exacte sur `topic` (ex. `"GET /orders/{id}"`, `"orders.created"`) |
-| `--path` | motif de chemin (`fnmatch`), même style que `cccr search --path` |
-| `--module` | nom du module Maven (artifactId, BACKLOG-13) ou du service Gradle détecté (BACKLOG-15 H1) — `None` si ni l'un ni l'autre ne s'applique |
+| `--system` | `rest` or `kafka` |
+| `--role` | `serve`/`call` (rest) or `produce`/`consume` (kafka) |
+| `--topic` | exact equality on `topic` (e.g. `"GET /orders/{id}"`, `"orders.created"`) |
+| `--path` | path pattern (`fnmatch`), same style as `cccr search --path` |
+| `--module` | Maven module name (artifactId, BACKLOG-13) or detected Gradle service (BACKLOG-15 H1) — `None` if neither applies |
 
-Rendu texte, une ligne par endpoint :
-`[<system>/<role>] <topic>[ (dynamique)][ [<module>]]  <path>:<start>-<end>`
+Text rendering, one line per endpoint:
+`[<system>/<role>] <topic>[ (dynamic)][ [<module>]]  <path>:<start>-<end>`
 
-Pour les endpoints REST, `topic` est toujours canonique côté graphe :
-`METHOD /path`. Les URLs absolues appelantes (`http://service/orders`) sont
-normalisées en route (`/orders`) ; query string et fragment sont ignorés.
-Un appel concaténé à une variable reste `topic_dynamic=True`, mais conserve
-son préfixe de route normalisé.
+If the stored endpoint inventory is detected as stale (missing or old
+signature), the text rendering adds a warning `⚠ ... relancez cccr index`.
+The `--json` contract stays unchanged (bare list of `EndpointHit`).
 
-Rendu `--json` : liste de `EndpointHit` (`id`, `role`, `system`, `topic`,
+For REST endpoints, `topic` is always canonical on the graph side:
+`METHOD /path`. Absolute caller URLs (`http://service/orders`) are normalized
+into a route (`/orders`); query string and fragment are ignored.
+A call concatenated with a variable remains `topic_dynamic=True`, but keeps its
+normalized route prefix.
+
+Some REST endpoints are inferred outside Semgrep results when Spring materializes
+them without an explicit handler that a rule can use:
+- `@RequestMapping(...)` without `method=` on a Java method → `ANY /path`;
+- `@RepositoryRestResource(path = "...")` → `GET/POST /path` and
+  `GET/PUT/PATCH/DELETE /path/{id}` endpoints;
+- `@EnableSwagger2` → `GET /swagger-ui.html`;
+- `management.endpoints.web.exposure.include=*` → `GET /actuator/**`.
+These endpoints stay tagged by `framework` (`spring`, `spring-data-rest`,
+`swagger-ui`, `spring-actuator`) so they remain distinguishable from explicit
+application routes.
+
+`--json` rendering: list of `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
-`module`, `qualified_name`). `module` vient d'abord du `pom.xml` Maven le
-plus proche (artifactId, BACKLOG-13) ; si le repo n'a aucun `pom.xml`,
-repli sur la détection Gradle (BACKLOG-15 H1, ADR-33) — le répertoire de
-premier niveau qui contient, quelque part dans son arbre, une classe Java
-avec un `main()` démarrant Spring Boot (`SpringApplication.run(...)`),
-regroupant ainsi tous les sous-projets Gradle d'un même microservice.
-`qualified_name` (package + classe Java) est `None` pour un fichier
-non-Java.
+`module`, `qualified_name`). `module` first comes from the nearest Maven
+`pom.xml` (artifactId, BACKLOG-13); if the repo has no `pom.xml`, it falls back
+on Gradle detection (BACKLOG-15 H1, ADR-33) — the first-level directory that
+contains, somewhere in its tree, a Java class with a `main()` starting Spring
+Boot (`SpringApplication.run(...)`), thereby grouping all Gradle subprojects of
+the same microservice together. `qualified_name` (package + Java class) is
+`None` for a non-Java file.
 
-Mêmes règles d'index absent que `findings` (message identique, code 2) —
-`endpoints` vit dans la même base que `findings`.
+Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
+lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json] [--drawio FICHIER]`
-Points de blocage probables à partir des endpoints indexés (BACKLOG-10 K12).
-Toujours : les appels REST synchrones détectés dans un handler de
-consommation Kafka **du projet courant** (même fichier, site d'appel dans
-la plage de lignes du handler).
+### `cccr graph [--workspace ROOT] [--json] [--drawio FILE]`
+*Java/Spring microservices extension — beta.*
 
-Pour les cycles/hotspots inter-services, deux sources possibles, essayées
-dans cet ordre :
-1. **Sans `--workspace`** : si l'index couvre un répertoire multi-modules
-   Maven (`cccr index` lancé au répertoire parent, endpoints/findings
-   attribués à un module par l'indexation — BACKLOG-13), les endpoints/
-   findings sont groupés par module et le graphe est construit directement
-   à partir de cet unique index — pas de fédération nécessaire pour un
-   monorepo.
-2. **Avec `--workspace ROOT`** : fédère aussi les microservices Maven sous
-   `ROOT`, indexés **séparément** (BACKLOG-11 A2, lecture seule —
-   `discover_maven_services`/`load_federation`) — le chemin pour des
-   services qui vivent dans des dépôts réellement distincts.
+Likely blocking points built from indexed endpoints (BACKLOG-10 K12).
+Always included: synchronous REST calls detected inside a Kafka consumer
+handler **of the current project** (same file, call site inside the handler's
+line range).
 
-Les deux sources alimentent le même algorithme (`graph.build_graph`) et
-rapportent :
-- **cycles** : cycles simples contenant au moins une arête REST synchrone
-  (une arête `WebClient`, non bloquante par nature, ne compte pas — K11),
-  avec les sites (fichier:lignes) de chaque arête ;
-- **hotspots** : sites sur un cycle recouverts par un finding (fichier+lignes
-  qui se chevauchent, même module/service), classés par sévérité décroissante.
+For inter-service cycles/hotspots, two sources are possible, tried in this
+order:
+1. **Without `--workspace`**: if the index covers a multi-module Maven
+   directory (`cccr index` run at the parent directory, with endpoints/findings
+   assigned to a module during indexing — BACKLOG-13), endpoints/findings are
+   grouped by module and the graph is built directly from that single index —
+   no federation needed for a monorepo.
+2. **With `--workspace ROOT`**: also federates Maven microservices under `ROOT`,
+   indexed **separately** (BACKLOG-11 A2, read-only —
+   `discover_maven_services`/`load_federation`) — the path for services that
+   live in genuinely separate repos.
 
-Si ni l'un ni l'autre n'est disponible (repo non-Maven sans `--workspace`,
-ou aucun module Maven détecté), `cycles`/`hotspots` restent vides, avec une
-`note` qui le dit explicitement (voir ADR-27) plutôt que de laisser deviner
-une absence de résultat.
+Both sources feed the same algorithm (`graph.build_graph`) and report:
+- **cycles**: simple cycles containing at least one synchronous REST edge
+  (a `WebClient` edge, non-blocking by nature, does not count — K11), with the
+  sites (file:lines) of each edge;
+- **hotspots**: sites on a cycle overlapped by a finding (file+lines
+  overlapping, same module/service), ranked by descending severity.
 
-Rendu `--json` :
+If neither is available (non-Maven repo without `--workspace`, or no Maven
+module detected), `cycles`/`hotspots` remain empty, with a `note` explicitly
+saying so (see ADR-27) rather than making the absence of a result ambiguous.
+
+`--json` rendering:
 ```json
 {
   "outbound_calls_in_consumers": [
@@ -304,45 +331,47 @@ Rendu `--json` :
   "note": ""
 }
 ```
-`note` est vide dès qu'une source de données inter-modules (module Maven ou
-`--workspace`) a produit un résultat ; avec `--workspace`, elle porte aussi
-les avertissements de fédération (service non indexé, base incompatible —
-préfixés `⚠`).
+`note` is empty as soon as an inter-module data source (Maven module or
+`--workspace`) produced a result without warning; otherwise it concatenates the
+applicable warnings, whether they come from federation (`service` not indexed,
+incompatible database) or from a stale endpoint inventory on the current
+project.
 
-Mêmes règles d'index absent que `findings`/`summary` (message identique,
-code 2) — `endpoints` vit dans la même base que `findings` (`.cccr/
-findings.db`). `--workspace` ne fait jamais échouer la commande : un
-service fédéré manquant ou incompatible est signalé dans `note`, pas une
-erreur (K7 CA2).
+Same “index absent” rules as `findings`/`summary` (same message, code 2) —
+`endpoints` lives in the same database as `findings` (`.cccr/findings.db`).
+`--workspace` never makes the command fail: a missing or incompatible federated
+service is reported in `note`, not as an error (K7 CA2).
 
-`--drawio FICHIER` (BACKLOG-14 G1) : plutôt que le rendu JSON/texte, écrit
-le graphe complet services ↔ services (pas seulement les arêtes des
-cycles) au format `.drawio` (XML mxGraph, ouvrable directement dans
-diagrams.net) à `FICHIER`, et affiche une confirmation courte (nombre de
-services/arêtes). Un nœud par service connu de la même source de données
-que `--json` (module Maven groupé, ou fédération `--workspace`) — y
-compris un service sans aucune arête. Une arête par appel REST apparié
-(call → serve) ou événement Kafka apparié (produce → consume) : trait
-plein pour REST, pointillé pour Kafka, libellé = route/topic. Les arêtes
-qui appartiennent à un cycle synchrone (`has_synchronous_rest: true`,
-c'est-à-dire au moins une arête REST hors `WebClient`) sont mises en
-évidence en rouge — même signal que le marqueur `[synchrone]` du rendu
-texte. Sans donnée inter-modules disponible, écrit un document valide mais
-sans nœud/arête et affiche la même `note` explicative que `--json`
-(jamais d'échec silencieux). Incompatible avec `--json` : `--drawio` a
-priorité s'il est fourni. Pas de tool MCP équivalent — un fichier
-`.drawio` n'est pas un résultat exploitable par un agent, contrairement au
-JSON déjà renvoyé par `graph`.
+`--drawio FILE` (BACKLOG-14 G1): instead of JSON/text rendering, writes the
+complete service ↔ service graph (not only cycle edges) in `.drawio`
+(mxGraph XML, directly openable in diagrams.net) to `FILE`, and displays a
+short confirmation (number of services/edges). One node per service known from
+the same data source as `--json` (grouped Maven modules, or `--workspace`
+federation) — including a service with no edge at all. One edge per matched
+REST call (call → serve) or matched Kafka event (produce → consume): solid line
+for REST, dashed for Kafka, label = route/topic. Edges that belong to a
+synchronous cycle (`has_synchronous_rest: true`, meaning at least one non-
+`WebClient` REST edge) are highlighted in red — same signal as the
+`[synchronous]` marker in text rendering. Without inter-module data, it writes a
+valid document but with no node/edge and displays the same explanatory `note`
+as `--json` (never a silent failure). Incompatible with `--json`: `--drawio`
+takes precedence if provided. No equivalent MCP tool — a `.drawio` file is not
+an agent-consumable result, unlike the JSON already returned by `graph`.
 
 ### `cccr workspace <root> [--json]`
-Découvre les modules Maven sous `root` (BACKLOG-11 A2, ADR-30) : un module
-par `pom.xml` trouvé, nommé d'après son `artifactId`, classé
-`microservice` (le pom référence `spring-boot-maven-plugin`) ou
-`shared-module` sinon. Pour chaque module déjà indexé (`cccr index` y a été
-lancé), lit sa base **en lecture seule** (jamais d'écriture dans la base
-d'un autre projet) pour compter ses endpoints et findings.
+*Java/Spring microservices extension — beta.*
 
-Rendu `--json` :
+Discovers Maven modules under `root` (BACKLOG-11 A2, ADR-30): one module per
+found `pom.xml`, named after its `artifactId`, classified as `microservice`
+(the module carries a `main()` class that runs `SpringApplication.run(...)`, or
+its `pom.xml` declares Spring Boot on a runtime packaging) or `shared-module`
+otherwise. Aggregator poms with `packaging=pom` are always ignored, even if
+they centralize the Spring Boot plugin for their children. For each module
+already indexed (`cccr index` run either inside the module itself or once at the
+multi-module parent), it reads its database **read-only** (never writes into
+another project's database) to count its endpoints and findings.
+
+`--json` rendering:
 ```json
 {
   "services": [
@@ -351,49 +380,50 @@ Rendu `--json` :
     {"name": "common-lib", "path": "/repo/common-lib", "kind": "shared-module",
      "indexed": true, "endpoint_count": 0, "finding_count": 1}
   ],
-  "warnings": ["payment-service (/repo/payment-service) : non indexé, ignoré (lancez cccr index sur ce projet)."]
+  "warnings": ["payment-service (/repo/payment-service): not indexed, ignored (run cccr index in this project)."]
 }
 ```
 
-`endpoint_count` d'un `shared-module` est toujours `0` : un module partagé
-n'est jamais traité comme producteur/consommateur runtime, même si des
-endpoints y ont été détectés par erreur (A2 CA5). Un module non indexé, à
-la base introuvable ou au schéma incompatible ne fait pas échouer la
-commande : il apparaît dans `warnings`, absent des comptages. Aucun module
-Maven trouvé → message informatif, code de sortie 0 (pas une erreur —
-`root` peut légitimement ne pas être un répertoire Maven).
+`endpoint_count` of a `shared-module` is always `0`: a shared module is never
+handled as a runtime producer/consumer, even if endpoints were detected there by
+mistake (A2 CA5). A module not indexed, with a missing database, or with an
+incompatible schema does not make the command fail: it appears in `warnings`,
+absent from the counts. An indexed module whose
+`meta.endpoint_inventory_signature` is missing/old also adds an explicit
+warning. No Maven module found → informational message, exit code 0 (not an
+error — `root` may legitimately not be a Maven directory).
 
-### `cccr flow <requête> [--workspace ROOT] [--json]`
-Résout `<requête>` en topic Kafka ou route REST (BACKLOG-10 K5) : nom exact
-d'abord, sinon sous-chaîne insensible à la casse **si elle désigne un
-unique topic/route** parmi les endpoints indexés — une correspondance
-ambiguë (plusieurs topics contiennent la sous-chaîne) échoue plutôt que de
-choisir arbitrairement.
+### `cccr flow <query> [--workspace ROOT] [--json]`
+*Java/Spring microservices extension — beta.*
 
-Sans `--workspace` uniquement : si la résolution textuelle échoue, un
-dernier recours par **similarité vectorielle** (BACKLOG-10 K3) cherche le
-plus proche voisin parmi les endpoints déjà embeddés par `cccr index`
-(`cccr endpoints`/`cccr graph` en dépendent aussi indirectement, même
-pipeline d'indexation) — utile pour une requête en langage naturel qui ne
-contient aucun nom de topic/route littéral. En dessous d'un seuil de
-similarité minimal, aucun résultat n'est retenu (même politique que
-`topic_dynamic` : jamais résolu au hasard) et l'échec reste le même message
-que pour une résolution textuelle infructueuse. Ce repli n'est pas
-disponible avec `--workspace` (fédération multi-services).
+Resolves `<query>` into a Kafka topic or REST route (BACKLOG-10 K5): exact name
+first, otherwise case-insensitive substring **if it designates a unique
+route/topic** among indexed endpoints — an ambiguous match (several topics
+contain the substring) fails rather than choosing arbitrarily.
 
-Sans `--workspace` : ne cherche que dans le projet courant, mais `service`
-reflète désormais le module Maven de chaque site (`endpoint.module`,
-BACKLOG-13) quand l'index couvre un répertoire multi-modules — `null`
-seulement pour un repo non-Maven ou un site hors arborescence Maven,
-jamais pour dissimuler la fédération. Avec `--workspace ROOT` : fédère en
-plus les microservices Maven indexés séparément sous `ROOT` (BACKLOG-11
-A2, lecture seule). Dans les deux cas, chaque site du flux (producteur/
-consommateur Kafka, ou serveur/appelant REST) apparaît attribué à son
-service, et pour chaque site, les findings Semgrep qui le recouvrent
-(fichier + lignes qui se chevauchent, même service — esprit ADR-19) sont
-listés par `rule_id`.
+Without `--workspace` only: if textual resolution fails, a last-resort
+**vector similarity** fallback (BACKLOG-10 K3) looks for the nearest neighbor
+among endpoints already embedded by `cccr index` (`cccr endpoints`/`cccr graph`
+also depend on it indirectly, same indexing pipeline) — useful for a natural-
+language query that contains no literal topic/route name. Below a minimum
+similarity threshold, no result is kept (same policy as `topic_dynamic`: never
+resolved by guesswork) and the failure remains the same message as for an
+unsuccessful textual resolution. This fallback is not available with
+`--workspace` (multi-service federation).
 
-Rendu `--json` :
+Without `--workspace`: searches only the current project, but `service` now
+reflects the Maven module of each site (`endpoint.module`, BACKLOG-13) when the
+index covers a multi-module directory — `null` only for a non-Maven repo or a
+site outside the Maven tree, never to hide federation. With `--workspace ROOT`:
+also federates separately indexed Maven microservices under `ROOT`
+(BACKLOG-11 A2, read-only). In both cases, every site in the flow
+(Kafka producer/consumer, or REST server/caller) appears assigned to its
+service, and for each site the overlapping Semgrep findings (overlapping file +
+lines, same service — spirit of ADR-19) are listed by `rule_id`. A stale
+endpoint inventory is surfaced through `warnings` rather than silently being
+confused with the absence of a site.
+
+`--json` rendering:
 ```json
 {
   "query": "orders.created",
@@ -412,275 +442,285 @@ Rendu `--json` :
 }
 ```
 
-Requête sans correspondance, ou ambiguë (plusieurs topics correspondent en
-sous-chaîne) : message explicite sur stderr, code de sortie 2. Mêmes règles
-d'index absent que `findings`/`summary` (message identique, code 2) quand
-`--workspace` n'est pas fourni ; avec `--workspace`, un service fédéré
-manquant ou incompatible ne fait jamais échouer `flow` (mêmes garanties que
-`cccr graph --workspace`/`cccr workspace`, K7 CA2), mais n'est **pas** non
-plus absorbé silencieusement : il apparaît dans `warnings` — un site
-manquant à cause d'un service non fédéré doit rester visible, pas confondu
-avec l'absence réelle d'un producteur/consommateur.
+Query with no match, or ambiguous query (several topics match as a substring):
+explicit stderr message, exit code 2. Same “index absent” rules as
+`findings`/`summary` (same message, code 2) when `--workspace` is not provided;
+with `--workspace`, a missing or incompatible federated service never makes
+`flow` fail (same guarantees as `cccr graph --workspace`/`cccr workspace`,
+K7 CA2), but is **not** silently absorbed either: it appears in `warnings` — a
+missing site caused by a non-federated service must stay visible, not be
+confused with the real absence of a producer/consumer.
 
 ### `cccr mcp`
-Lance le serveur MCP (stdio) sur le repo courant (répertoire d'exécution).
-`cccr mcp --help` documente le bloc d'enregistrement client :
+Starts the MCP server (stdio) on the current repo (execution directory).
+`cccr mcp --help` documents the client registration block:
 ```json
 {"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
 ```
 
-## 3. Serveur MCP
+## 3. MCP server
 
-Huit tools, chacun annoté avec un type de retour concret (`TypedDict` ou
-dataclass, jamais `str`) — FastMCP en dérive un `outputSchema` par champ,
-exposé aux clients MCP en plus du texte JSON habituel (`structuredContent`
-*et* `content` texte, les deux dans la même réponse ; un client qui ignore le
-premier retombe sur le second, aucune régression pour les clients existants).
-Une exception levée dans un tool **n'est plus interceptée** : elle remonte
-telle quelle, FastMCP la convertit en `ToolError` puis en `isError: true`
-côté protocole — le signal standard qu'un client MCP peut détecter sans
-parser le texte de réponse (avant : `{"error": "<message>"}` retourné comme
-un résultat normal, indiscernable d'un succès sans convention côté client).
+Eight tools, each annotated with a concrete return type (`TypedDict` or
+dataclass, never `str`) — FastMCP derives an `outputSchema` from it field by
+field, exposed to MCP clients in addition to the usual JSON text
+(`structuredContent` *and* text `content`, both in the same response; a client
+that ignores the former falls back to the latter, so there is no regression for
+existing clients). An exception raised inside a tool **is no longer caught**:
+it bubbles up as-is, FastMCP turns it into `ToolError` and then `isError: true`
+on the protocol side — the standard signal an MCP client can detect without
+parsing the response text (before: `{"error": "<message>"}` returned as a
+normal result, indistinguishable from success without a client-side convention).
 
-| Tool | Type de retour | Rôle | Notes |
+The first four tools below form the **core product**; the next four belong to
+the **Java/Spring microservices extension**.
+
+| Tool | Return type | Role | Notes |
 |---|---|---|---|
-| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Recherche en langage naturel — même contrat que `cccr findings --json` | Pas de pagination (`offset`) côté MCP |
-| `findings_summary()` | `FindingsSummary` | Vue agrégée à faible coût | Même structure que `cccr summary --json` |
-| `reindex_findings()` | `IndexReport` (dataclass de `indexer.py`, réutilisée telle quelle) | Réindexation incrémentale | Champs `scanned, skipped, findings_added, findings_removed, deleted_files` |
-| `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Recherche de code annotée des findings qui recouvrent chaque résultat — même nom de tool, mêmes paramètres et même comportement que le `search` de ccc, et équivalent à la CLI `cccr search` (implémentation partagée, `code_search.py`) | Utilise l'index code expérimental s'il existe, sinon `ccc` |
-| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Liste filtrable des endpoints REST/Kafka indexés — équivalent à la CLI `cccr endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
-| `graph(workspace_root=None)` | `GraphResult` | Points de blocage probables (BACKLOG-10 K12) — équivalent à la CLI `cccr graph`/`cccr graph --workspace` | `cycles`/`hotspots` vides sans `workspace_root` (ADR-27) ; réels sinon (fédération A2) |
-| `list_workspace_services(root)` | `WorkspaceResult` | Découverte de modules Maven + comptage endpoints/findings par service — équivalent à la CLI `cccr workspace` | Lecture seule (ADR-30) ; BACKLOG-11 A2 |
-| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Résout un topic/route et liste ses sites (producteurs/consommateurs, ou serveurs/appelants) avec les findings qui les recouvrent — équivalent à la CLI `cccr flow`/`cccr flow --workspace` | Requête sans correspondance ou ambiguë → `ToolError` (BACKLOG-10 K5/K6) |
+| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Natural-language search — same contract as `cccr findings --json` | No pagination (`offset`) on the MCP side |
+| `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
+| `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
+| `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |
+| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
+| `graph(workspace_root=None)` | `GraphResult` | Likely blocking points (BACKLOG-10 K12) — equivalent to CLI `cccr graph`/`cccr graph --workspace` | `cycles`/`hotspots` empty without `workspace_root` (ADR-27); real otherwise (A2 federation) |
+| `list_workspace_services(root)` | `WorkspaceResult` | Maven module discovery + endpoint/finding counts per service — equivalent to CLI `cccr workspace` | Read-only (ADR-30); BACKLOG-11 A2 |
+| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` (BACKLOG-10 K5/K6) |
 
-`search` ajoute à chaque résultat de code :
-- `findings` : liste des findings dont `path` est identique et dont la plage
-  `[start_line, end_line]` chevauche celle du résultat de code (chevauchement
-  inclusif — une seule ligne commune suffit) — même contrat que `findings`,
-  sans le champ `context`.
-- `max_severity` : la sévérité la plus haute parmi les findings joints, ou
-  `null` si aucun.
+`search` adds to each code result:
+- `findings`: list of findings whose `path` is identical and whose
+  `[start_line, end_line]` range overlaps the code result's one (inclusive
+  overlap — a single common line is enough) — same contract as `findings`,
+  without the `context` field.
+- `max_severity`: highest severity among attached findings, or `null` if none.
 
-**Classement pondéré par sévérité** (`ccc_bridge.rank_by_severity`) : l'ordre
-de `ccc search` (pertinence sémantique pure) est ré-ordonné en ajoutant un
-boost additif à `score` selon `max_severity` (`ERROR` +0.15, `WARNING` +0.05,
-`INFO`/aucun +0.0), puis tronqué à `limit`. `score` lui-même n'est pas modifié
-— seul l'ordre en tient compte. Pour que ce boost puisse faire remonter un
-résultat juste hors du top `limit` de `ccc`, l'appel sous-jacent sur-demande
-(`overfetch_limit` : `limit × 3`, plafonné à 50) avant de trier et tronquer.
+**Severity-weighted ranking** (`ccc_bridge.rank_by_severity`): the order from
+`ccc search` (pure semantic relevance) is re-ordered by adding an additive boost
+to `score` depending on `max_severity` (`ERROR` +0.15, `WARNING` +0.05,
+`INFO`/none +0.0), then truncated to `limit`. `score` itself is not modified —
+only the order takes it into account. So that this boost can promote a result
+just outside `ccc`'s top `limit`, the underlying call over-fetches
+(`overfetch_limit`: `limit × 3`, capped at 50) before sorting and truncating.
 
-`CodeSearchResult` a un schéma **unique et stable** pour les réponses réussies
-(nominales ou index findings absent) — pas de forme alternative selon le cas,
-pour que l'`outputSchema` reste valide :
+`CodeSearchResult` has a **single stable schema** for successful responses
+(nominal or missing findings index) — not an alternate shape depending on the
+case, so that `outputSchema` remains valid:
 ```json
 {
-  "results": [...],                 // sans findings si index absent
-  "findings_only_fallback": [],     // conservé vide pour compatibilité de schema
-  "warning": null                   // string explicative en mode dégradé, null sinon
+  "results": [...],                 // without findings if the index is absent
+  "findings_only_fallback": [],     // kept empty for schema compatibility
+  "warning": null                   // explanatory string in degraded mode, null otherwise
 }
 ```
-Si `ccc` échoue ou est absent : exception (`ccc introuvable...` ou
-`ccc a échoué...`) → `isError: true` côté MCP, code de sortie 2 côté CLI.
+If `ccc` fails or is absent: exception (`ccc not found...` or
+`ccc failed...`) → `isError: true` on the MCP side, exit code 2 on the CLI.
 
-## 4. Skill Claude Code (distribué séparément — `~/cocoindex-ext-skill/SKILL.md`)
+## 4. Claude Code skill (distributed separately — `~/cocoindex-ext-skill/SKILL.md`)
 
-Déclencheurs : vulnérabilité, sécurité, semgrep, finding, dette, audit.
+Triggers: vulnerability, security, semgrep, finding, debt, audit.
 
-Règle d'or UX : commencer par la requête la moins coûteuse qui répond à la
-question, puis demander plus de contexte seulement quand il faut agir. Le skill
-choisit donc entre :
-1. **Vue d'ensemble** — `findings_summary()` pour un état court.
-2. **Recherche ciblée** — `search_findings(...)` pour un problème ou un fichier.
-3. **Recherche code + dette** — `search(...)` quand la question porte
-   d'abord sur du code.
-4. **Boucle de correction** — `search_findings(..., include_context=true)` →
-   patch → scan Semgrep frais sur le fichier si le MCP officiel est disponible
-   → `reindex_findings()` → même `search_findings(...)` pour confirmer la
-   disparition ; abandon et signalement après 2 tentatives infructueuses.
+UX golden rule: start with the least costly query that answers the question,
+then ask for more context only when action is needed. The skill therefore
+chooses among:
+1. **Overview** — `findings_summary()` for a short state.
+2. **Targeted search** — `search_findings(...)` for a problem or a file.
+3. **Code + debt search** — `search(...)` when the question is primarily about
+   code.
+4. **Remediation loop** — `search_findings(..., include_context=true)` →
+   patch → fresh Semgrep scan on the file if the official MCP is available →
+   `reindex_findings()` → same `search_findings(...)` to confirm disappearance;
+   stop and report after 2 unsuccessful attempts.
 
-Anti-patterns explicites : ne pas scanner tout le repo via le MCP Semgrep
-officiel (préférer l'index `cccr`), ne pas corriger sans avoir lu le contexte,
-ne pas supprimer un commentaire `# nosemgrep` existant, ne pas exposer le JSON
-brut à l'utilisateur sauf demande explicite, et utiliser les fallbacks MCP
-existants plutôt que bloquer inutilement.
+Explicit anti-patterns: do not scan the whole repo through the official Semgrep
+MCP (prefer the `cccr` index), do not fix anything without reading the context,
+do not remove an existing `# nosemgrep` comment, do not expose raw JSON to the
+user unless explicitly asked, and use existing MCP fallbacks rather than
+blocking unnecessarily.
 
-## 5. Comportements d'erreur — résumé
+## 5. Error behaviors — summary
 
-| Situation | Surface | Comportement |
+| Situation | Surface | Behavior |
 |---|---|---|
 | `.cccr/config.yml` absent | `cccr index` | stderr + code 1 |
-| Pas de config Semgrep détectée et pas de `--rules` | `cccr init` | repli sur `p/security-audit`, message informatif stdout + code 0 |
-| `.cccr/config.yml` déjà existant | `cccr init` | stderr + code 1, fichier non modifié |
-| Semgrep échoue ou dépasse le timeout | `cccr index` | stderr + code 2, base inchangée |
-| `.cccr/findings.db` absent | `cccr findings` / `cccr summary` (et `cccr search` si `ccc` est aussi indisponible) | stderr (message exact) + code 2 |
-| Embeddings incompatibles avec la requête | `cccr findings` (ou repli findings de `cccr search`) | stderr actionnable + code 2 |
-| Toute exception | tools MCP | remonte telle quelle → `ToolError` FastMCP → `isError: true` côté protocole ; le serveur reste utilisable pour l'appel suivant |
-| `ccc` absent ou en erreur | `cccr search` / `search` (MCP) | stderr/exception explicite, code 2 côté CLI, `isError: true` côté MCP |
+| No Semgrep config detected and no `--rules` | `cccr init` | first copies skill packs if available, otherwise falls back to `p/security-audit`, informational stdout message + code 0 |
+| `.cccr/config.yml` already exists | `cccr init` | stderr + code 1, file unchanged |
+| Semgrep fails or exceeds timeout | `cccr index` | stderr + code 2, database unchanged |
+| `.cccr/findings.db` absent | `cccr findings` / `cccr summary` (and `cccr search` if `ccc` is also unavailable) | stderr (exact message) + code 2 |
+| Embeddings incompatible with the query | `cccr findings` (or findings fallback of `cccr search`) | actionable stderr + code 2 |
+| Any exception | MCP tools | bubbles up as-is → FastMCP `ToolError` → `isError: true` on the protocol side; the server remains usable for the next call |
+| `ccc` absent or failing | `cccr search` / `search` (MCP) | explicit stderr/exception, code 2 on CLI, `isError: true` on MCP |
 
-## 6. Pack de règles liveness (BACKLOG-10 K8)
+## 6. Liveness rule pack (BACKLOG-10 K8)
 
-Le pack de règles vit dans le repo skill, pas dans ce repo : voir
+The rule pack lives in the skill repo, not in this repo: see
 [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill)
-`skills/cccr/rules/liveness/java.yaml`, aux côtés du pack `default` déjà
-distribué par le skill (ADR-24). `cccr` lui-même ne livre plus aucun
-fichier de règles (`src/ccc_radar/rules/` n'existe pas) — il ne fait qu'exécuter
-Semgrep avec les chemins déclarés dans `rules:`. Ce repo garde une copie de
-test dans `tests/fixtures/liveness_repo/rules/`
-(`tests/test_liveness_rules.py`), tenue à jour manuellement avec la copie
-du skill.
+`skills/cccr/rules/liveness/java.yaml`, alongside the `default` pack already
+distributed by the skill (ADR-24). `cccr` itself no longer ships any rule file
+(`src/ccc_radar/rules/` does not exist) — it only runs Semgrep with the paths
+declared in `rules:`. This repo keeps a test copy in
+`tests/fixtures/liveness_repo/rules/` (`tests/test_liveness_rules.py`), kept
+manually in sync with the skill copy.
 
-Cible d'analyse : **Java + Spring + Maven uniquement** — décision de
-périmètre, pas un manque temporaire (voir « Périmètre » ci-dessous).
+Analysis target: **Java + Spring + Maven only** — scope decision, not a
+temporary gap (see “Scope” below).
 
-| Règle | Langage | Sévérité | Détecte |
+| Rule | Language | Severity | Detects |
 |---|---|---|---|
-| `cccr.liveness.java.new-resttemplate-no-timeout` | Java | WARNING | `new RestTemplate()` sans configuration de timeout (vs `RestTemplateBuilder`) |
-| `cccr.liveness.java.blocking-join-no-timeout` | Java | WARNING | `.join()` sans argument (`Thread` ou `CompletableFuture`) |
-| `cccr.liveness.java.blocking-future-get-no-timeout` | Java | WARNING | `.get()` sans argument sur une variable déclarée `Future<T>`/`CompletableFuture<T>` |
-| `cccr.liveness.java.rest-call-in-kafka-listener` | Java | ERROR | Appel `RestTemplate` dans une méthode `@KafkaListener` |
-| `cccr.liveness.java.network-call-inside-synchronized` | Java | ERROR | Appel `RestTemplate` à l'intérieur d'un bloc `synchronized` |
-| `cccr.liveness.java.mongo-lock-busy-wait-poll` | Java | ERROR | Verrou pessimiste MongoDB (`findAndModify`/`findOneAndUpdate`) acquis par sondage bloquant — boucle `while`/`for` contenant aussi un `Thread.sleep(...)` |
-| `cccr.liveness.java.mongo-lock-inside-synchronized` | Java | ERROR | Appel `findAndModify`/`findOneAndUpdate` (verrou pessimiste MongoDB) à l'intérieur d'un bloc `synchronized` |
+| `cccr.liveness.java.new-resttemplate-no-timeout` | Java | WARNING | `new RestTemplate()` without timeout configuration (vs `RestTemplateBuilder`) |
+| `cccr.liveness.java.blocking-join-no-timeout` | Java | WARNING | `.join()` with no argument (`Thread` or `CompletableFuture`) |
+| `cccr.liveness.java.blocking-future-get-no-timeout` | Java | WARNING | `.get()` with no argument on a variable declared as `Future<T>`/`CompletableFuture<T>` |
+| `cccr.liveness.java.rest-call-in-kafka-listener` | Java | ERROR | `RestTemplate` call inside a `@KafkaListener` method |
+| `cccr.liveness.java.network-call-inside-synchronized` | Java | ERROR | `RestTemplate` call inside a `synchronized` block |
+| `cccr.liveness.java.mongo-lock-busy-wait-poll` | Java | ERROR | MongoDB pessimistic lock (`findAndModify`/`findOneAndUpdate`) acquired through blocking polling — `while`/`for` loop also containing `Thread.sleep(...)` |
+| `cccr.liveness.java.mongo-lock-inside-synchronized` | Java | ERROR | `findAndModify`/`findOneAndUpdate` call (MongoDB pessimistic lock) inside a `synchronized` block |
 
-**Usage** : comme le pack `default`, le copier dans le repo cible
-(ex. `.cccr/rules/liveness/`) et le déclarer dans `rules:` — jamais de
-chemin absolu vers le repo skill (ADR-24) :
+**Usage** : like the `default` pack, copy it into the target repo
+(e.g. `.cccr/rules/liveness/`) and declare it in `rules:` — never use an
+absolute path to the skill repo (ADR-24):
 
 ```yaml
 rules:
   - .cccr/rules/liveness/java.yaml
 ```
 
-Périmètre : Java (`RestTemplate`, Spring Kafka `@KafkaListener`,
-`synchronized`, `Future`/`CompletableFuture`, verrous pessimistes MongoDB
-`findAndModify`/`findOneAndUpdate`) — la stack cible de l'analyse est Java +
-Spring + Maven ; Python/JS/TS ne sont pas des cibles (voir K8 dans
-`archive/BACKLOG-10.md`). Le volet sécurité (SASL en clair, `PLAINTEXT`,
-désérialisation non sûre) n'est pas encore livré.
+Scope: Java (`RestTemplate`, Spring Kafka `@KafkaListener`, `synchronized`,
+`Future`/`CompletableFuture`, MongoDB pessimistic locks
+`findAndModify`/`findOneAndUpdate`) — the target stack is Java + Spring +
+Maven; Python/JS/TS are not targets (see K8 in `archive/BACKLOG-10.md`). The
+security part (cleartext SASL, `PLAINTEXT`, unsafe deserialization) is now
+covered separately in the Kafka security pack.
 
-**Verrous pessimistes MongoDB** — MongoDB n'a pas de verrou pessimiste
-natif façon `SELECT ... FOR UPDATE` ; le motif observé dans ce type de code
-est une écriture atomique (`findAndModify`/`findOneAndUpdate`) sur un champ
-« verrouillé », combinée à une boucle de sondage ou un moniteur JVM :
-- `mongo-lock-busy-wait-poll` flague l'appel Mongo dès lors qu'il vit dans
-  une boucle `while`/`for` qui contient aussi un `Thread.sleep(...)` —
-  co-occurrence structurelle (pas de dépendance au nom du champ de verrou),
-  signal fort d'un sondage sans timeout ni backoff visible.
-- `mongo-lock-inside-synchronized` flague le même appel Mongo à l'intérieur
-  d'un bloc `synchronized` — le round-trip réseau se fait moniteur JVM
-  tenu, même risque que `network-call-inside-synchronized`.
-- Les deux règles ne présument rien du nom du champ « verrouillé » (aucune
-  hypothèse `locked`/`lockedAt`/etc.) : c'est la structure (boucle+sleep, ou
-  synchronized) autour de l'écriture atomique qui signale l'usage en
-  verrou, pas une convention de nommage.
+**MongoDB pessimistic locks** — MongoDB has no native pessimistic lock like
+`SELECT ... FOR UPDATE`; the pattern observed in this code style is an atomic
+write (`findAndModify`/`findOneAndUpdate`) on a “locked” field, combined with a
+polling loop or JVM monitor:
+- `mongo-lock-busy-wait-poll` flags the Mongo call as soon as it lives in a
+  `while`/`for` loop that also contains `Thread.sleep(...)` — structural co-
+  occurrence (no dependence on the lock field name), strong signal of polling
+  without visible timeout or backoff.
+- `mongo-lock-inside-synchronized` flags the same Mongo call inside a
+  `synchronized` block — the network round-trip happens while holding a JVM
+  monitor, same risk as `network-call-inside-synchronized`.
+- Neither rule assumes anything about the “locked” field name (no assumption on
+  `locked`/`lockedAt`/etc.): the structure (loop+sleep, or synchronized) around
+  the atomic write is what signals the lock usage, not a naming convention.
 
-## 7. Pack de règles d'inventaire REST (BACKLOG-10 K11)
+## 7. REST inventory rule pack (BACKLOG-10 K11)
 
-Comme le pack liveness, vit dans `ccc-radar-skill`
-(`skills/cccr/rules/rest/java.yaml`, ADR-24) — copie de test dans
-`tests/fixtures/rest_repo/`. Contrairement aux packs liveness/`default`, ce
-pack n'est **pas un pack de findings** : `metadata.severity` (`INFO`) n'a
-pas de sens à seuiller. En revanche, il est désormais exécuté pendant
-`cccr index` dès qu'il figure dans `rules:` (workflow d'audit microservices du
-skill), et alimente `cccr endpoints` / `cccr graph`.
+Like the liveness pack, it lives in `ccc-radar-skill`
+(`skills/cccr/rules/rest/java.yaml`, ADR-24) — test copy in
+`tests/fixtures/rest_repo/`. Unlike the liveness/`default` packs, this pack is
+**not a findings pack**: `metadata.severity` (`INFO`) has no meaningful
+thresholding use. It is nevertheless run during `cccr index` whenever it appears
+in `rules:` (microservices audit workflow of the skill), and feeds
+`cccr endpoints` / `cccr graph`.
 
-| Règle | Langage | Rôle | Détecte |
+| Rule | Language | Role | Detects |
 |---|---|---|---|
-| `cccr.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Route Spring exposée (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, ou `@RequestMapping(method=...)` pour n'importe quel verbe) |
-| `cccr.rest.java.call-{get,post,put,delete}` | Java | `call` | Appel `RestTemplate` (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
-| `cccr.rest.java.feign-{get,post,put,delete,patch}` | Java | `call` | Méthode d'une interface `@FeignClient` annotée `@GetMapping`/.../`@RequestMapping(method=...)` (signature sans corps — un client déclaratif, pas une route exposée) |
-| `cccr.rest.java.webclient-{get,post,put,delete,patch}` | Java | `call` | Appel `WebClient` fluent (`.get().uri(...)`, `.post().uri(...)`, ...) |
+| `cccr.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Exposed Spring route (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, or `@RequestMapping(method=...)` for any verb) |
+| `cccr.rest.java.call-{get,post,put,delete}` | Java | `call` | `RestTemplate` call (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
+| `cccr.rest.java.feign-{get,post,put,delete,patch}` | Java | `call` | Method of a `@FeignClient` interface annotated with `@GetMapping`/.../`@RequestMapping(method=...)` (signature with no body — declarative client, not exposed route) |
+| `cccr.rest.java.webclient-{get,post,put,delete,patch}` | Java | `call` | Fluent `WebClient` call (`.get().uri(...)`, `.post().uri(...)`, ...) |
 
-Chaque résultat porte `metadata.category: endpoint-inventory`,
-`metadata.role`, `metadata.http_method`, `metadata.framework` — le contrat
-que lit `parse_semgrep_endpoints` (voir `docs/SPEC-TECH.md#4bis-extraction-
-dendpoints-rest--kafka-run_semgrep_endpoints-backlog-10-k11k2`). Le chemin
-est extrait du texte du site (regex sur le snippet, pas de métavariable
-Semgrep — ADR-26) : un chemin non littéral, ou concaténé à une variable,
-est marqué `topic_dynamic=True` plutôt que résolu au hasard. Une URL absolue
-appelante est normalisée en route canonique (`GET http://svc/orders` →
-`GET /orders`) pour rester comparable aux routes exposées. Une interface
-`@FeignClient` n'est jamais classée `serve` : les règles `serve-*` exigent un
-corps de méthode (`{ ... }`), absent des signatures déclaratives Feign — pas
-besoin d'exclusion explicite. Périmètre : Java uniquement — la stack cible
-de l'analyse est Java + Spring + Maven (voir K8/K11 dans
-`archive/BACKLOG-10.md`). Reste à couvrir : chaîne `WebClient` répartie sur
-plusieurs lignes (`.get()` et `.uri(...)` non sur la même ligne dans le
-snippet — `_find_first_literal` ne cherche que sur la première ligne).
+Each result carries `metadata.category: endpoint-inventory`,
+`metadata.role`, `metadata.http_method`, `metadata.framework` — the contract
+read by `parse_semgrep_endpoints` (see `docs/SPEC-TECH.md`, §4bis). The path is
+extracted from the site text (regex on the snippet, not a Semgrep metavariable
+— ADR-26): a non-literal path, or one concatenated with a variable, is marked
+`topic_dynamic=True` rather than guessed. An absolute caller URL is normalized
+into a canonical route (`GET http://svc/orders` → `GET /orders`) so it remains
+comparable to exposed routes. A `@FeignClient` interface is never classified as
+`serve`: the `serve-*` rules require a method body (`{ ... }`), absent from
+Feign declarative signatures — no explicit exclusion needed. In addition,
+best-effort scanner logic now:
+1. resolves the base path of `@FeignClient(url = "${...}")` or
+   `@FeignClient(path = "...")` and merges it into the method route, so a call
+   can surface as `/api/v1/customers/{id}` instead of just `/{id}`;
+2. inventories `RestTemplate.exchange(urlExpr, HttpMethod.X, ...)` even
+   without a dedicated Semgrep rule, with best-effort resolution of local
+   `@Value` fields, concatenated literal suffixes, and Spring Cloud Config
+   Server files such as `configurations/order-service.yml`;
+3. keeps a `.put(...)` match as a REST call only when the file actually shows a
+   `RestTemplate` footprint, which removes `Map.put(...)` false positives.
+Scope: Java only — target stack is Java + Spring + Maven (see K8/K11 in
+`archive/BACKLOG-10.md`). Remaining gap: `WebClient` chain split across several
+lines (`.get()` and `.uri(...)` not on the same line in the snippet —
+`_find_first_literal` only searched the first line before its later
+improvements).
 
-## 8. Pack de règles d'inventaire Kafka (BACKLOG-10 K2)
+## 8. Kafka inventory rule pack (BACKLOG-10 K2)
 
-Comme le pack REST, vit dans `ccc-radar-skill`
-(`skills/cccr/rules/kafka/java.yaml`, ADR-24) — copie de test dans
-`tests/fixtures/kafka_repo/`. Pas un pack de findings, mais exécuté pendant
-`cccr index` dès qu'il figure dans `rules:` (workflow d'audit microservices du
-skill).
+Like the REST pack, it lives in `ccc-radar-skill`
+(`skills/cccr/rules/kafka/java.yaml`, ADR-24) — test copy in
+`tests/fixtures/kafka_repo/`. Not a findings pack, but it is run during
+`cccr index` whenever it appears in `rules:` (microservices audit workflow of
+the skill).
 
-| Règle | Rôle | Détecte |
+| Rule | Role | Detects |
 |---|---|---|
-| `cccr.kafka.java.consume` | `consume` | Méthode `@KafkaListener(topics = "...")` |
-| `cccr.kafka.java.produce-template` | `produce` | `KafkaTemplate.send(topic, valeur, ...)` (au moins 2 arguments — exclut `send(ProducerRecord)`, déjà couvert ci-dessous) ou `KafkaTemplate.sendDefault(...)` (topic implicite, toujours dynamique) |
-| `cccr.kafka.java.produce-record` | `produce` | `new ProducerRecord(topic, ...)` (API bas niveau `kafka-clients` **et** Spring, mêmes classes) |
-| `cccr.kafka.java.consume-raw` | `consume` | `KafkaConsumer.subscribe(Collections.singletonList(...))`/`Arrays.asList(...)`/`List.of(...)` — API bas niveau (confluent-kafka), hors `@KafkaListener` |
+| `cccr.kafka.java.consume` | `consume` | `@KafkaListener(topics = "...")` method |
+| `cccr.kafka.java.produce-template` | `produce` | `KafkaTemplate.send(topic, value, ...)` (at least 2 arguments — excludes `send(ProducerRecord)` and `send(message)`, already covered elsewhere) or `KafkaTemplate.sendDefault(...)` (implicit topic, always dynamic) |
+| `cccr.kafka.java.produce-record` | `produce` | `new ProducerRecord(topic, ...)` (low-level `kafka-clients` API **and** Spring, same classes) |
+| `cccr.kafka.java.consume-raw` | `consume` | `KafkaConsumer.subscribe(Collections.singletonList(...))`/`Arrays.asList(...)`/`List.of(...)` — low-level API (`confluent-kafka`), outside `@KafkaListener` |
 
-Le topic est extrait comme pour REST (`extra.metadata.role`, pas de
-`http_method` ici), avec un cas supplémentaire propre à Kafka/Spring : un
-littéral de la forme `${propriete.imbriquee}` — un topic externalisé en
-configuration (`@KafkaListener(topics = "${app.kafka.topics.orders}")`) —
-n'est **pas** traité comme un nom de topic littéral. `cccr` tente de le
-résoudre contre `application.yml`/`.yaml`/`.properties` du repo
-(`src/main/resources/` puis la racine, layout standard Maven/Gradle,
-support de la syntaxe de défaut Spring `${prop:défaut}`) via
-`resolve_spring_property` — voir ADR-28. Résolu → `topic_dynamic=False`,
-topic = la valeur trouvée (ou le défaut) ; introuvable et sans défaut →
-`topic_dynamic=True`, le placeholder est conservé tel quel (jamais résolu
-au hasard).
+The topic is extracted like REST (`extra.metadata.role`, no `http_method`
+here), with one extra Kafka/Spring-specific case: a literal of the form
+`${nested.property}` — a topic externalized into configuration
+(`@KafkaListener(topics = "${app.kafka.topics.orders}")`) — is **not** treated
+as a literal topic name. `cccr` tries to resolve it against repo
+`application.yml`/`.yaml`/`.properties`
+(`src/main/resources/` then repo root, standard Maven/Gradle layout,
+supporting Spring default syntax `${prop:default}`) via
+`resolve_spring_property` — see ADR-28. Resolved → `topic_dynamic=False`,
+topic = found value (or default); missing and no default →
+`topic_dynamic=True`, the placeholder is kept as-is (never guessed).
 
-Une variable alimentée par un `@Value("${...}")` ailleurs dans la classe
+A variable fed by `@Value("${...}")` elsewhere in the class
 (`@KafkaListener(topics = ordersTopic)`, `kafkaTemplate.send(ordersTopic,
-...)`) **est** désormais suivie, best-effort : `_extract_kafka_topic`
-retrouve le nom de la variable dans le snippet, puis cherche une
-déclaration de champ `@Value("${clé}") ... ordersTopic;` dans le même
-fichier source (regex sur le texte, pas d'AST Java ni d'analyse de flux de
-données entre statements — même esprit ADR-26) ; la clé trouvée est
-résolue comme un placeholder normal (`resolve_spring_property`). Variable
-non alimentée par un `@Value` dans le même fichier (paramètre de méthode,
-champ initialisé autrement) → toujours `<dynamic>`, jamais résolu au
-hasard. `KafkaConsumer.subscribe(...)` est volontairement restreint aux
-trois formes de collection usuelles (`Collections.singletonList`/
-`Arrays.asList`/`List.of`) pour ne jamais confondre un `.subscribe(...)`
-RxJava/Reactor (lambda/Observer, jamais une `Collection<String>`) avec un
-abonnement Kafka — `subscribe(Pattern.compile(...))` (abonnement par motif
-de nom) n'est pas couvert.
+...)`) is now followed, best-effort: `_extract_kafka_topic` finds the variable
+name in the snippet, then looks for a field declaration
+`@Value("${key}") ... ordersTopic;` in the same source file (regex on the text,
+no Java AST or dataflow analysis between statements — same spirit as ADR-26);
+the found key is resolved like a normal placeholder (`resolve_spring_property`).
+A variable not fed by `@Value` in the same file (method parameter, field
+initialized differently) still becomes `<dynamic>`, never guessed.
+`KafkaConsumer.subscribe(...)` is deliberately restricted to the three usual
+collection forms (`Collections.singletonList`/`Arrays.asList`/`List.of`) so it
+never confuses an RxJava/Reactor `.subscribe(...)` (lambda/Observer, never a
+`Collection<String>`) with a Kafka subscription —
+`subscribe(Pattern.compile(...))` (topic-name pattern subscription) remains out
+of scope. `cccr` also adds local inference for Spring producers built through
+`MessageBuilder.withPayload(...).setHeader(TOPIC, ...)` then sent with
+`kafkaTemplate.send(message)`: the topic is read from the `TOPIC` /
+`KafkaHeaders.TOPIC` header, then resolved as a literal, Spring placeholder, or
+`@Value` field with the same rules; if nothing is resolvable, it remains
+`<dynamic>`.
 
-## 9. Pack de règles sécurité Kafka (BACKLOG-10 K8, volet sécurité)
+## 9. Kafka security rule pack (BACKLOG-10 K8, security part)
 
-Vit dans `ccc-radar-skill` (`skills/cccr/rules/kafka-security/
-java.yaml`, ADR-24) — copie de test dans
-`tests/fixtures/kafka_security_repo/`. Contrairement aux packs `rest`/
-`kafka` (inventaire), ce sont de vraies règles de **findings**, comme
-`default`/`liveness` — indexées et interrogeables via `cccr findings`.
+Lives in `ccc-radar-skill` (`skills/cccr/rules/kafka-security/
+java.yaml`, ADR-24) — test copy in
+`tests/fixtures/kafka_security_repo/`. Unlike the `rest`/
+`kafka` packs (inventory), these are real **findings** rules, like
+`default`/`liveness` — indexed and searchable through `cccr findings`.
 
-| Règle | Sévérité | Détecte |
+| Rule | Severity | Detects |
 |---|---|---|
-| `cccr.kafka-security.sasl-plaintext-credentials` | ERROR | `sasl.jaas.config` avec un mot de passe **littéral** (`password="..."` en dur, pas construit depuis une variable) |
-| `cccr.kafka-security.plaintext-protocol` | ERROR | `security.protocol` réglé sur `PLAINTEXT` (littéral ou constante `CommonClientConfigs.SECURITY_PROTOCOL_CONFIG`) |
-| `cccr.kafka-security.json-deserializer-trusts-all-packages` | ERROR | `JsonDeserializer`/`ErrorHandlingDeserializer` Spring Kafka configuré avec `trusted.packages` = `"*"` (désérialisation non sûre — instanciation de classe arbitraire depuis un message) |
-| `cccr.kafka-security.unsafe-java-deserialization` | ERROR | `ObjectInputStream(...).readObject()` — désérialisation Java native sur des données potentiellement issues d'un message non fiable |
+| `cccr.kafka-security.sasl-plaintext-credentials` | ERROR | `sasl.jaas.config` with a **literal** password (hard-coded `******`, not built from a variable) |
+| `cccr.kafka-security.plaintext-protocol` | ERROR | `security.protocol` set to `PLAINTEXT` (literal or constant `CommonClientConfigs.SECURITY_PROTOCOL_CONFIG`) |
+| `cccr.kafka-security.json-deserializer-trusts-all-packages` | ERROR | Spring Kafka `JsonDeserializer`/`ErrorHandlingDeserializer` configured with `trusted.packages = "*"` (unsafe deserialization — arbitrary class instantiation from a message) |
+| `cccr.kafka-security.unsafe-java-deserialization` | ERROR | `ObjectInputStream(...).readObject()` — native Java deserialization on data potentially coming from an untrusted message |
 
-`cccr.kafka-security.sasl-plaintext-credentials` distingue un mot de passe
-en dur d'un mot de passe injecté par variable via `metavariable-regex` sur
-le texte source du littéral — qui porte des guillemets **échappés**
-(`\"`), pas nus, puisque c'est un littéral Java imbriqué dans un autre
-littéral (voir ADR-31, un piège non évident à connaître avant d'écrire ce
-genre de règle).
+`cccr.kafka-security.sasl-plaintext-credentials` distinguishes a hard-coded
+password from a variable-injected one through `metavariable-regex` on the
+source text of the literal — which carries **escaped** quotes (`\"`), not bare
+quotes, because it is a Java string literal nested inside another literal (see
+ADR-31, a non-obvious trap to know before writing this kind of rule).
 
-**Ce qui n'est délibérément pas dupliqué ici** : producteur non idempotent,
-`enable.auto.commit` risqué et handler sans DLQ/retry étaient dans le
-périmètre initial de K8 mais sont déjà couverts par le pack `default`
-(`skills/cccr/rules/default/b-kafka.yaml`, règles R7 et R10) — voir
-`archive/BACKLOG-10.md` K8. `max.poll.interval.ms` risqué reste un
-écart documenté (pas de règle, le seuil/l'intention « risqué » n'étant pas
-assez univoque pour une détection fiable sans faux positifs).
+**What is deliberately not duplicated here**: non-idempotent producer,
+risky `enable.auto.commit`, and handler without DLQ/retry were in K8's initial
+scope but are already covered by the `default` pack
+(`skills/cccr/rules/default/b-kafka.yaml`, rules R7 and R10) — see
+`archive/BACKLOG-10.md` K8. Risky `max.poll.interval.ms` remains a documented
+gap (no rule, since the threshold/intent of “risky” is not unambiguous enough
+for reliable detection without false positives).
 
-Périmètre : Java uniquement (voir note en tête de `archive/BACKLOG-10.md`).
+Scope: Java only (see note at the top of `archive/BACKLOG-10.md`).

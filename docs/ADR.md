@@ -1,1126 +1,1052 @@
 # Architecture Decision Records — ccc-radar (`cccr`)
 
-> Une entrée par décision structurante : contexte, décision, conséquences.
-> Les ADR-1 à ADR-6 sont les décisions actées avant l'implémentation (issues
-> de `archive/BACKLOG.md` §« Décisions d'architecture », non rediscutées
-> pendant le développement). Les ADR-7 à ADR-11 ont été prises en cours de
-> route face à des écarts entre la spécification et le comportement réel des
-> outils externes (Semgrep, `ccc`) ou de l'environnement d'exécution.
+> One entry per structuring decision: context, decision, consequences.
+> ADR-1 to ADR-6 are decisions made before implementation (coming from
+> `archive/BACKLOG.md` §“Architecture decisions”, not reopened during
+> development). ADR-7 to ADR-11 were made along the way in response to gaps
+> between the specification and the real behavior of external tools (Semgrep,
+> `ccc`) or the execution environment.
 
 ---
 
-## ADR-1 — Package compagnon Python, pas un fork de `cocoindex-code`
+## ADR-1 — Companion Python package, not a fork of `cocoindex-code`
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : le PRD (§13, question ouverte 1) hésitait entre contribuer en
-amont à `cocoindex-code` ou livrer un package séparé.
+**Context**: the PRD (§13, open question 1) hesitated between contributing
+upstream to `cocoindex-code` or shipping a separate package.
 
-**Décision** : `ccc-radar` (CLI `cccr`) est un package Python indépendant,
-sans dépendance aux API internes de `ccc`. La jointure avec `ccc` se fait à
-la requête, via subprocess (`ccc search ...`) et recouvrement
-fichier + plage de lignes — jamais d'import de code interne de `ccc`.
+**Decision**: `ccc-radar` (CLI `cccr`) is an independent Python package, with no
+dependency on `ccc` internal APIs. The join with `ccc` happens at query time,
+through a subprocess (`ccc search ...`) and file + line-range overlap — never
+by importing internal `ccc` code.
 
-**Conséquences** : zéro risque de casse si `ccc` change ses API internes ;
-en contrepartie, la jointure dépend du format de sortie **texte** de `ccc`
-(voir ADR-10) plutôt que d'une API stable.
-
----
-
-## ADR-2 — Store SQLite unique, cosinus brute-force
-
-**Statut** : Superseded par ADR-17 (le stockage reste SQLite unique, mais le
-calcul de similarité n'est plus du brute-force NumPy).
-
-**Contexte** : un repo compte au plus quelques milliers de findings.
-
-**Décision** : un seul fichier `.cccr/findings.db` (SQLite), embeddings
-stockés en `BLOB` (`float32.tobytes()`), similarité cosinus calculée en
-Python/NumPy par force brute (chargement de tous les embeddings, produit
-scalaire).
-
-**Conséquences** : latence < 50 ms pour quelques milliers de findings, zéro
-dépendance à un index vectoriel externe (LMDB/ANN). Ne passera pas à
-l'échelle au-delà de ~50-100k findings — non traité, hors échelle cible V1.
+**Consequences**: zero breakage risk if `ccc` changes its internal APIs; in
+return, the join depends on `ccc`'s **text** output format (see ADR-10) rather
+than on a stable API.
 
 ---
 
-## ADR-3 — Embeddings via `sentence-transformers`, modèle par défaut Snowflake arctic-embed-xs
+## ADR-2 — Single SQLite store, brute-force cosine
 
-**Statut** : Acté.
+**Status**: Superseded by ADR-17 (storage remains a single SQLite file, but
+similarity is no longer computed with NumPy brute force).
 
-**Contexte** : cohérence avec `ccc`, contrainte local-first.
+**Context**: a repo contains at most a few thousand findings.
 
-**Décision** : `sentence-transformers`, modèle par défaut
-`Snowflake/snowflake-arctic-embed-xs` (même défaut que `ccc`), configurable
-via `config.embedding_model`.
+**Decision**: a single `.cccr/findings.db` file (SQLite), embeddings stored as
+`BLOB` (`float32.tobytes()`), cosine similarity computed in Python/NumPy by
+brute force (load all embeddings, dot product).
 
-**Conséquences** : téléchargement du modèle au premier usage (accès réseau
-one-shot, voir note environnement dans `SPEC-TECH.md` §8) ; un changement de
-modèle déclenche un ré-embedding complet de la base (`indexer.index_repo`,
-comparaison `meta.embedding_model` vs `config.embedding_model`).
-
----
-
-## ADR-4 — Règles Semgrep locales dans les tests, jamais de pack registry
-
-**Statut** : Acté.
-
-**Contexte** : déterminisme et exécution hors-ligne des tests.
-
-**Décision** : les fixtures de test (`tests/fixtures/vuln_repo/rules/rules.yml`)
-définissent des règles Semgrep locales ; aucun test n'utilise un pack
-`p/...` du registry.
-
-**Conséquences** : tests reproductibles sans connexion réseau ; en
-contrepartie, ne couvre pas les particularités de comportement des packs
-registry réels (versions, méta-données supplémentaires).
+**Consequences**: latency < 50 ms for a few thousand findings, no dependency on
+an external vector index (LMDB/ANN). Would not scale beyond ~50-100k findings —
+not addressed, outside the V1 target scale.
 
 ---
 
-## ADR-5 — Identité stable d'un finding : hash règle + chemin + snippet normalisé
+## ADR-3 — Embeddings via `sentence-transformers`, local Jina code embeddings as the default model
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : permettre le diff entre indexations et la déduplication sans
-dépendre des numéros de ligne (qui bougent).
+**Context**: local-first constraint and network/TLS instability observed during
+Hugging Face downloads in enterprise environments.
 
-**Décision** :
-`compute_finding_id = sha256(f"{rule_id}|{path}|{snippet_normalisé}")[:16]`,
-où `snippet_normalisé = " ".join(snippet.split())`.
+**Decision**: `sentence-transformers`, default model
+`~/models/jina-code-embeddings-1.5b`, configurable through
+`config.embedding_model`. The repo documents download via `hf download` into a
+dedicated local directory, with `SSL_CERT_FILE` explicitly removed from the
+environment to work around TLS failures observed on some workstations.
 
-**Conséquences** : survit aux décalages de lignes causés par des édits
-ailleurs dans le fichier. Trade-off accepté puis identifié comme limite
-réelle en revue : deux findings de même règle/chemin avec un snippet
-identique (ligne dupliquée, ou snippet vide sur fichier illisible)
-collisionnent — voir défaut connu R6 dans `archive/BACKLOG-2.md`, non corrigé
-à ce jour.
+**Consequences**: first use no longer needs network access if the model has
+already been pre-downloaded to `~/models/jina-code-embeddings-1.5b`; a model
+change still triggers full re-embedding of the database
+(`indexer.index_repo`, comparing `meta.embedding_model` vs
+`config.embedding_model`).
+
+---
+
+## ADR-4 — Local Semgrep rules in tests, never registry packs
+
+**Status**: Accepted.
+
+**Context**: determinism and offline test execution.
+
+**Decision**: test fixtures (`tests/fixtures/vuln_repo/rules/rules.yml`) define
+local Semgrep rules; no test uses a registry `p/...` pack.
+
+**Consequences**: reproducible tests without network access; in return, they do
+not cover behavioral quirks of real registry packs (versions, extra metadata).
+
+---
+
+## ADR-5 — Stable finding identity: hash(rule + path + normalized snippet)
+
+**Status**: Accepted.
+
+**Context**: allow diffs between indexing runs and deduplication without
+depending on line numbers (which move).
+
+**Decision**:
+`compute_finding_id = sha256(f"{rule_id}|{path}|{normalized_snippet}")[:16]`,
+where `normalized_snippet = " ".join(snippet.split())`.
+
+**Consequences**: survives line shifts caused by edits elsewhere in the file.
+Accepted trade-off later identified as a real limit in review: two findings of
+the same rule/path with identical snippets (duplicated line, or empty snippet on
+an unreadable file) collide — see known defect R6 in `archive/BACKLOG-2.md`,
+still unfixed at this date.
 
 ---
 
 ## ADR-6 — Python ≥ 3.10, `uv`, `pytest`
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Décision** : alignement sur l'écosystème `cocoindex-code` — gestion de
-projet `uv`, tests `pytest`, lint `ruff`.
-
----
-
-## ADR-7 — `.semgrepignore` racine pour neutraliser l'exclusion par défaut de `tests/`
-
-**Statut** : Acté (limité au repo `ccc-radar` lui-même — voir limite
-ci-dessous).
-
-**Contexte** : Semgrep (v1.168, celle installée dans l'environnement de
-développement) embarque un motif d'ignore par défaut `tests/` — tout chemin
-contenant un composant de répertoire nommé `tests` est silencieusement exclu
-du scan, y compris quand il est explicitement passé en cible. Or D4 (ADR-4)
-impose des fixtures sous `tests/fixtures/vuln_repo/`, et ce repo est lui-même
-un dépôt git — la commande de vérification F0.2 (`semgrep scan --config
-tests/fixtures/vuln_repo/rules/rules.yml tests/fixtures/vuln_repo/app --json`)
-retournait 0 findings au lieu de 2, exactement à cause de ce défaut.
-
-**Décision** : ajout d'un fichier `.semgrepignore` à la racine du repo
-`ccc-radar`, contenant `!tests/`, pour ré-inclure explicitement l'arbre
-`tests/` dans les scans de ce projet. Décision validée avec l'utilisateur
-avant application (sortait du périmètre `Fichiers` déclaré de la tâche F0.2).
-
-**Conséquences** : corrige le repo `ccc-radar` lui-même. **Ne corrige
-PAS** le cas général — dans tout repo cible d'un utilisateur de `cccr`, le
-même défaut Semgrep s'applique : ses répertoires `tests/` sont silencieusement
-absents de l'index, sans erreur ni avertissement (voir défaut connu R2 dans
-`archive/BACKLOG-2.md`, non résolu pour les repos utilisateurs).
+**Decision**: align with the `cocoindex-code` ecosystem — project management by
+`uv`, tests with `pytest`, lint with `ruff`.
 
 ---
 
-## ADR-8 — Snippet lu depuis le fichier source, pas depuis `extra.lines` de Semgrep
+## ADR-7 — Root `.semgrepignore` to neutralize the default exclusion of `tests/`
 
-**Statut** : Acté.
+**Status**: Accepted (limited to the `ccc-radar` repo itself — see limit
+below).
 
-**Contexte** : la spécification F1.2 prévoyait de mapper `extra.lines` (champ
-JSON de Semgrep) directement vers `Finding.snippet`. En pratique, la version
-de Semgrep installée retourne la chaîne littérale `"requires login"` pour ce
-champ tant que l'utilisateur n'est pas authentifié sur semgrep.dev — un
-changement de comportement de l'OSS CLI, gating une fonctionnalité derrière
-un compte.
+**Context**: Semgrep (v1.168, installed in the development environment) ships a
+default ignore pattern `tests/` — any path containing a directory component
+named `tests` is silently excluded from scanning, even when explicitly passed as
+a target. But D4 (ADR-4) requires fixtures under `tests/fixtures/vuln_repo/`,
+and that repo is itself a git repository — verification command F0.2
+(`semgrep scan --config tests/fixtures/vuln_repo/rules/rules.yml tests/fixtures/vuln_repo/app --json`)
+returned 0 findings instead of 2, exactly because of that behavior.
 
-**Décision** : `scanner._read_snippet` relit directement les lignes
-`[start_line, end_line]` du fichier source sur disque (`repo_root / path`)
-plutôt que d'utiliser `extra.lines`. Décision prise sans consultation
-préalable car imposée par les contraintes déjà actées D4/NF4 (tests
-hors-ligne, local-first) — exiger un `semgrep login` aurait violé ces deux
-contraintes non-négociables.
+**Decision**: add a `.semgrepignore` file at the root of the `ccc-radar` repo,
+containing `!tests/`, to explicitly re-include the `tests/` tree in scans of
+this project. Decision validated with the user before application (it was
+outside the task's declared `Files` scope F0.2).
 
-**Conséquences** : fonctionne hors-ligne, sans compte, et donne un snippet
-non tronqué (contrairement à `extra.lines` qui a une limite de lignes/
-caractères côté Semgrep). Introduit une dépendance à la lisibilité du fichier
-au moment du parsing (`OSError` → snippet vide, voir défaut connu R6).
-
----
-
-## ADR-9 — `run_semgrep` cible `"."` (et non le chemin absolu du repo) pour un scan complet
-
-**Statut** : Acté.
-
-**Contexte** : Semgrep préfixe le `check_id` retourné avec les composants de
-répertoire de l'argument `--config` **tel qu'il est passé sur la ligne de
-commande** (pas relatif au répertoire de travail réel). Avec
-`config.rules = ["rules/rules.yml"]` et `cwd=repo_root`, cela produit
-`rules.custom.sql-fstring` plutôt que `custom.sql-fstring`. Par ailleurs,
-scanner avec une cible en chemin absolu fait ressortir des chemins absolus
-dans les résultats JSON, ce qui rend les fixtures de test (committées) non
-portables d'une machine à l'autre.
-
-**Décision** : `run_semgrep` invoque toujours Semgrep avec `cwd=repo_root` et
-une cible relative (`"."` pour un scan complet, chemins relatifs pour un
-scan ciblé), jamais de chemin absolu en argument.
-
-**Conséquences** : les fixtures JSON committées (`tests/fixtures/semgrep_output.json`)
-sont portables entre machines. Le préfixe de `rule_id` reste un effet de bord
-accepté (documenté dans `SPEC-TECH.md` §4) plutôt que masqué — le contrat
-n'exige pas que `rule_id` soit strictement identique à l'`id` déclaré dans le
-fichier de règles.
+**Consequences**: fixes the `ccc-radar` repo itself. **Does NOT** fix the
+general case — in any target repo used by a `cccr` user, the same Semgrep issue
+applies: its `tests/` directories are silently absent from the index, with no
+error or warning (see known defect R2 in `archive/BACKLOG-2.md`, unresolved for
+user repos).
 
 ---
 
-## ADR-10 — `ccc_bridge` parse la sortie texte de `ccc search`, pas du JSON
+## ADR-8 — Snippet read from the source file, not from Semgrep `extra.lines`
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : la spécification F5.2 prévoyait `ccc search "<query>" --json
---limit N`. La version de `ccc` installée dans l'environnement de
-développement n'expose **aucun** flag `--json` sur sa commande `search`
-(vérifié via `ccc search --help` et confirmé par un code de sortie 2 et
-« No such option: --json » à l'exécution).
+**Context**: specification F1.2 planned to map `extra.lines` (Semgrep JSON
+field) directly to `Finding.snippet`. In practice, the installed Semgrep
+version returns the literal string `"requires login"` for that field as long as
+the user is not authenticated on semgrep.dev — a behavior change in the OSS CLI
+that gates a feature behind an account.
 
-**Décision** : `ccc_bridge.search_code` invoque `ccc search <query> --limit
-N` sans `--json` et parse le format texte réel de sortie (blocs
-`--- Result N (score: X) ---` / `File: chemin:début-fin [langage]`).
+**Decision**: `scanner._read_snippet` re-reads lines `[start_line, end_line]`
+directly from the source file on disk (`repo_root / path`) instead of using
+`extra.lines`. Decision made without prior consultation because it was forced by
+already-accepted constraints D4/NF4 (offline tests, local-first) — requiring a
+`semgrep login` would have violated those two non-negotiable constraints.
 
-**Conséquences** : fonctionne avec la version de `ccc` réellement installée.
-Contrat fragile par nature — un changement de format d'affichage de `ccc`
-casse le parsing silencieusement (bloc ignoré, pas d'erreur — voir
-`archive/BACKLOG-2.md`, note « fragilité assumée »). Piste de durcissement
-identifiée mais non implémentée : détecter l'absence de blocs parsés sur une
-sortie non vide et basculer sur `CccUnavailable` pour déclencher le fallback
-existant.
-
----
-
-## ADR-11 — Exclusion par défaut des tests `@pytest.mark.slow`
-
-**Statut** : Acté — à réévaluer (voir note).
-
-**Contexte** : le test vérifiant `Embedder.embed_texts` avec le vrai modèle
-sentence-transformers télécharge ~100 Mo depuis Hugging Face. Dans
-l'environnement de développement, ce téléchargement échouait par défaut
-(interception TLS d'un proxy d'entreprise, `CERTIFICATE_VERIFY_FAILED`) et
-n'est pas garanti disponible dans tous les environnements d'exécution
-(sandboxes sans réseau, CI restreinte).
-
-**Décision** : `pyproject.toml` déclare `addopts = "-m 'not slow'"` — `uv run
-pytest` sans argument n'exécute jamais les tests marqués `slow`. Le test a
-été exécuté et vérifié manuellement (`uv run pytest -m slow`, avec un accès
-réseau correctement configuré) : passe (shape correcte, normes ≈ 1).
-
-**Conséquences** : `uv run pytest` (sans argument) ne couvre plus ce test à
-chaque exécution — un affaiblissement de la DoD « `uv run pytest` passe
-entièrement », documenté dans le commit F3.1 et dans `archive/BACKLOG-2.md`.
-Alternative non retenue : `pytest.mark.skipif` conditionné à la présence
-réseau, qui aurait gardé le test dans le run par défaut tout en le
-neutralisant proprement en environnement isolé.
+**Consequences**: works offline, without an account, and yields a non-truncated
+snippet (unlike `extra.lines`, which has line/character limits on the Semgrep
+side). Introduces a dependency on file readability at parse time
+(`OSError` → empty snippet, see known defect R6).
 
 ---
 
-## ADR-12 — Le skill Claude Code est distribué hors du repo `ccc-radar`
+## ADR-9 — `run_semgrep` targets `"."` (not the absolute repo path) for a full scan
 
-**Statut** : Acté (sur demande explicite de l'utilisateur).
+**Status**: Accepted.
 
-**Contexte** : F6.1 avait livré `skills/cccr/SKILL.md` comme partie du
-package `ccc-radar`. L'utilisateur a demandé de déplacer ce fichier vers
-`~/cocoindex-ext-skill/SKILL.md`, en dehors du repo, avec suppression de la
-copie versionnée (pas une simple copie de commodité).
+**Context**: Semgrep prefixes the returned `check_id` with the directory
+components of the `--config` argument **exactly as passed on the command line**
+(not relative to the actual working directory). With
+`config.rules = ["rules/rules.yml"]` and `cwd=repo_root`, that yields
+`rules.custom.sql-fstring` rather than `custom.sql-fstring`. Separately,
+scanning with an absolute target path makes absolute paths appear in JSON
+results, which makes committed test fixtures non-portable across machines.
 
-**Décision** : `skills/cccr/SKILL.md` est retiré du repo `ccc-radar` ;
-le skill vit désormais uniquement dans `~/cocoindex-ext-skill/SKILL.md`
-(fichier `SKILL.md` à la racine de ce répertoire, convention Claude Code
-d'un dossier = un skill). `docs/SPEC-FONC.md` §4 et le `README.md` sont mis à
-jour pour pointer vers ce nouvel emplacement plutôt que documenter un chemin
-qui n'existe plus dans ce repo.
+**Decision**: `run_semgrep` always invokes Semgrep with `cwd=repo_root` and a
+relative target (`"."` for a full scan, relative paths for a targeted scan),
+never an absolute path argument.
 
-**Conséquences** : le package `ccc-radar` (pip/uv) ne contient plus le
-skill — quiconque installe seulement `ccc-radar` doit récupérer le
-`SKILL.md` séparément pour l'activer dans Claude Code. `archive/BACKLOG.md`
-(tâche F6.1, historique figé) continue de mentionner `skills/cccr/SKILL.md`
-comme périmètre de fichiers : exact au moment de son exécution, plus exact
-aujourd'hui — ne pas corriger un document archivé, seuls les documents
-vivants (`docs/`, `README.md`) reflètent l'état courant.
+**Consequences**: committed JSON fixtures
+(`tests/fixtures/semgrep_output.json`) are portable across machines. The
+`rule_id` prefix remains an accepted side effect (documented in
+`SPEC-TECH.md` §4) rather than being hidden — the contract does not require
+`rule_id` to be strictly identical to the `id` declared in the rule file.
 
 ---
 
-## ADR-13 — `cccr init` se replie sur un pack registry par défaut
+## ADR-10 — `ccc_bridge` parses `ccc search` text output, not JSON
 
-**Statut** : Acté (sur demande explicite de l'utilisateur — revient sur un
-choix antérieur).
+**Status**: Accepted.
 
-**Contexte** : le PRD initial (§12, question ouverte 2) avait tranché pour
-une config Semgrep explicite obligatoire, afin d'éviter le bruit d'un pack
-par défaut mal calibré. L'utilisateur a demandé, après usage, de pouvoir
-utiliser les bibliothèques de règles standard de Semgrep sans avoir à
-définir de `rules` explicitement.
+**Context**: specification F5.2 planned `ccc search "<query>" --json --limit N`.
+The version of `ccc` installed in the development environment exposes **no**
+`--json` flag on its `search` command (verified through `ccc search --help` and
+confirmed by exit code 2 plus “No such option: --json” at runtime).
 
-**Décision** : quand `cccr init` ne reçoit ni `--rules` ni ne détecte de
-config Semgrep locale (`.semgrep.yml`/`semgrep.yml`/`.semgrep`), il se
-replie sur le pack registry `p/security-audit` plutôt que d'échouer. Un
-message informatif (stdout, code de sortie 0) indique le pack utilisé et
-comment le personnaliser via `--rules`. Choix de `p/security-audit` plutôt
-que `p/default` : cohérent avec le positionnement sécurité du produit (CWE/
-OWASP dans le modèle de données, cas d'usage centrés vulnérabilités). Ordre
-de priorité inchangé : `--rules` explicite > config locale détectée > pack
-par défaut.
+**Decision**: `ccc_bridge.search_code` invokes `ccc search <query> --limit N`
+without `--json` and parses the real text output format (blocks
+`--- Result N (score: X) ---` / `File: path:start-end [language]`).
 
-**Conséquences** : lève la friction de démarrage (plus besoin d'écrire des
-règles custom pour essayer `cccr`) au prix du bruit que le choix initial
-voulait éviter — un pack généraliste peut remonter des findings peu
-pertinents pour un projet donné. Vérifié manuellement : le pack se
-télécharge et s'exécute avec succès dans l'environnement de développement
-(`semgrep scan --config p/security-audit`, ~225 règles Python chargées) ;
-sa couverture réelle sur un cas donné dépend du contenu du registry Semgrep,
-hors du contrôle de `cccr`. `docs/PRD.md` §12 point 2 est mis à jour pour
-refléter que cette question n'est plus ouverte.
+**Consequences**: works with the version of `ccc` actually installed.
+Contract is inherently fragile — a display-format change in `ccc` silently
+breaks parsing (block ignored, no error — see `archive/BACKLOG-2.md`, note
+“accepted fragility”). Hardening path identified but not implemented: detect the
+absence of parsed blocks on non-empty output and switch to `CccUnavailable` to
+trigger the existing fallback.
 
 ---
 
-## ADR-14 — Le périmètre `cccr` prime sur les ignores Semgrep
+## ADR-11 — Default exclusion of `@pytest.mark.slow` tests
 
-**Statut** : Acté.
+**Status**: Accepted — to be revisited (see note).
 
-**Contexte** : la revue architecture a confirmé deux trous d'index silencieux :
-`include: ["**/*"]` ne matchait pas les fichiers à la racine avec `fnmatch`, et
-Semgrep pouvait exclure des répertoires `tests/` via ses mécanismes d'ignore
-avant même que `cccr` ne parse les résultats.
+**Context**: the test validating `Embedder.embed_texts` with the real
+sentence-transformers model depends on a local model that may be absent on the
+machine (`~/models/jina-code-embeddings-1.5b`). Initial download from Hugging
+Face also failed by default in some environments
+(`CERTIFICATE_VERIFY_FAILED`) and is not guaranteed everywhere (networkless
+sandboxes, restricted CI).
 
-**Décision** : `cccr` traite explicitement `**/*` comme « tout fichier du repo »
-pendant la phase de hashing, et invoque Semgrep avec
-`--x-ignore-semgrepignore-files` pour que le périmètre sélectionné par
-`.cccr/config.yml` reste la source de vérité.
+**Decision**: `pyproject.toml` declares `addopts = "-m 'not slow'"` —
+`uv run pytest` with no argument never runs tests marked `slow`. The slow test
+checks the real model only if it is already present locally; otherwise it
+explicitly skips itself with an actionable message.
 
-**Conséquences** : les fichiers racine et les répertoires `tests/` ne sont plus
-silencieusement absents de l'index. Le choix repose sur un flag Semgrep interne
-non garanti comme API stable ; si Semgrep le retire, `run_semgrep` échouera
-bruyamment plutôt que de produire un index incomplet sans signal.
-
----
-
-## ADR-15 — L'identité d'un finding inclut sa localisation
-
-**Statut** : Acté.
-
-**Contexte** : l'identité historique `hash(rule_id|path|snippet_normalisé)`
-résistait aux décalages de lignes, mais fusionnait deux occurrences identiques
-de la même règle dans un même fichier, et fusionnait encore plus facilement des
-findings au snippet vide.
-
-**Décision** : l'identité calculée par `compute_finding_id` inclut désormais la
-plage `start_line:end_line` en plus de la règle, du chemin et du snippet
-normalisé.
-
-**Conséquences** : deux occurrences identiques restent distinctes en base et ne
-s'écrasent plus via la clé primaire. En contrepartie, un finding dont le code ne
-change pas mais dont la ligne se décale reçoit un nouvel identifiant ; c'est
-accepté pour privilégier l'absence de sous-rapportage silencieux.
+**Consequences**: `uv run pytest` (without arguments) no longer covers that test
+on every run — a weakening of the DoD “`uv run pytest` passes completely”,
+documented in commit F3.1 and in `archive/BACKLOG-2.md`. Rejected alternative:
+`pytest.mark.skipif` conditioned on network presence, which would have kept the
+test in the default run while cleanly neutralizing it in isolated
+environments.
 
 ---
 
-## ADR-16 — Signature et dimension des embeddings stockées dans l'index
+## ADR-12 — The Claude Code skill is distributed outside the `ccc-radar` repo
 
-**Statut** : Acté.
+**Status**: Accepted (at the user's explicit request).
 
-**Contexte** : le hook `CCCR_FAKE_EMBEDDER=1` utilisé en test pouvait créer une
-base avec des vecteurs 8 dimensions tout en enregistrant seulement le nom du
-modèle réel, puis une recherche avec le vrai modèle échouait tardivement dans
-NumPy.
+**Context**: F6.1 had shipped `skills/cccr/SKILL.md` as part of the
+`ccc-radar` package. The user asked to move that file to
+`~/cocoindex-ext-skill/SKILL.md`, outside the repo, removing the versioned copy
+(not merely duplicating it for convenience).
 
-**Décision** : chaque embedder expose une `signature` qui encode son type et son
-modèle. `index_repo` stocke `embedding_signature` et `embedding_dim` dans la
-table `meta`, ré-embedde tout lorsque la signature change, et la recherche
-vérifie explicitement la dimension des vecteurs avant le produit scalaire.
+**Decision**: `skills/cccr/SKILL.md` is removed from the `ccc-radar` repo; the
+skill now lives only in `~/cocoindex-ext-skill/SKILL.md`
+(`SKILL.md` file at the root of that directory, Claude Code convention: one
+folder = one skill). `docs/SPEC-FONC.md` §4 and `README.md` are updated to
+point to that new location rather than documenting a path that no longer exists
+in this repo.
 
-**Conséquences** : les index mixtes ou corrompus produisent une erreur
-actionnable demandant une réindexation complète, au lieu d'un traceback brut ou
-de scores incohérents. Le fake embedder reste disponible pour les tests, mais sa
-signature distincte empêche de le confondre avec le modèle de production.
-
----
-
-## ADR-17 — Recherche vectorielle via `sqlite-vec` (`vec0`), plus de brute-force NumPy
-
-**Statut** : Acté. Supersede ADR-2.
-
-**Contexte** : `ccc` (cocoindex-code) — dont `cccr` réutilise déjà le modèle
-d'embedding par défaut (ADR-3) — stocke son propre index dans
-`.cocoindex_code/target_sqlite.db` via le connector `cocoindex.connectors.sqlite`,
-qui s'appuie sur l'extension `sqlite-vec` (tables virtuelles `vec0`, distance
-SIMD) plutôt que sur un calcul brute-force. `cccr` restait sur du SQLite
-« nu » avec cosinus calculé en Python/NumPy (ADR-2) : correct à l'échelle
-cible mais incohérent avec l'outil dont il hérite déjà le choix de format
-d'embedding, et moins performant sans bénéfice de simplicité additionnel
-(`sqlite-vec` est déjà une dépendance transitive de l'écosystème `ccc`).
-
-**Décision** : les embeddings ne sont plus stockés en `BLOB` dans la table
-`findings`, mais dans une table virtuelle `vec0` dédiée (`vec_findings`,
-colonne `embedding float[N] distance_metric=cosine`, colonne auxiliaire
-`+finding_id TEXT` pour la jointure retour). `Store.knn_search` délègue le
-calcul de similarité à `sqlite-vec` (`... WHERE embedding MATCH ? AND k = ?`)
-au lieu d'itérer en Python. Comme `vec0` ne supporte ni `ALTER TABLE` ni clé
-primaire arbitraire, la dimension du vecteur double comme signal de
-recréation de table (`meta.embedding_dim`), et le filtrage par
-sévérité/règle/chemin reste fait en amont côté SQL classique sur `findings`
-(le filtrage post-KNN se fait ensuite en Python sur l'ensemble trié renvoyé
-par `vec0`, sans borne artificielle puisque `k` = nombre total de vecteurs).
-
-**Migration** : à l'ouverture d'une base créée par une version antérieure de
-`cccr` (`schema_version` = 1, colonne `findings.embedding` présente), `Store`
-supprime cette colonne (`ALTER TABLE ... DROP COLUMN`), efface
-`embedding_signature`/`embedding_dim` de `meta`, et passe `schema_version` à
-2. Le prochain `cccr index` détecte la signature manquante et ré-embedde
-automatiquement — aucune commande de migration dédiée n'est nécessaire, mais
-un premier `cccr index` (potentiellement complet) est requis après mise à
-jour.
-
-**Conséquences** : format de stockage aligné avec `ccc`, calcul de similarité
-accéléré SIMD au lieu d'une boucle Python, mais une dépendance de plus
-(`sqlite-vec`, déjà présente transitivement dans l'écosystème `ccc`). Le
-choix de conserver SQLite comme unique backend (plutôt que Postgres/pgvector
-ou un store vectoriel dédié) reste celui d'ADR-2 : la cible V1 (quelques
-milliers de findings par repo) ne justifie pas une dépendance externe.
+**Consequences**: the `ccc-radar` package (pip/uv) no longer contains the skill
+— anyone installing only `ccc-radar` must fetch `SKILL.md` separately to enable
+it in Claude Code. `archive/BACKLOG.md` (task F6.1, frozen history) continues to
+mention `skills/cccr/SKILL.md` as part of the file scope: accurate at the time
+it was executed, no longer accurate today — do not “fix” an archived document;
+only living documents (`docs/`, `README.md`) reflect the current state.
 
 ---
 
-## ADR-18 — Sortie MCP structurée (`TypedDict`/dataclass), erreurs via exception
+## ADR-13 — `cccr init` falls back to a default registry pack
 
-**Statut** : Acté.
+**Status**: Accepted (at the user's explicit request — revisits an earlier
+choice).
 
-**Contexte** : les 4 tools de `mcp_server.py` étaient annotés `-> str` et
-renvoyaient `json.dumps(...)`. FastMCP dérive pourtant un `outputSchema` de
-l'annotation de retour même dans ce cas (`str` → type primitif, wrappé) : les
-4 tools annonçaient `{"result": {"type": "string"}}` — un schema qui promet
-une structure sans en fournir une, vérifié empiriquement via
-`mcp.list_tools()`. `ccc` (cocoindex-code), à titre de comparaison, retourne
-un vrai `pydantic.BaseModel` (`SearchResultModel`) pour son tool `search`,
-avec un schema par champ. Séparément, les 4 tools interceptaient toute
-exception et la transformaient en `{"error": "<message>"}` — un résultat
-renvoyé comme un succès, sans signal protocolaire permettant à un client de
-distinguer un échec d'une réponse valide sans convention ad hoc.
+**Context**: the initial PRD (§12, open question 2) had decided in favor of a
+mandatory explicit Semgrep config, to avoid noise from a poorly calibrated
+default pack. After using the tool, the user asked to be able to use standard
+Semgrep rule libraries without having to define `rules` explicitly.
 
-**Décision** : chaque tool est annoté avec son vrai type de retour —
-`TypedDict` (`FindingHit`, `FindingsSummary`, `CodeSearchResult`, définis
-dans `render.py`/`ccc_bridge.py`/`mcp_server.py`) ou dataclass existante
-(`IndexReport`, réutilisée telle quelle depuis `indexer.py`, sans
-duplication). FastMCP en dérive un `outputSchema` par champ et renvoie à la
-fois le texte JSON habituel (`content`, pour les clients qui l'ignorent) et
-le contenu structuré (`structuredContent`) — additif, aucune régression pour
-un client existant. Les `try/except Exception` qui avalaient les erreurs sont
-supprimés : une exception remonte telle quelle, FastMCP la convertit en
-`ToolError`, exposé au client comme `isError: true`. Depuis ADR-22,
-`CccUnavailable` dans `search_code_with_findings` est également une vraie erreur
-et non plus un repli success-shaped.
+**Decision**: when `cccr init` receives neither `--rules` nor detects a local
+Semgrep config (`.semgrep.yml`/`semgrep.yml`/`.semgrep`), it falls back to the
+registry pack `p/security-audit` instead of failing. An informational message
+(stdout, exit code 0) indicates the pack used and how to customize it via
+`--rules`. `p/security-audit` was chosen over `p/default`: consistent with the
+product's security positioning (CWE/OWASP in the data model, vulnerability-
+centered use cases). Priority order unchanged: explicit `--rules` > detected
+local config > default pack.
 
-**Conséquences** : les 4 tools sont maintenant symétriques avec `ccc mcp` sur
-la forme de sortie (schema riche, pas de string à re-parser), sans ajouter de
-dépendance directe (`pydantic` est déjà transitif via `mcp`, mais `TypedDict`
-suffit ici — pas de validation runtime nécessaire côté `cccr`, qui contrôle
-déjà les deux bouts). Effet de bord positif : `search_findings`,
-`findings_summary` et `search_code_with_findings` ne dupliquent plus
-manuellement la sérialisation `Finding → dict` (voir N3 dans
-`archive/BACKLOG-2.md`, désormais partagée via les `TypedDict` de
-`render.py`/`ccc_bridge.py` plutôt que des dicts construits inline). Le
-skill (`~/ccc-radar-skill/SKILL.md`) ne dépend d'aucun parsing strict de
-la clé `"error"` — vérifié avant ce changement — donc aucune mise à jour n'y
-était nécessaire.
+**Consequences**: removes startup friction (no longer necessary to write custom
+rules to try `cccr`) at the cost of the noise the original choice intended to
+avoid — a general-purpose pack may surface findings of low relevance for a
+particular project. Manually verified: the pack downloads and runs successfully
+in the development environment (`semgrep scan --config p/security-audit`, ~225
+Python rules loaded); its actual coverage on a given case depends on the
+Semgrep registry content, outside `cccr`'s control. `docs/PRD.md` §12 item 2 is
+updated to reflect that this question is no longer open.
 
 ---
 
-## ADR-19 — `search_code_with_findings` : classement pondéré par sévérité, pas seulement une annotation
+## ADR-14 — `cccr` scope takes precedence over Semgrep ignores
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : `search_code_with_findings` composait la recherche sémantique
-de `ccc` avec les findings `cccr` en pur post-traitement — les findings
-étaient attachés à chaque résultat mais n'influençaient jamais leur ordre. Un
-chunk avec un finding `ERROR` et un chunk sans finding pouvaient ressortir
-dans n'importe quel ordre, uniquement piloté par la pertinence sémantique de
-`ccc`. Un deuxième axe d'amélioration du couplage `ccc`↔`cccr` (traduire un
-finding en pattern `ccc grep` pour trouver des occurrences structurellement
-similaires) a été évalué en parallèle et écarté pour l'instant : testé
-empiriquement sur les 4 règles de `tests/fixtures/vuln_repo/rules/rules.yml`,
-seules les règles sans `...`/pattern composé (2 sur 4) se traduisent
-correctement — les règles avec ellipsis mêlée à un kwarg littéral
-(`subprocess.run(..., shell=True, ...)`) perdent leur contrainte de sécurité
-une fois traduites (`ccc grep` matche alors *tous* les appels à la fonction).
+**Context**: the architecture review confirmed two silent indexing gaps:
+`include: ["**/*"]` did not match root files with `fnmatch`, and Semgrep could
+exclude `tests/` directories through its ignore mechanisms before `cccr` even
+parsed the results.
 
-**Décision** : `ccc_bridge.rank_by_severity` ré-ordonne les résultats déjà
-annotés en ajoutant un boost additif à `score` selon `max_severity` (`ERROR`
-+0.15, `WARNING` +0.05, `INFO`/aucun +0.0), sans modifier `score` lui-même
-(qui continue de refléter la pertinence sémantique brute de `ccc`). Comme
-`ccc search` tronque déjà à `--limit` avant que `cccr` ne voie les résultats,
-un résultat juste hors du top `N` ne pourrait jamais bénéficier du boost —
-`ccc_bridge.overfetch_limit` sur-demande donc `limit × 3` (plafonné à 50)
-avant l'annotation, le classement et la troncature finale.
+**Decision**: `cccr` explicitly treats `**/*` as “every file in the repo”
+during the hashing phase, and invokes Semgrep with
+`--x-ignore-semgrepignore-files` so that the scope selected by
+`.cccr/config.yml` remains the source of truth.
 
-**Conséquences** : les poids de boost sont un choix heuristique initial
-(volontairement petits devant l'écart typique des scores `ccc`, pour ne
-réordonner que les cas proches et ne jamais faire remonter un résultat
-nettement hors-sujet) — à ajuster si l'usage réel montre un besoin différent.
-Le sur-fetch ajoute un coût (jusqu'à 3× plus de résultats demandés à `ccc`
-par appel), négligeable à l'échelle cible (recherche interactive, pas de
-volumétrie). L'idée de traduction finding → `ccc grep` reste ouverte mais
-hors scope : voir `archive/BACKLOG-6.md` pour le compte-rendu de faisabilité,
-à reprendre uniquement restreinte aux règles sans ellipsis si elle est un
-jour priorisée.
+**Consequences**: root files and `tests/` directories are no longer silently
+absent from the index. The choice relies on an internal Semgrep flag not
+guaranteed as a stable API; if Semgrep removes it, `run_semgrep` will fail
+loudly rather than produce an incomplete index with no signal.
 
 ---
 
-## ADR-20 — `cccr search` = sur-ensemble de `ccc search` ; la recherche findings devient `cccr findings`
+## ADR-15 — Finding identity includes location
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : depuis la V1, `cccr search` cherchait *dans les findings*
-(embeddings des findings Semgrep), et la composition code + findings n'était
-exposée que côté MCP (`search_code_with_findings`). Ce positionnement ne
-correspondait pas à l'intention produit : `cccr` doit **étendre** `ccc` —
-même question, même genre de réponse. Attendu : `ccc search "user
-authentication flow"` décrit le flux ; `cccr search "user authentication
-flow"` décrit le même flux **et** remonte les findings Semgrep dessus.
+**Context**: the historical identity `hash(rule_id|path|normalized_snippet)`
+resisted line shifts, but merged two identical occurrences of the same rule in
+the same file, and collided even more easily on empty-snippet findings.
 
-**Décision** : `cccr search` devient la recherche code + findings —
-l'orchestration (sur-fetch `ccc`, annotation, classement par sévérité, modes
-dégradés), auparavant dans `mcp_server.py`, est extraite dans
-`code_search.py` et partagée par la CLI et le tool MCP (comportements
-garantis identiques). Le rendu texte reproduit **exactement** le format de
-`ccc search` (`--- Result N (score) --- / File: path:l1-l2 [lang]`), suivi
-d'un bloc findings sous chaque résultat concerné — un utilisateur de `ccc`
-garde ses repères, `cccr` ajoute la couche findings. Le parseur de
-`ccc_bridge` capture désormais le langage pour reproduire la ligne `File:` à
-l'identique. L'ancienne recherche findings-only déménage telle quelle
-(mêmes flags, même contrat JSON) sous `cccr findings`.
+**Decision**: the identity computed by `compute_finding_id` now includes the
+`start_line:end_line` range in addition to rule, path, and normalized snippet.
 
-**Modes dégradés** : index findings absent → résultats `ccc` bruts avec
-avertissement (plutôt que des findings silencieusement vides, et sans créer
-`.cccr/` par effet de bord dans un repo non initialisé). Depuis ADR-22, `ccc`
-indisponible ou en erreur n'est plus un mode dégradé réussi : l'erreur remonte
-au CLI/MCP.
-
-**Conséquences** : rupture du contrat CLI (`cccr search` change de
-sémantique ; les usages findings-only doivent migrer vers `cccr findings`) —
-acceptée, le package n'étant pas encore distribué au-delà de ce poste. Les
-tools MCP sont inchangés (`search_findings` = `cccr findings`,
-`search_code_with_findings` = `cccr search`). Au passage, les fixtures de
-faux `ccc` sont mutualisées dans `tests/conftest.py` (première étape de N2,
-`archive/BACKLOG-2.md`).
+**Consequences**: two identical occurrences remain distinct in the database and
+no longer overwrite each other through the primary key. In return, a finding
+whose code does not change but whose line shifts gets a new identifier; that is
+accepted to prioritize the absence of silent under-reporting.
 
 ---
 
-## ADR-21 — Prototype d'extension native CocoIndex sans abandonner le package compagnon
+## ADR-16 — Embedding signature and dimension stored in the index
 
-**Statut** : Acté expérimental.
+**Status**: Accepted.
 
-**Contexte** : la revue de `../cocoindex/examples` a montré que l'indexation
-actuelle de `cccr` réimplémente à la main plusieurs primitives fournies par
-CocoIndex : état cible déclaratif (`TargetState = Transform(SourceState)`),
-invalidation incrémentale, suppression automatique des orphelins, mémoïsation
-des transformations et mode live. Le pont actuel vers `ccc` reste en outre
-fragile car `ccc search` ne fournit pas de JSON stable dans la version utilisée
-localement (ADR-10) : `cccr` parse une sortie humaine.
+**Context**: the `CCCR_FAKE_EMBEDDER=1` hook used in tests could create a
+ database with 8-dimensional vectors while recording only the real model name,
+and a subsequent search with the real model would fail late in NumPy.
 
-**Décision** : `cccr` reste un package compagnon distinct (ADR-1 n'est pas
-annulé) mais introduit un mode expérimental `cccr index --engine cocoindex`.
-Ce mode prépare une extension native CocoIndex en modélisant les findings et
-les chunks de code comme des états cibles typés dans le store local. Il ne
-dépend pas encore d'API internes de `cocoindex-code` et ne rend pas `cocoindex`
-obligatoire à l'installation : le backend stable reste `--engine manual`.
+**Decision**: each embedder exposes a `signature` encoding its type and model.
+`index_repo` stores `embedding_signature` and `embedding_dim` in the `meta`
+table, re-embeds everything when the signature changes, and search explicitly
+checks vector dimension before the dot product.
 
-Quand l'index expérimental existe (`meta.index_engine = "cocoindex-prototype"`),
-`cccr search` et le tool MCP `search_code_with_findings` interrogent d'abord les
-chunks de code indexés localement (`vec_code_chunks`) puis annotent ces résultats
-avec les findings. Le fallback `ccc search` + parsing texte reste disponible
-pour les index manuels ou les repos non migrés.
-
-Options rejetées pour l'instant :
-- contribuer directement dans `cocoindex-code` / `ccc` : meilleur alignement à
-  terme, mais trop couplé pour une correction locale rapide ;
-- remplacer immédiatement `cccr` par un nouvel index unifié : trop risqué pour
-  les commandes MCP/CLI existantes ;
-- rendre `cocoindex` dépendance obligatoire : prématuré tant que le prototype ne
-  couvre pas les mêmes garanties que l'indexer manuel.
-
-**Conséquences** : X2/X4 diminuent le risque d'ADR-10 sans rupture : les
-utilisateurs gardent les commandes actuelles, et l'expérimental est opt-in. Le
-prototype n'est pas encore un flow CocoIndex complet avec `live=True` ni une
-migration de backend ; ces étapes restent à traiter (X3/X5/X6). Le store passe
-en `schema_version = 3` pour ajouter `code_chunks` et `vec_code_chunks`.
+**Consequences**: mixed or corrupted indexes now produce an actionable error
+asking for a full reindex, instead of a raw traceback or incoherent scores. The
+fake embedder remains available for tests, but its distinct signature prevents
+confusing it with the production model.
 
 ---
 
-## ADR-22 — Une panne `ccc` fait échouer `cccr search`
+## ADR-17 — Vector search via `sqlite-vec` (`vec0`), no more NumPy brute force
 
-**Statut** : Acté.
+**Status**: Accepted. Supersedes ADR-2.
 
-**Contexte** : le fallback historique de `search_code_with_findings` masquait
-une panne de `ccc` (`ccc` absent ou code retour non nul) en retournant une
-recherche findings-only dans `findings_only_fallback`. Ce comportement rendait
-la sortie ambiguë : l'appelant pouvait croire avoir obtenu une recherche code +
-findings valide alors que le service code sous-jacent était en erreur.
+**Context**: `ccc` (cocoindex-code) — whose default embedding model `cccr`
+already reuses (ADR-3) — stores its own index in
+`.cocoindex_code/target_sqlite.db` through the
+`cocoindex.connectors.sqlite` connector, which relies on the `sqlite-vec`
+extension (`vec0` virtual tables, SIMD distance) rather than on brute-force
+computation. `cccr` stayed on “plain” SQLite with cosine computed in
+Python/NumPy (ADR-2): acceptable at target scale, but inconsistent with the
+tool whose embedding format it already inherits, and less performant with no
+extra simplicity benefit (`sqlite-vec` is already a transitive dependency of the
+`ccc` ecosystem).
 
-**Décision** : quand `cccr search` doit passer par le pont `ccc`, toute
-`CccUnavailable` est convertie en erreur (`RuntimeError`) et remonte au CLI
-(code de sortie 2) ou au MCP (`ToolError` / `isError: true`). Le message conserve
-la cause initiale : `ccc introuvable dans le PATH` ou
-`ccc a échoué (code N) : <stderr>`.
+**Decision**: embeddings are no longer stored as `BLOB` in the `findings`
+table, but in a dedicated `vec0` virtual table (`vec_findings`,
+column `embedding float[N] distance_metric=cosine`, auxiliary column
+`+finding_id TEXT` for the join back). `Store.knn_search` delegates similarity
+computation to `sqlite-vec` (`... WHERE embedding MATCH ? AND k = ?`) instead
+of iterating in Python. Because `vec0` supports neither `ALTER TABLE` nor an
+arbitrary primary key, vector dimension doubles as a table-recreation signal
+(`meta.embedding_dim`), and severity/rule/path filtering remains done upstream
+in regular SQL on `findings` (post-KNN filtering then happens in Python on the
+sorted set returned by `vec0`, with no artificial cap since
+`k` = total number of vectors).
 
-Le mode expérimental `--engine cocoindex` reste indépendant : si un index code
-local existe, `cccr search` l'utilise sans appeler `ccc`.
+**Migration**: on opening a database created by an earlier version of `cccr`
+(`schema_version` = 1, `findings.embedding` column present), `Store` drops that
+column (`ALTER TABLE ... DROP COLUMN`), clears
+`embedding_signature`/`embedding_dim` from `meta`, and sets
+`schema_version` to 2. The next `cccr index` detects the missing signature and
+automatically re-embeds — no dedicated migration command is needed, but a first
+`cccr index` (potentially full) is required after upgrade.
 
-**Conséquences** : `findings_only_fallback` reste présent dans
-`CodeSearchResult` pour compatibilité de schema, mais il n'est plus utilisé pour
-masquer une panne `ccc`. Un utilisateur qui veut chercher uniquement dans les
-findings doit appeler explicitement `cccr findings` ou le tool MCP
-`search_findings`.
+**Consequences**: storage format aligned with `ccc`, similarity computation
+accelerated through SIMD rather than a Python loop, but one more dependency
+(`sqlite-vec`, already present transitively in the `ccc` ecosystem). The choice
+of keeping SQLite as the only backend (rather than Postgres/pgvector or a
+dedicated vector store) remains ADR-2's: the V1 target (a few thousand findings
+per repo) does not justify an external dependency.
 
 ---
 
-## ADR-23 — Le tool MCP de recherche code prend le même nom et les mêmes
-paramètres que `ccc search`
+## ADR-18 — Structured MCP output (`TypedDict`/dataclass), errors by exception
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : le tool MCP `search_code_with_findings` était déjà un
-sur-ensemble de `ccc search` (ADR-20/21) mais n'exposait que `query` et
-`limit`, alors que `ccc search` accepte aussi `--offset`, `--lang`, `--path`
-et `--refresh` (voir `ccc search --help`). Un agent qui connaît déjà `ccc`
-devait donc deviner que ces options n'existaient pas côté `cccr`, ou basculer
-vers `ccc` pour les usages paginés/filtrés — cassant le positionnement
-« `cccr search` = `ccc search` + findings ».
+**Context**: the 4 tools in `mcp_server.py` were annotated `-> str` and returned
+`json.dumps(...)`. FastMCP nevertheless derives an `outputSchema` from the
+return annotation even then (`str` → primitive type, wrapped): the 4 tools were
+announcing `{"result": {"type": "string"}}` — a schema that promises a
+structure without providing one, verified empirically through
+`mcp.list_tools()`. `ccc` (cocoindex-code), for comparison, returns a real
+`pydantic.BaseModel` (`SearchResultModel`) for its `search` tool, with a field-
+by-field schema. Separately, the 4 tools caught every exception and turned it
+into `{"error": "<message>"}` — a result returned as success, with no protocol
+signal allowing a client to distinguish failure from a valid response without an
+ad hoc convention.
 
-**Décision** :
-1. Le tool MCP est renommé `search_code_with_findings` → `search`, même nom
-   que le tool exposé par `ccc mcp`. Comme les tools MCP sont préfixés par
-   serveur côté client (`mcp__cccr__search` vs `mcp__ccc__search`), il n'y a
-   pas de collision réelle même si les deux serveurs sont enregistrés
-   simultanément.
-2. `search`/`cccr search` acceptent désormais `offset`, `lang`, `path`,
-   `refresh` — mêmes noms que les flags `ccc search --offset/--lang/--path/
-   --refresh`.
-3. Quand le pont `ccc` est utilisé (pas d'index code expérimental), ces
-   paramètres sont transmis tels quels au binaire `ccc` (`ccc_bridge.
-   search_code`), sans transformation.
-4. Quand l'index code expérimental (`--engine cocoindex`) est utilisé,
-   `lang`/`path` filtrent et `offset` pagine `Store.knn_search_code_chunks`
-   (post-filtrage, `vec0` n'ayant pas de filtre de métadonnées natif — sur-
-   demande `(offset + top_k) × 3`, plafonné à 200, même schéma que l'over-
-   fetch de `rank_by_severity`) ; `refresh=True` déclenche une réindexation
-   incrémentale locale (`coco_indexer.index_repo_with_cocoindex`) avant la
-   recherche, mais seulement si le repo utilise déjà ce moteur — un
-   `refresh=True` n'active pas silencieusement le moteur expérimental sur un
-   repo indexé en mode `manual`.
+**Decision**: each tool is annotated with its real return type — `TypedDict`
+(`FindingHit`, `FindingsSummary`, `CodeSearchResult`, defined in
+`render.py`/`ccc_bridge.py`/`mcp_server.py`) or an existing dataclass
+(`IndexReport`, reused as-is from `indexer.py`, no duplication). FastMCP derives
+an `outputSchema` field by field and returns both the usual JSON text (`content`,
+for clients that only read that) and structured content (`structuredContent`) —
+additive, no regression for existing clients. The `try/except Exception` blocks
+that swallowed errors are removed: an exception now bubbles up as-is, FastMCP
+turns it into `ToolError`, exposed to the client as `isError: true`. Since
+ADR-22, `CccUnavailable` in `search_code_with_findings` is also a real error,
+no longer a success-shaped fallback.
 
-**Conséquences** : le nom Python de la fonction partagée CLI/MCP,
-`code_search.search_code_with_findings`, ne change pas — seul le nom du tool
-MCP exposé change. Les tests et docs qui référençaient le tool par son ancien
-nom sont mis à jour (`tests/test_mcp_server.py`,
-`tests/test_ccc_bridge.py`).
+**Consequences**: the 4 tools are now symmetrical with `ccc mcp` in output
+shape (rich schema, not a string to re-parse), without adding a direct
+dependency (`pydantic` is already transitive through `mcp`, but `TypedDict` is
+enough here — no runtime validation needed on the `cccr` side, which already
+controls both ends). Positive side effect: `search_findings`,
+`findings_summary`, and `search_code_with_findings` no longer manually duplicate
+`Finding → dict` serialization (see N3 in `archive/BACKLOG-2.md`, now shared
+through `TypedDict`s in `render.py`/`ccc_bridge.py` rather than inline-built
+dicts). The skill (`~/ccc-radar-skill/SKILL.md`) depended on no strict parsing
+of an `"error"` key — verified before this change — so no update was required.
 
-## ADR-24 — Les packs de règles vivent dans le repo skill, jamais dans
-`cccr`, et ne sont jamais référencés par un chemin absolu
+---
 
-**Statut** : Acté.
+## ADR-19 — `search_code_with_findings`: severity-weighted ranking, not just annotation
 
-**Contexte** : BACKLOG-10 K8 a d'abord livré un premier pack (liveness
-Python) embarqué dans le package `cccr` lui-même
-(`src/ccc_radar/rules/liveness/rules.yml`) — jusque-là, `rules:` ne contenait que
-des chemins projet ou des packs registry (ADR-4, ADR-13). En expérimentant
-l'usage direct via `--config /chemin/absolu/vers/.venv/.../rules/
-liveness.yml`, le `check_id` Semgrep sorti (donc `Finding.rule_id`, et son
-identité — ADR-5/ADR-15) se révèle préfixé par les composants du chemin
-passé à `--config` tels quels : deux machines avec le paquet installé à des
-chemins différents (ou un dev checkout vs une install `uv tool`) obtiennent
-des `rule_id` différents pour la même règle. Par ailleurs, le repo
-`ccc-radar-skill` s'est révélé être *déjà* le point de distribution
-naturel de ce type de contenu : il porte son propre pack de règles Java
-(`skills/cccr/rules/plateforme-agree/`, spécifique à la plateforme cible
-analysée), avec la même règle déjà énoncée dans `SKILL.md` — copier le
-pack dans le repo cible avant de le déclarer dans `rules:`.
+**Status**: Accepted.
 
-**Décision** :
-1. Les packs de règles ne sont **jamais embarqués dans `cccr`**
-   (`src/ccc_radar/rules/` n'existe pas) — `cccr` reste un exécuteur de Semgrep
-   générique, agnostique du contenu des règles (cohérent ADR-1 : package
-   compagnon, pas de logique métier propre à une plateforme).
-2. Ils vivent dans `ccc-radar-skill` sous `skills/cccr/rules/<pack>/`
-   (ex. `liveness/{python,java}.yaml`, `plateforme-agree/*.yaml`), aux côtés
-   de la documentation d'usage dans `SKILL.md`.
-3. Ils sont documentés comme des fichiers de référence à **copier dans le
-   repo cible** (ex. `.cccr/rules/liveness/`) et à déclarer dans `rules:`
-   par un chemin **relatif au repo scanné** — jamais un chemin absolu vers
-   le repo skill ou vers un package installé, exactement comme une règle
-   locale ordinaire (ADR-4).
+**Context**: `search_code_with_findings` composed `ccc` semantic search with
+`cccr` findings purely as post-processing — findings were attached to each
+result but never influenced their order. A chunk with an `ERROR` finding and a
+chunk with no finding could appear in any order, driven only by `ccc` semantic
+relevance. A second improvement path for `ccc`↔`cccr` coupling (translating a
+finding into a `ccc grep` pattern to find structurally similar occurrences) was
+evaluated in parallel and rejected for now: empirically tested on the 4 rules in
+`tests/fixtures/vuln_repo/rules/rules.yml`, only rules without `...`/composite
+patterns (2 of 4) translate correctly — rules mixing ellipsis with a literal
+kwarg (`subprocess.run(..., shell=True, ...)`) lose their security constraint
+once translated (`ccc grep` then matches *all* calls to the function).
 
-**Conséquences** : `rule_id` reste stable et prévisible (`rules.<id>` quand
-la règle vit dans `<repo>/rules/…`), indépendamment de l'endroit où `cccr`
-ou le repo skill sont installés. `ccc-radar` garde une copie de test
-(`tests/fixtures/liveness_repo/rules/`, `tests/test_liveness_rules.py`) qui
-valide le *comportement* des règles (positif/négatif sur fixtures réelles)
-mais n'est plus la source de vérité — celle-ci est `ccc-radar-skill`, qui
-n'a pas d'infra de test propre ; la synchronisation entre les deux copies
-est manuelle, pas vérifiée automatiquement (les deux repos sont versionnés
-indépendamment). Si ça devient un point de friction, une vérification
-inter-repos ou un script de sync pourra être ajouté.
+**Decision**: `ccc_bridge.rank_by_severity` re-orders already annotated results
+by adding an additive boost to `score` depending on `max_severity` (`ERROR`
++0.15, `WARNING` +0.05, `INFO`/none +0.0), without modifying `score` itself
+(which still reflects `ccc`'s raw semantic relevance). Because `ccc search`
+already truncates to `--limit` before `cccr` sees the results, a result just
+outside the top `N` could never benefit from the boost —
+`ccc_bridge.overfetch_limit` therefore over-requests `limit × 3` (capped at 50)
+before annotation, ranking, and final truncation.
 
-## ADR-25 — `MessageEndpoint` : identité sans le snippet dans le hash,
-un endpoint par site plutôt qu'un flux
+**Consequences**: boost weights are an initial heuristic choice
+(deliberately small relative to the typical spread of `ccc` scores, so only near
+cases are re-ordered and a clearly irrelevant result never rises). They may be
+adjusted if real usage shows a different need. Over-fetch adds cost (up to 3×
+more results requested from `ccc` per call), negligible at target scale
+(interactive search, not high-volume traffic). The idea of translating a finding
+into `ccc grep` remains open but out of scope: see `archive/BACKLOG-6.md` for
+the feasibility write-up, to revisit only if restricted to rules without
+ellipsis and if it becomes a priority.
 
-**Statut** : Acté.
+---
 
-**Contexte** : BACKLOG-10 K1 introduit `MessageEndpoint`, l'entité qui
-modélise un site statique d'échange entre services (production/consommation
-Kafka, exposition/appel REST — K2/K11), pour permettre à un agent de
-répondre à « qui produit/consomme ce topic ? » ou « qui appelle cette
-route ? » sans connexion runtime (principe directeur de BACKLOG-10).
+## ADR-20 — `cccr search` = superset of `ccc search`; findings search becomes `cccr findings`
 
-**Décision** :
-1. `compute_endpoint_id(role, topic, path, start_line, end_line)` — pas de
-   snippet dans le hash, contrairement à `compute_finding_id`. Un `Finding`
-   distingue deux occurrences du même problème par leur texte ; un endpoint
-   se distingue par *où* il est (site de code ou entrée de manifeste), la
-   forme exacte de l'appel important peu pour répondre à « qui parle à
-   qui ? ». Ça rend aussi l'identité insensible à un renommage de variable
-   qui ne change ni le topic/route ni la position.
-2. Un endpoint représente un **site**, pas un flux : deux appels
-   `producer.send("orders.created", ...)` à deux lignes différentes du même
-   fichier sont deux `MessageEndpoint` distincts (même topic, `path`
-   identique, `start_line`/`end_line` différents) — cohérent avec
-   `replace_endpoints_for_files` qui raisonne par fichier, comme
+**Status**: Accepted.
+
+**Context**: since V1, `cccr search` searched *within findings*
+(Semgrep finding embeddings), and the code + findings composition was only
+exposed through MCP (`search_code_with_findings`). That did not match the
+product intent: `cccr` should **extend** `ccc` — same question, same kind of
+answer. Expected: `ccc search "user authentication flow"` describes the flow;
+`cccr search "user authentication flow"` describes the same flow **and** brings
+back the Semgrep findings on it.
+
+**Decision**: `cccr search` becomes code + findings search — the orchestration
+(over-fetching `ccc`, annotation, severity ranking, degraded modes), previously
+in `mcp_server.py`, is extracted into `code_search.py` and shared by the CLI and
+the MCP tool (guaranteed identical behavior). Text rendering reproduces the
+format of `ccc search` **exactly** (`--- Result N (score) --- / File: path:l1-l2 [lang]`),
+followed by a findings block under each relevant result — a `ccc` user keeps
+familiar landmarks, `cccr` adds the findings layer. The `ccc_bridge` parser now
+captures language to reproduce the `File:` line identically. The old findings-
+only search moves as-is (same flags, same JSON contract) to `cccr findings`.
+
+**Degraded modes**: missing findings index → raw `ccc` results with warning
+(rather than silently empty findings, and without creating `.cccr/` as a side
+ effect in an uninitialized repo). Since ADR-22, unavailable or failing `ccc` is
+no longer a successful degraded mode: the error bubbles up to CLI/MCP.
+
+**Consequences**: CLI contract break (`cccr search` changes semantics ;
+findings-only usages must migrate to `cccr findings`) — accepted, the package
+not yet being distributed beyond this workstation. MCP tools are unchanged
+(`search_findings` = `cccr findings`, `search_code_with_findings` =
+`cccr search`). Along the way, fake `ccc` fixtures are shared in
+`tests/conftest.py` (first step of N2, `archive/BACKLOG-2.md`).
+
+---
+
+## ADR-21 — Prototype of a native CocoIndex extension without abandoning the companion-package approach
+
+**Status**: Accepted experimentally.
+
+**Context**: review of `../cocoindex/examples` showed that `cccr`'s current
+indexing manually reimplements several primitives provided by CocoIndex:
+declarative target state (`TargetState = Transform(SourceState)`), incremental
+invalidation, automatic orphan deletion, transformation memoization, and live
+mode. The current bridge to `ccc` also remains fragile because the locally used
+version of `ccc search` provides no stable JSON (ADR-10): `cccr` parses human
+output.
+
+**Decision**: `cccr` remains a separate companion package (ADR-1 is not
+reverted) but introduces an experimental mode `cccr index --engine cocoindex`.
+That mode prepares a native CocoIndex extension by modeling findings and code
+chunks as typed target states in the local store. It still depends on no
+internal API from `cocoindex-code` and does not make `cocoindex` mandatory at
+install time: the stable backend remains `--engine manual`.
+
+When the experimental index exists (`meta.index_engine = "cocoindex-prototype"`),
+`cccr search` and the MCP tool `search_code_with_findings` first query the
+locally indexed code chunks (`vec_code_chunks`) then annotate those results with
+findings. The `ccc search` + text parsing fallback remains available for manual
+indexes or repos not yet migrated.
+
+Options rejected for now:
+- contributing directly into `cocoindex-code` / `ccc`: better long-term
+  alignment, but too tightly coupled for a quick local correction;
+- immediately replacing `cccr` with a new unified index: too risky for existing
+  MCP/CLI commands;
+- making `cocoindex` a mandatory dependency: premature until the prototype
+  covers the same guarantees as the manual indexer.
+
+**Consequences**: X2/X4 reduce ADR-10's risk without a breaking change: users
+keep current commands, and experimental mode is opt-in. The prototype is not
+yet a full CocoIndex flow with `live=True`, nor a backend migration; those steps
+remain to be handled (X3/X5/X6). The store moves to `schema_version = 3` to add
+`code_chunks` and `vec_code_chunks`.
+
+---
+
+## ADR-22 — A `ccc` failure makes `cccr search` fail
+
+**Status**: Accepted.
+
+**Context**: the historical fallback of `search_code_with_findings` masked a
+`ccc` failure (`ccc` absent or non-zero return code) by returning a findings-
+only search in `findings_only_fallback`. That behavior made output ambiguous:
+the caller could believe they had obtained a valid code + findings search while
+underlying code search was actually failing.
+
+**Decision**: when `cccr search` must go through the `ccc` bridge, any
+`CccUnavailable` is converted to an error (`RuntimeError`) and bubbles up to the
+CLI (exit code 2) or MCP (`ToolError` / `isError: true`). The message keeps the
+original cause: `ccc not found in PATH` or
+`ccc failed (code N): <stderr>`.
+
+Experimental `--engine cocoindex` mode remains independent: if a local code
+index exists, `cccr search` uses it without calling `ccc`.
+
+**Consequences**: `findings_only_fallback` remains present in
+`CodeSearchResult` for schema compatibility, but is no longer used to mask a
+`ccc` failure. A user who wants findings-only search must call `cccr findings`
+or the MCP tool `search_findings` explicitly.
+
+---
+
+## ADR-23 — The MCP code search tool uses the same name and parameters as `ccc search`
+
+**Status**: Accepted.
+
+**Context**: the MCP tool `search_code_with_findings` was already a superset of
+`ccc search` (ADR-20/21) but exposed only `query` and `limit`, whereas `ccc search`
+also accepts `--offset`, `--lang`, `--path`, and `--refresh` (see
+`ccc search --help`). An agent that already knew `ccc` therefore had to guess
+that those options did not exist on the `cccr` side, or switch back to `ccc`
+for paginated/filtered use cases — breaking the “`cccr search` = `ccc search` +
+findings” positioning.
+
+**Decision**:
+1. The MCP tool is renamed `search_code_with_findings` → `search`, same name as
+   the tool exposed by `ccc mcp`. Since MCP tools are prefixed by server on the
+   client side (`mcp__cccr__search` vs `mcp__ccc__search`), there is no real
+   collision even when both servers are registered at the same time.
+2. `search`/`cccr search` now accept `offset`, `lang`, `path`, `refresh` — same
+   names as `ccc search --offset/--lang/--path/--refresh` flags.
+3. When the `ccc` bridge is used (no experimental code index), those parameters
+   are forwarded as-is to the `ccc` binary (`ccc_bridge.search_code`), with no
+   transformation.
+4. When the experimental code index (`--engine cocoindex`) is used,
+   `lang`/`path` filter and `offset` paginates `Store.knn_search_code_chunks`
+   (post-filtering, since `vec0` has no native metadata filter — over-request
+   `(offset + top_k) × 3`, capped at 200, same pattern as over-fetch in
+   `rank_by_severity`) ; `refresh=True` triggers a local incremental reindex
+   (`coco_indexer.index_repo_with_cocoindex`) before searching, but only if the
+   repo already uses that engine — `refresh=True` does not silently activate the
+   experimental engine on a repo indexed in `manual` mode.
+
+**Consequences**: the Python name of the shared CLI/MCP function,
+`code_search.search_code_with_findings`, does not change — only the exposed MCP
+tool name changes. Tests and docs that referenced the tool by its old name are
+updated (`tests/test_mcp_server.py`, `tests/test_ccc_bridge.py`).
+
+## ADR-24 — Rule packs live in the skill repo, never in `cccr`, and are never referenced by an absolute path
+
+**Status**: Accepted.
+
+**Context**: BACKLOG-10 K8 first delivered an initial pack (Python liveness)
+embedded in the `cccr` package itself
+(`src/ccc_radar/rules/liveness/rules.yml`) — until then, `rules:` contained only
+project paths or registry packs (ADR-4, ADR-13). While experimenting with
+direct use through `--config /absolute/path/to/.venv/.../rules/liveness.yml`,
+the Semgrep `check_id` output (therefore `Finding.rule_id`, and its identity —
+ADR-5/ADR-15) turned out to be prefixed by the path components passed to
+`--config` exactly as written: two machines with the package installed under
+different paths (or a dev checkout vs a `uv tool` install) get different
+`rule_id`s for the same rule. Separately, the `ccc-radar-skill` repo proved to
+already be the natural distribution point for that kind of content: it carries
+its own Java rule pack (`skills/cccr/rules/plateforme-agree/`, specific to the
+target platform being analyzed), with the same rule already stated in
+`SKILL.md` — copy the pack into the target repo before declaring it in
+`rules:`.
+
+**Decision**:
+1. Rule packs are **never embedded in `cccr`**
+   (`src/ccc_radar/rules/` does not exist) — `cccr` remains a generic Semgrep
+   executor, agnostic of rule content (consistent with ADR-1: companion
+   package, not product logic specific to one platform).
+2. They live in `ccc-radar-skill` under `skills/cccr/rules/<pack>/`
+   (e.g. `liveness/{python,java}.yaml`, `plateforme-agree/*.yaml`), alongside
+   usage documentation in `SKILL.md`.
+3. They are documented as reference files to **copy into the target repo**
+   (e.g. `.cccr/rules/liveness/`) and declare in `rules:` through a path
+   **relative to the scanned repo** — never an absolute path to the skill repo
+   or to an installed package, exactly like an ordinary local rule (ADR-4).
+
+**Consequences**: `rule_id` remains stable and predictable (`rules.<id>` when
+the rule lives in `<repo>/rules/...`), regardless of where `cccr` or the skill
+repo are installed. `ccc-radar` keeps a test copy
+(`tests/fixtures/liveness_repo/rules/`, `tests/test_liveness_rules.py`) that
+validates rule *behavior* (positive/negative on real fixtures) but is no longer
+the source of truth — that source is `ccc-radar-skill`, which has no testing
+infrastructure of its own ; synchronization between the two copies is manual,
+not automatically checked (the two repos are versioned independently). If that
+becomes a friction point, cross-repo checking or a sync script may be added.
+
+## ADR-25 — `MessageEndpoint`: identity without snippet in the hash, one endpoint per site rather than per flow
+
+**Status**: Accepted.
+
+**Context**: BACKLOG-10 K1 introduces `MessageEndpoint`, the entity modeling a
+static service-interaction site (Kafka production/consumption, REST exposure/
+call — K2/K11), so an agent can answer “who produces/consumes this topic?” or
+“who calls this route?” without runtime connectivity (guiding principle of
+BACKLOG-10).
+
+**Decision**:
+1. `compute_endpoint_id(role, topic, path, start_line, end_line)` — no snippet
+   in the hash, unlike `compute_finding_id`. A `Finding` distinguishes two
+   occurrences of the same problem by their text; an endpoint is distinguished
+   by *where* it is (code site or manifest entry), the exact call syntax matters
+   little to answer “who talks to whom?”. It also makes identity insensitive to
+   a variable rename that changes neither topic/route nor position.
+2. An endpoint represents a **site**, not a flow: two calls
+   `producer.send("orders.created", ...)` on two different lines in the same
+   file are two distinct `MessageEndpoint` objects (same topic, identical
+   `path`, different `start_line`/`end_line`) — consistent with
+   `replace_endpoints_for_files`, which reasons per file like
    `replace_findings_for_files`.
-3. `source: code`/`manifest` (K10) coexistent pour le même topic sans champ
-   dédié dans le hash : leurs `path` diffèrent naturellement (fichier de
-   code vs `TOPICS.md`), donc leurs identités aussi. Pas besoin d'ajouter
-   `source` à la fonction de hash pour éviter une collision qui ne peut pas
-   se produire.
-4. Aucune table `vec0`/embedding associée à `endpoints` pour l'instant — K1
-   ne couvre que le modèle et le stockage ; la vectorisation (recherche NL
-   sur les endpoints, si un jour utile) resterait à spécifier séparément,
-   hors périmètre K1/K3.
-5. `remove_files` purge aussi `endpoints` (comme `findings` et
-   `code_chunks`) : un fichier supprimé du disque ne doit laisser aucun
-   endpoint fantôme.
+3. `source: code`/`manifest` (K10) coexist for the same topic without a
+   dedicated field in the hash: their `path` naturally differs (code file vs
+   `TOPICS.md`), so their identities do too. No need to add `source` to the hash
+   function to avoid a collision that cannot occur.
+4. No `vec0` table / embedding associated with `endpoints` for now — K1 covers
+   only the model and storage ; vectorization (NL search on endpoints, if ever
+   useful) would remain to be specified separately, outside K1/K3 scope.
+5. `remove_files` also purges `endpoints` (like `findings` and `code_chunks`):
+   a file deleted from disk must not leave behind ghost endpoints.
 
-**Conséquences** : schema v3 → v4 (`docs/SPEC-TECH.md`), migration purement
-additive (`CREATE TABLE IF NOT EXISTS`, pas de table vectorielle à
-recréer). `tests/test_store.py` fixe le contrat : round-trip, remplacement
-par fichier, stabilité/variation de l'identité, coexistence code/manifeste,
-filtres (`system`/`role`/`topic`/`path_glob`), purge par `remove_files`.
+**Consequences**: schema v3 → v4 (`docs/SPEC-TECH.md`), purely additive
+migration (`CREATE TABLE IF NOT EXISTS`, no vector table to recreate).
+`tests/test_store.py` freezes the contract: round-trip, replacement per file,
+identity stability/variation, coexistence of code/manifest, filters
+(`system`/`role`/`topic`/`path_glob`), purge by `remove_files`.
 
-## ADR-26 — Extraction du chemin REST par regex sur le snippet, pas par
-métavariable Semgrep
+## ADR-26 — REST path extraction by regex on the snippet, not by a Semgrep metavariable
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-10 K11 doit extraire la méthode HTTP et le chemin
-d'une route/d'un appel REST capturés par une règle Semgrep (ex.
-`@GetMapping("/orders/{id}")`). L'approche naturelle serait de lire
-`extra.metavars` dans la sortie JSON de Semgrep (la valeur exacte capturée
-par une métavariable comme `$PATH`). En expérimentation (semgrep 1.168.0,
-CLI OSS non authentifié), `extra.metavars` est **absent** de la sortie JSON,
-et les champs `fingerprint`/`lines` sont remplacés par le texte littéral
-`"requires login"` — ce comportement ne dépend pas d'un flag `--metrics`,
-seulement (a priori) d'une session `semgrep login` active, ce qui violerait
-NF4 (local-first, aucune dépendance à un compte externe pour indexer).
+**Context**: BACKLOG-10 K11 must extract the HTTP method and path of a route or
+REST call captured by a Semgrep rule (e.g. `@GetMapping("/orders/{id}")`). The
+natural approach would be to read `extra.metavars` from Semgrep JSON output (the
+exact value captured by a metavariable such as `$PATH`). In experiments
+(semgrep 1.168.0, unauthenticated OSS CLI), `extra.metavars` is **absent** from
+JSON output, and `fingerprint`/`lines` are replaced by the literal
+`"requires login"` — that behavior does not depend on `--metrics`, apparently
+only on an active `semgrep login` session, which would violate NF4
+(local-first, no dependency on an external account to index).
 
-**Décision** : chaque règle d'inventaire fixe la méthode HTTP dans ses
-propres métadonnées (`metadata.http_method`, une règle = une méthode, ex.
-`@GetMapping`/`@PostMapping` sont deux règles distinctes plutôt qu'une seule
-avec une métavariable de méthode) ; seul le **chemin** varie et doit être
-extrait du texte. `cccr` relit déjà le snippet depuis le fichier source
-(ADR-8) — `_extract_rest_path` y cherche par regex le premier littéral entre
-guillemets de la première ligne. Si ce littéral est suivi d'une
-concaténation (`+ variable`) ou qu'aucun littéral n'existe, le chemin est
-marqué `topic_dynamic=True` (même politique que `topic_dynamic` en K2 :
-jamais résolu silencieusement). Une f-string Python (`f"...{id}..."`) est
-traitée comme littéral **résolu** : les accolades d'interpolation sont
-indiscernables, à l'extraction, d'un gabarit d'URI façon `{id}` — et se lisent
-d'ailleurs naturellement comme tel.
+**Decision**: each inventory rule fixes the HTTP method in its own metadata
+(`metadata.http_method`, one rule = one method, e.g. `@GetMapping`/
+`@PostMapping` are two separate rules rather than one rule with a method
+metavariable) ; only the **path** varies and must be extracted from the text.
+`cccr` already re-reads the snippet from the source file (ADR-8) —
+`_extract_rest_path` looks there, by regex, for the first quoted literal of the
+first line. If that literal is followed by a concatenation (`+ variable`) or if
+no literal exists, the path is marked `topic_dynamic=True` (same policy as
+`topic_dynamic` in K2: never silently resolved). A Python f-string
+(`f"...{id}..."`) is treated as a **resolved** literal: interpolation braces are
+indistinguishable, at extraction time, from a URI template such as `{id}` — and
+are naturally read that way.
 
-**Conséquences** : extraction best-effort et non sémantique — une
-concaténation au milieu d'une expression (`base + "/orders/" + id`) peut
-faire remonter un fragment de chemin qui n'est pas le préfixe réel. Documenté
-et testé tel quel (`tests/test_rest_endpoints.py`), cohérent avec le
-« best-effort » déjà assumé pour l'appariement de chemins en K12. Si Semgrep
-expose un jour les métavariables sans connexion (ou via un flag dédié),
-cette décision pourra être révisée pour une extraction exacte.
+**Consequences**: best-effort, non-semantic extraction — a concatenation in the
+middle of an expression (`base + "/orders/" + id`) may produce a path fragment
+that is not the real prefix. Documented and tested as such
+(`tests/test_rest_endpoints.py`), consistent with the “best-effort” already
+accepted for path matching in K12. If Semgrep one day exposes metavariables
+without login (or via a dedicated flag), this decision may be revised for exact
+extraction.
 
-## ADR-27 — Le graphe d'interactions est dérivé à la requête, jamais persisté
+## ADR-27 — The interaction graph is derived at query time, never persisted
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-10 K12 doit détecter des cycles d'appels
-inter-services et des hotspots (site sur un cycle + finding liveness K8) à
-partir des endpoints indexés (K1/K11). Une option aurait été de matérialiser
-le graphe (arêtes, cycles) dans des tables SQLite dédiées, recalculées à
-chaque `cccr index` — cohérent avec le reste du store (findings,
-code_chunks, endpoints).
+**Context**: BACKLOG-10 K12 must detect inter-service call cycles and hotspots
+(site on a cycle + K8 liveness finding) from indexed endpoints (K1/K11). One
+option would have been to materialize the graph (edges, cycles) in dedicated
+SQLite tables, recomputed on each `cccr index` — consistent with the rest of
+the store (findings, code_chunks, endpoints).
 
-**Décision** : `src/ccc_radar/graph.py` ne touche pas au schéma SQLite.
+**Decision**: `src/ccc_radar/graph.py` does not touch the SQLite schema.
 `build_graph`/`find_cycles`/`find_outbound_calls_in_consumers`/
-`find_hotspots` sont des fonctions pures qui prennent des `MessageEndpoint`/
-`Finding` déjà en mémoire (lus du store par l'appelant) et retournent des
-structures en mémoire (`GraphEdge`, `Cycle`, `Hotspot`) — jamais écrites en
-base. Raisons :
-1. Le graphe dépend de **plusieurs projets** dès que K7 (fédération
-   multi-dépôts) est en jeu — il n'a pas de « propriétaire » naturel parmi
-   les stores SQLite d'un seul repo.
-2. C'est une vue dérivée bon marché à recalculer (quelques centaines
-   d'endpoints par projet, pas des millions) : pas de gain de performance
-   qui justifie la complexité d'un cache invalidé à chaque réindexation.
-3. Cohérent avec le principe directeur de BACKLOG-10 : « la vue distribuée
-   est une jointure à la requête », déjà appliqué à
-   `search_code_with_findings` (ADR-19) et à `cccr flow`/K10.
+`find_hotspots` are pure functions taking in-memory `MessageEndpoint`/
+`Finding` objects (read from the store by the caller) and returning in-memory
+structures (`GraphEdge`, `Cycle`, `Hotspot`) — never written to the database.
+Reasons:
+1. The graph depends on **multiple projects** as soon as K7 (multi-repo
+   federation) comes into play — it has no natural “owner” among the SQLite
+   stores of a single repo.
+2. It is a cheap derived view to recompute (a few hundred endpoints per
+   project, not millions): no performance benefit justifies the complexity of a
+   cache invalidated on every reindex.
+3. Consistent with BACKLOG-10's guiding principle: “the distributed view is a
+   join at query time”, already applied to `search_code_with_findings`
+   (ADR-19) and to `cccr flow`/K10.
 
-**Conséquences** : `cccr graph` (CLI/MCP) ne peut aujourd'hui rapporter que
-`find_outbound_calls_in_consumers` (K1/K11 suffisent, un seul repo) ; les
-champs `cycles`/`hotspots` de sa sortie sont vides tant que K7 n'alimente
-pas `build_graph`/`find_hotspots` avec les endpoints/findings de plusieurs
-projets — la limitation est explicite dans la sortie (`note`), pas cachée.
-`tests/test_graph.py` vérifie qu'aucune table `*graph*`/`*cycle*` n'existe
-dans le schéma (CA5).
+**Consequences**: today `cccr graph` (CLI/MCP) can only report
+`find_outbound_calls_in_consumers` (K1/K11 are enough, one repo) ; the
+`cycles`/`hotspots` fields of its output stay empty until K7 feeds
+`build_graph`/`find_hotspots` with endpoints/findings from multiple projects —
+the limitation is explicit in output (`note`), not hidden. `tests/test_graph.py`
+verifies that no `*graph*`/`*cycle*` table exists in the schema (AC5).
 
-## ADR-28 — Un topic Kafka donné comme propriété Spring est résolu
-localement contre `application.yml`/`.properties`, jamais deviné
+## ADR-28 — A Kafka topic given as a Spring property is resolved locally against `application.yml`/`.properties`, never guessed
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-10 K2 doit extraire le nom du topic dans
-`@KafkaListener(topics = "...")`/`KafkaTemplate.send(...)`. En pratique
-(cible Java + Spring + Maven), le topic n'est presque jamais un littéral
-brut : il est externalisé en configuration —
-`@KafkaListener(topics = "${app.kafka.topics.orders}")`, la valeur réelle
-vivant dans `application.yml`/`.properties`. Le texte capturé par
-extraction regex (ADR-26) est alors `${app.kafka.topics.orders}` — une clé
-de configuration, pas un nom de topic. Le marquer simplement
-`topic_dynamic=True` comme un cas non résolu (variable, concaténation)
-aurait été correct mais peu utile : la clé est presque toujours résolvable
-statiquement, dans le même repo, sans aucune connexion runtime.
+**Context**: BACKLOG-10 K2 must extract the topic name in
+`@KafkaListener(topics = "...")` / `KafkaTemplate.send(...)`. In practice
+(target = Java + Spring + Maven), the topic is almost never a raw literal: it
+is externalized into configuration —
+`@KafkaListener(topics = "${app.kafka.topics.orders}")`, with the real value in
+`application.yml`/`.properties`. The text captured by regex extraction
+(ADR-26) is then `${app.kafka.topics.orders}` — a configuration key, not a
+topic name. Simply marking it `topic_dynamic=True` like an unresolved case
+(variable, concatenation) would have been correct but not very useful: the key
+is almost always statically resolvable in the same repo, with no runtime
+connection.
 
-**Décision** : `resolve_spring_property(repo_root, property_key)` cherche
-`property_key` (syntaxe `prop` ou `prop:défaut`, comme Spring) dans les
-fichiers de configuration Spring Boot conventionnels du repo (Maven/Gradle
-standard layout : `src/main/resources/application.{yml,yaml,properties}`,
-puis les mêmes noms à la racine), dans cet ordre — premier fichier qui
-définit la clé gagne. YAML imbriqué est aplati en clés pointées
-(`app.kafka.topics.orders`) ; `.properties` est déjà plat. Si la clé n'est
-trouvée dans aucun fichier, le défaut Spring (`${prop:défaut}`) s'applique ;
-sinon, le placeholder est conservé tel quel et marqué `topic_dynamic=True`
-— jamais résolu au hasard, même politique que ADR-26 pour les chemins REST
-non littéraux.
+**Decision**: `resolve_spring_property(repo_root, property_key)` looks for
+`property_key` (syntax `prop` or `prop:default`, like Spring) in the repo's
+conventional Spring Boot configuration files (standard Maven/Gradle layout:
+`src/main/resources/application.{yml,yaml,properties}`, then the same names at
+the root), in that order — first file defining the key wins. Nested YAML is
+flattened into dotted keys (`app.kafka.topics.orders`) ; `.properties` is
+already flat. If the key is found in no file, the Spring default
+(`${prop:default}`) applies; otherwise the placeholder is kept as-is and marked
+`topic_dynamic=True` — never guessed, same policy as ADR-26 for non-literal REST
+paths.
 
-**Conséquences** : une variable qui reçoit une valeur `@Value("${...}")`
-puis est passée à `.send(topic, ...)` n'est **pas** résolue (pas d'analyse
-de flux de données à travers les statements — hors périmètre, cohérent
-avec l'absence de métavariables/taint dans ADR-26) : seul le cas où le
-placeholder apparaît **textuellement** dans l'annotation/l'appel est
-couvert. Les profils Spring (`application-prod.yml`) ne sont pas
-consultés — seul le fichier de base. `tests/test_kafka_endpoints.py` fixe
-le contrat : résolution YAML et `.properties`, valeur par défaut, clé
-introuvable, priorité YAML > `.properties` quand les deux existent.
+**Consequences**: a variable that receives a value from `@Value("${...}")` then
+gets passed to `.send(topic, ...)` is **not** resolved (no statement-level
+dataflow analysis — outside scope, consistent with the lack of metavariables /
+taint in ADR-26) : only the case where the placeholder appears **textually** in
+the annotation/call is covered. Spring profiles (`application-prod.yml`) are
+consulted now alongside the base file set; whichever eligible file is found
+first in the configured search order wins. `tests/test_kafka_endpoints.py`
+freezes the contract: YAML and `.properties` resolution, default value,
+missing key, YAML > `.properties` priority when both exist.
 
-## ADR-29 — `cccr index` fait un seul scan Semgrep pour les findings et les
-endpoints, discriminés par `metadata.category`
+## ADR-29 — `cccr index` performs a single Semgrep scan for findings and endpoints, discriminated by `metadata.category`
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-11 A1 branche l'extraction d'endpoints (K2/K11) dans
-`cccr index`, jusque-là dédié aux findings (`run_semgrep`). Les deux types
-de règles (findings d'un côté, inventaire d'endpoints de l'autre) peuvent
-cohabiter dans `config.rules` (ex. `default.yaml` + `liveness.yaml` +
-`rest/java.yaml` + `kafka/java.yaml`). Lancer `run_semgrep` puis
-`run_semgrep_endpoints` séparément aurait scanné les mêmes fichiers deux
-fois avec Semgrep — le poste le plus coûteux du pipeline (NF2).
+**Context**: BACKLOG-11 A1 wires endpoint extraction (K2/K11) into
+`cccr index`, until then dedicated to findings (`run_semgrep`). The two kinds of
+rules (findings on one side, endpoint inventory on the other) may coexist in
+`config.rules` (e.g. `default.yaml` + `liveness.yaml` + `rest/java.yaml` +
+`kafka/java.yaml`). Running `run_semgrep` then `run_semgrep_endpoints`
+separately would have scanned the same files twice with Semgrep — the most
+expensive stage of the pipeline (NF2).
 
-**Décision** : `indexer.index_repo` appelle `scanner.invoke_semgrep_raw`
-(renommée depuis l'ancien `_invoke_semgrep` privé, désormais partagée)
-**une seule fois** par indexation, puis passe la même sortie JSON à
-`parse_semgrep_json` (findings) et `parse_semgrep_endpoints` (endpoints).
-Chaque parseur ignore ce qui ne le concerne pas via
-`extra.metadata.category` : `parse_semgrep_json` saute désormais les
-résultats `category: endpoint-inventory` (sinon ils deviendraient de faux
-findings INFO — contraire à K8 CA2, « traités comme des endpoints, pas
-comme des findings filtrés par `min_severity` ») ; `parse_semgrep_endpoints`
-ne garde que ceux-là. Le filtre `min_severity` (auparavant dans
-`run_semgrep`) est appliqué dans `index_repo` sur la liste de findings
-déjà parsée, pour ne pas dupliquer la logique dans les deux fonctions
-`run_semgrep`/`run_semgrep_endpoints` (conservées telles quelles, utilisées
-par les tests et un futur usage CLI direct hors indexation).
+**Decision**: `indexer.index_repo` calls `scanner.invoke_semgrep_raw`
+(renamed from the former private `_invoke_semgrep`, now shared) **once per
+indexing**, then passes the same JSON output to `parse_semgrep_json`
+(findings) and `parse_semgrep_endpoints` (endpoints). Each parser ignores what
+is not for it through `extra.metadata.category`:
+`parse_semgrep_json` now skips `category: endpoint-inventory` results
+(otherwise they would become false INFO findings — contrary to K8 AC2,
+“handled as endpoints, not as findings filtered by `min_severity`”) ;
+`parse_semgrep_endpoints` keeps only those. The `min_severity` filter
+(previously in `run_semgrep`) is applied in `index_repo` on the already parsed
+findings list, so the logic is not duplicated between
+`run_semgrep`/`run_semgrep_endpoints` (preserved as-is for tests and for future
+standalone CLI use outside indexing).
 
-**Conséquences** : `IndexReport` gagne `endpoints_added`/`endpoints_removed`
-(défauts à `0`, compatible avec toute construction positionnelle
-existante). `tests/test_indexer.py` fixe le contrat : un scan mélangeant
-une règle de finding et deux règles d'inventaire produit 1 finding et 2
-endpoints, sans fuite dans un sens ni dans l'autre ; suppression de fichier
-purge aussi les endpoints (déjà vrai depuis K1 via `Store.remove_files`).
+**Consequences**: `IndexReport` gains `endpoints_added`/`endpoints_removed`
+(defaulting to `0`, compatible with all existing positional construction).
+`tests/test_indexer.py` freezes the contract: a scan mixing one finding rule and
+two inventory rules produces 1 finding and 2 endpoints, with no leakage either
+way ; deleting a file also purges endpoints (already true since K1 through
+`Store.remove_files`).
 
-## ADR-30 — Fédération multi-services : découverte Maven par `pom.xml`,
-lecture strictement read-only des bases pairs
+## ADR-30 — Multi-service federation: Maven discovery by `pom.xml`, strictly read-only access to peer databases
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-11 A2 doit permettre à `cccr` de raisonner sur
-plusieurs microservices à la fois (graphe REST/Kafka inter-services, K12),
-sans dépendre d'une configuration manuelle de « workspace nommé » (le plan
-initial de K7, `~/.cccr/workspaces/<nom>.yml`) — la cible réelle est un
-répertoire parent contenant tous les microservices et des modules Maven
-partagés d'un même produit (voir `archive/BACKLOG-PRIORITY.md`, cadrage
-2026-07-13), pas des dépôts indépendants sans lien.
+**Context**: BACKLOG-11 A2 must allow `cccr` to reason over several
+microservices at once (inter-service REST/Kafka graph, K12), without depending
+on manual “named workspace” configuration (K7's initial plan,
+`~/.cccr/workspaces/<name>.yml`) — the real target is a parent directory
+containing all microservices and shared Maven modules of one product (see
+`archive/BACKLOG-PRIORITY.md`, framing 2026-07-13), not unrelated standalone
+repos.
 
-**Décision** :
-1. **Découverte** (`workspace.discover_maven_services`) : chaque `pom.xml`
-   trouvé sous le répertoire donné est un module. Le nom logique stable
-   vient de l'`artifactId` du pom (repli : nom du répertoire si le pom est
-   illisible ou sans `artifactId` — un module cassé ne bloque jamais les
-   autres). Un module est classé `microservice` si son pom référence
-   `spring-boot-maven-plugin` (il produit un jar exécutable), `shared-module`
-   sinon — recherche textuelle simple dans le XML, pas une résolution
-   complète du modèle Maven (héritage de parent POM, profils) : suffisant
-   pour distinguer un service déployable d'une bibliothèque interne dans
-   l'immense majorité des repos Spring Boot réels, documenté comme
-   heuristique et non comme garantie.
-2. **Lecture read-only** (`Store(path, readonly=True)`) : ouverture SQLite
-   via `file:...?mode=ro` (URI), sans `_create_schema()` (aucune écriture de
-   schéma/migration dans la base d'un autre projet), sans `commit()` en
-   sortie. Base absente → `StoreError` explicite avant même la tentative de
-   connexion ; schéma incompatible (`schema_version` différent, ou table
-   manquante) → `StoreError` explicite plutôt qu'une lecture partielle
-   silencieuse (K7 CA2/A2 CA8). SQLite refuse lui-même toute écriture sur
-   une connexion `mode=ro` — double garantie, pas seulement une convention
-   côté code.
-3. **Robustesse par service** (`workspace.load_federation`) : un module non
-   indexé ou dont la base est incompatible ajoute un avertissement et
-   n'interrompt pas la fédération des autres services — jamais un échec
-   global pour un seul module en défaut.
-4. **Modules partagés vs microservices** (A2 CA5) : `load_federation`
-   inclut les findings d'un `shared-module` (une bibliothèque interne porte
-   du code, donc potentiellement des findings pertinents pour les
-   hotspots), mais jamais ses endpoints — un module partagé n'est pas un
-   producteur/consommateur runtime, même si un scan y a par erreur détecté
-   un endpoint-inventory.
+**Decision**:
+1. **Discovery** (`workspace.discover_maven_services`): every `pom.xml` found
+   under the given directory is a module. Stable logical name comes from the
+   pom's `artifactId` (fallback: directory name if the pom is unreadable or has
+   no `artifactId` — one broken module never blocks the others). A module is
+   classified as `microservice` if its pom references
+   `spring-boot-maven-plugin` (it produces an executable jar), `shared-module`
+   otherwise — simple textual search in the XML, not full Maven model
+   resolution (parent POM inheritance, profiles): sufficient to distinguish a
+   deployable service from an internal library in the overwhelming majority of
+   real Spring Boot repos, documented as a heuristic and not as a guarantee.
+2. **Read-only access** (`Store(path, readonly=True)`): SQLite open via
+   `file:...?mode=ro` (URI), without `_create_schema()` (no schema write /
+   migration in another project's DB), without `commit()` on exit. Missing DB →
+   explicit `StoreError` before even attempting the connection ; incompatible
+   schema (`schema_version` differs, or missing table) → explicit `StoreError`
+   rather than a silent partial read (K7 AC2/A2 AC8). SQLite itself refuses any
+   write on a `mode=ro` connection — double guarantee, not only a code-side
+   convention.
+3. **Per-service robustness** (`workspace.load_federation`): a module not
+   indexed or whose DB is incompatible adds a warning and does not interrupt
+   federation of other services — never a global failure because of one bad
+   module.
+4. **Shared modules vs microservices** (A2 AC5): `load_federation` includes
+   findings from a `shared-module` (an internal library carries code, therefore
+   potentially findings relevant to hotspots), but never its endpoints — a
+   shared module is not a runtime producer/consumer, even if a scan mistakenly
+   detected an endpoint-inventory there.
 
-**Conséquences** : `src/ccc_radar/workspace.py` (nouveau), pas de dépendance à
-un parseur Maven tiers (juste `xml.etree.ElementTree`, stdlib). CLI `cccr
-workspace <root>` et tool MCP `list_workspace_services` exposent la
-découverte + le comptage endpoints/findings par service, en amont de K12
-qui consommera `load_federation` pour construire le graphe et les hotspots
-réels. `tests/test_workspace.py` fixe le contrat : noms/classification,
-détection d'indexation, avertissement sur service non indexé ou base
-incompatible, non-fuite des endpoints d'un module partagé, et non-écriture
-effective d'une connexion read-only.
+**Consequences**: `src/ccc_radar/workspace.py` (new), no dependency on a
+third-party Maven parser (only `xml.etree.ElementTree`, stdlib). CLI
+`cccr workspace <root>` and MCP tool `list_workspace_services` expose
+service discovery + endpoint/finding counts, ahead of K12 which consumes
+`load_federation` to build the real graph and hotspots.
+`tests/test_workspace.py` freezes the contract: names/classification, indexing
+detection, warning on non-indexed service or incompatible database, no endpoint
+leak from a shared module, and effective non-write behavior of a read-only
+connection.
 
-## ADR-31 — `metavariable-regex` sur un littéral Java doit tenir compte des
-guillemets échappés dans le texte source
+## ADR-31 — `metavariable-regex` on a Java literal must account for escaped quotes in the source text
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : BACKLOG-10 K8 (volet sécurité) doit distinguer un
-`sasl.jaas.config` avec un mot de passe **littéral** (`password="secret"`,
-en dur dans le source) d'un mot de passe **construit** (`password="` +
-variable + `"`, injecté depuis l'extérieur). `metavariable-regex` applique
-la regex au texte source brut capturé par la métavariable — pour un
-littéral Java contenant des guillemets internes, ce texte porte les
-guillemets **échappés** (`\"`), pas des guillemets nus, puisque c'est ainsi
-qu'ils apparaissent dans le fichier `.java` lui-même. Une regex du genre
-`password\s*=\s*"[^"]+"` (guillemets nus) ne matche donc **jamais**, y
-compris sur le cas qu'elle est censée détecter — testé et confirmé en
-expérimentation (voir aussi ADR-26 : `extra.metavars` n'apparaît pas dans
-la sortie JSON sans session `semgrep login`, ce qui a rendu ce piège plus
-long à diagnostiquer, faute de pouvoir inspecter directement le texte
-capturé).
+**Context**: BACKLOG-10 K8 (security part) must distinguish a
+`sasl.jaas.config` carrying a **literal** password (`******`, hard-coded in the
+source) from a **constructed** password (`******`, injected from outside).
+`metavariable-regex` applies its regex to the raw source text captured by the
+metavariable — for a Java literal containing internal quotes, that text carries
+those quotes **escaped** (`\"`), not as bare quotes, because that is how they
+appear in the `.java` file itself. A regex such as
+`password\s*=\s*"[^"]+"` (bare quotes) therefore **never** matches, even on
+the very case it is meant to detect — tested and confirmed experimentally (see
+also ADR-26: `extra.metavars` does not appear in JSON output without a
+`semgrep login` session, which made this trap longer to diagnose because the
+captured text could not be inspected directly).
 
-**Décision** : la regex doit chercher le guillemet échappé explicitement —
-`password\s*=\s*\\"[^"]*\\"` (un littéral backslash-quote, pas de backslash
-dans le contenu). Un mot de passe concaténé avec une variable ne produit
-qu'**un seul** guillemet échappé suivi du nom de la variable (pas de
-second guillemet fermant dans la même sous-chaîne), donc ne matche pas —
-c'est exactement la distinction recherchée.
+**Decision**: the regex must explicitly look for the escaped quote —
+`password\s*=\s*\\"[^"]*\\"` (a literal backslash-quote, no backslash inside
+the content). A password concatenated with a variable produces only **one**
+escaped quote followed by the variable name (no closing escaped quote in the
+same substring), so it does not match — exactly the intended distinction.
 
-**Conséquences** : `cccr.kafka-security.sasl-plaintext-credentials`
-(`skills/cccr/rules/kafka-security/java.yaml`) encode cette regex ;
-`tests/test_kafka_security_rules.py` fixe le contrat sur les deux formes
-(littéral pur vs concaténation) pour éviter une régression silencieuse si
-quelqu'un « simplifie » la regex vers des guillemets nus. Tout futur usage
-de `metavariable-regex` visant le contenu d'un littéral de chaîne Java (ou
-d'un langage à guillemets échappables similaire) doit garder ce piège en
-tête plutôt que de le redécouvrir.
+**Consequences**: `cccr.kafka-security.sasl-plaintext-credentials`
+(`skills/cccr/rules/kafka-security/java.yaml`) encodes that regex ;
+`tests/test_kafka_security_rules.py` freezes the contract for both forms
+(pure literal vs concatenation) to prevent a silent regression if someone
+“simplifies” the regex back to bare quotes. Any future use of
+`metavariable-regex` targeting the content of a Java string literal (or a
+similar language with escapable quotes) must keep this trap in mind instead of
+rediscovering it.
 
-## ADR-32 — Attribution module/classe à l'indexation, en complément (pas en
-remplacement) de la fédération A2/K7
+## ADR-32 — Module/class attribution at indexing time, in addition to (not instead of) A2/K7 federation
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : la fédération multi-services (ADR-30, BACKLOG-11 A2) exige
-d'indexer **chaque** module Maven séparément (`cccr init`/`cccr index`
-lancés dans chaque sous-répertoire), puis de fédérer à la requête via
-`--workspace`. Retour utilisateur direct (2026-07-13) : pour un monorepo —
-un seul dépôt Git contenant plusieurs modules Maven, pas des dépôts
-séparés — cette exigence est ressentie comme une charge artificielle : le
-répertoire parent est déjà indexé en un seul passage, mais `cccr
-graph`/`cccr flow` restent aveugles aux relations inter-modules tant que
-chaque module n'a pas sa propre base et que `--workspace` n'est pas fourni.
+**Context**: multi-service federation (ADR-30, BACKLOG-11 A2) requires
+indexing **each** Maven module separately (`cccr init`/`cccr index` run in each
+subdirectory), then federating at query time through `--workspace`. Direct user
+feedback (2026-07-13): for a monorepo — one Git repo containing several Maven
+modules, not separate repos — this feels like artificial overhead: the parent
+directory is already indexed in one pass, but `cccr graph`/`cccr flow` remain
+blind to inter-module relationships until each module has its own database and
+`--workspace` is provided.
 
-**Décision** : indexer une fois le répertoire parent doit suffire à
-détecter les cycles/hotspots inter-modules, sans passer par la fédération.
-`Finding`/`MessageEndpoint` gagnent deux champs optionnels (schéma v4→v5,
-purement additif) :
-- `module: str | None` — nom du module Maven (artifactId) du `pom.xml` le
-  plus proche en remontant depuis le fichier jusqu'à la racine du repo
-  indexé (`maven.module_name_for_path`, borné comme
-  `scanner._candidate_spring_roots` — jamais de remontée au-delà de
-  `repo_root`) ; `None` si le repo n'a pas de layout Maven ou que le
-  fichier est hors arborescence Maven.
-- `qualified_name: str | None` — package + nom de classe Java
-  (`scanner._java_qualified_name`, regex sur `package ...;` + nom de
-  fichier, jamais d'AST), `None` pour les fichiers non-Java.
+**Decision**: indexing the parent directory once must be enough to detect
+inter-module cycles/hotspots, without going through federation.
+`Finding`/`MessageEndpoint` gain two optional fields (schema v4→v5, purely
+additive):
+- `module: str | None` — name of the nearest Maven module (artifactId of the
+  nearest `pom.xml` found by walking upward from the file to the indexed repo
+  root, bounded like `scanner._candidate_spring_roots` — never above
+  `repo_root`) ; `None` if the repo has no Maven layout or the file is outside
+  the Maven tree.
+- `qualified_name: str | None` — Java package + class name
+  (`scanner._java_qualified_name`, regex on `package ...;` + file name, never
+  AST), `None` for non-Java files.
 
-`graph.group_endpoints_by_module`/`group_findings_by_module` transforment
-une liste plate en la même forme de dict (`dict[str, list[...]]`) que
-`workspace.load_federation` produit déjà — `build_graph`/`find_cycles`/
-`find_hotspots` n'ont **aucun** changement à faire, ils consomment
-indifféremment un dict issu de la fédération ou du regroupement par
-module. Un endpoint/finding sans module est exclu de ce regroupement
-(jamais une fausse arête entre deux sites non attribués qui se
-retrouveraient arbitrairement dans le même compartiment) — c'est un choix
-délibérément conservateur : moins de cycles détectés plutôt qu'un cycle
-inventé. `cccr flow` a besoin d'un regroupement différent
-(`flow.group_endpoints_by_module_for_flow`/`group_findings_by_module_for_flow`) :
-contrairement au graphe, lister tous les sites d'un topic est le contrat,
-donc un site sans module reste présent, sous la clé `None` — pas de risque
-de fausse arête ici puisque `trace_flow` ne compare jamais les clés entre
-elles.
+`graph.group_endpoints_by_module`/`group_findings_by_module` turn a flat list
+into the same dict shape (`dict[str, list[...]]`) that
+`workspace.load_federation` already produces — `build_graph`/`find_cycles`/
+`find_hotspots` need **no** change, they consume equally well a dict coming from
+federation or from module grouping. An endpoint/finding without a module is
+excluded from that grouping (never a false edge between two unattributed sites
+that would arbitrarily land in the same bucket) — deliberately conservative
+choice: fewer detected cycles rather than an invented one. `cccr flow` needs a
+different grouping (`flow.group_endpoints_by_module_for_flow` /
+`group_findings_by_module_for_flow`) : unlike the graph, listing all sites of a
+topic is the contract, so a site without a module stays present under key
+`None` — no false-edge risk here because `trace_flow` never compares keys with
+one another.
 
-**Ce que cette décision ne remplace pas** : la fédération A2/K7 reste le
-seul chemin pour des services qui vivent dans des dépôts Git réellement
-séparés (pas de répertoire parent commun indexable en un seul passage). Les
-deux mécanismes coexistent : `cccr graph`/`cccr flow` sans `--workspace`
-tentent d'abord le regroupement par module (nouveau) ; `--workspace`
-déclenche toujours la fédération complète (inchangée) et prend le pas
-quand elle est fournie.
+**What this decision does not replace**: A2/K7 federation remains the only path
+for services that live in genuinely separate Git repos (no common parent
+indexed in one pass). The two mechanisms coexist:
+`cccr graph`/`cccr flow` without `--workspace` first try module grouping (new);
+`--workspace` still triggers full federation (unchanged) and takes precedence
+when provided.
 
-**Conséquences** : `src/ccc_radar/maven.py` (nouveau) factorise la lecture de
-`pom.xml` (`parse_pom`) partagée entre `workspace.py` (fédération) et
-`scanner.py` (attribution de module) — plus de duplication de
-`_parse_pom`. `render_graph_json`/`GraphResult.note` reflètent désormais
-« aucune donnée inter-module disponible » plutôt que « pas de
-`--workspace` » : le message reste correct même quand l'absence de
-cycles/hotspots vient d'un repo non-Maven, pas seulement de l'absence du
-flag. `cccr endpoints --module`/`EndpointHit.module` exposent le nouveau
-champ pour une inspection directe. Testé de bout en bout dans
-`tests/test_m3_module_graph_e2e.py` : la même fixture 3-services
-(`rest_cycle_workspace`) qui prouve le cycle en mode fédéré
-(`test_k12_graph_workspace_e2e.py`) prouve le même cycle indexé une seule
-fois au parent, sans `--workspace`.
+**Consequences**: `src/ccc_radar/maven.py` (new) factors out shared `pom.xml`
+reading (`parse_pom`) between `workspace.py` (federation) and `scanner.py`
+(module attribution) — no more `_parse_pom` duplication. `render_graph_json` /
+`GraphResult.note` now reflect “no inter-module data available” rather than “no
+`--workspace`”: the message stays correct even when missing cycles/hotspots come
+from a non-Maven repo, not only from the absence of the flag.
+`cccr endpoints --module` / `EndpointHit.module` expose the new field for
+direct inspection. Tested end-to-end in `tests/test_m3_module_graph_e2e.py`:
+the same 3-service fixture (`rest_cycle_workspace`) that proves the cycle in
+federated mode (`test_k12_graph_workspace_e2e.py`) proves the same cycle when
+the parent is indexed once, without `--workspace`.
 
 ---
 
-## ADR-33 — Détection de service Gradle par classe `main()` Spring Boot,
-pas par le contenu de `build.gradle`
+## ADR-33 — Gradle service detection by Spring Boot `main()` class, not by `build.gradle` contents
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : ADR-30/ADR-32 attribuent un module/service en cherchant
-`spring-boot-maven-plugin` dans le texte d'un `pom.xml` — fiable pour
-Maven car cette chaîne est un marqueur quasi universel. Retour utilisateur
-direct (2026-07-13, audit de
-`eventuate-tram-examples-customers-and-orders`) : ce repo est 100% Gradle
-(zéro `pom.xml`), donc ni la fédération (A2) ni l'attribution de module
-(M1) ne trouvent jamais rien, quel que soit l'index. Or Gradle n'a pas
-d'équivalent universel : ce repo applique un plugin de convention custom
-(`ServicePlugin`, défini dans `buildSrc/`) plutôt que `org.springframework.
-boot` directement — un grep du texte de `build.gradle` ne peut pas
-détecter ça de façon générale. L'utilisateur a explicitement demandé de
-détecter un microservice par la classe Java qui le démarre réellement
-(`main()` + `SpringApplication.run(...)`), plutôt que par une convention
-de build.
+**Context**: ADR-30/ADR-32 attribute a module/service by looking for
+`spring-boot-maven-plugin` in a `pom.xml`'s text — reliable for Maven because
+that string is a near-universal marker. Direct user feedback (2026-07-13,
+audit of `eventuate-tram-examples-customers-and-orders`): that repo is 100%
+Gradle (zero `pom.xml`), so neither federation (A2) nor module attribution (M1)
+ever finds anything, whatever the index. But Gradle has no universal equivalent:
+that repo applies a custom convention plugin (`ServicePlugin`, defined in
+`buildSrc/`) rather than `org.springframework.boot` directly — grepping
+`build.gradle` text cannot detect that generally. The user explicitly asked to
+detect a microservice by the Java class that actually starts it
+(`main()` + `SpringApplication.run(...)`), rather than by a build convention.
 
-**Décision** : `gradle.gradle_service_for_path` (nouveau, BACKLOG-15 H1)
-cherche, dans tout le repo, les classes Java portant un `main()` qui
-appelle `SpringApplication.run(...)` (regex, pas d'AST — même esprit
-qu'ADR-26). Le premier segment de chemin (répertoire de premier niveau
-sous la racine indexée) de chaque classe ainsi trouvée devient un nom de
-service ; tout fichier sous ce même premier segment y est rattaché — un
-microservice Gradle réparti sur plusieurs sous-projets (`<service>/
-<service>-domain`, `-restapi`, ... `-main`) est ainsi regroupé sous un
-seul nom, à la même granularité que ce qu'un seul `pom.xml` Maven donne
-pour un microservice équivalent. `scanner._module_for_path` essaie
-d'abord `maven.module_name_for_path` (inchangé — l'utilisateur a
-explicitement choisi de garder la détection `pom.xml`/`spring-boot-maven-
-plugin` pour Maven plutôt que de basculer aussi ce cas sur une détection
-par classe `main()`) et ne retombe sur la détection Gradle que si aucun
-`pom.xml` n'est trouvé sur le chemin.
+**Decision**: `gradle.gradle_service_for_path` (new, BACKLOG-15 H1) searches the
+whole repo for Java classes carrying a `main()` that calls
+`SpringApplication.run(...)` (regex, no AST — same spirit as ADR-26). The first
+path segment (top-level directory under the indexed root) of each class found
+that way becomes a service name; every file under that same first segment is
+attached to it — a Gradle microservice split across several subprojects
+(` <service>/<service>-domain`, `-restapi`, ... `-main`) is thus grouped under a
+single name, at the same granularity that a single Maven `pom.xml` gives for an
+equivalent microservice. `scanner._module_for_path` first tries
+`maven.module_name_for_path` (unchanged — the user explicitly chose to keep the
+`pom.xml`/`spring-boot-maven-plugin` detection for Maven rather than switch
+Maven too to `main()`-class detection) and only falls back to Gradle detection
+if no `pom.xml` is found on the path.
 
-**Conséquences** : un repo mixte (certains modules Maven, d'autres
-Gradle) fonctionne fichier par fichier, sans configuration explicite du
-build tool. La granularité « premier segment de chemin » suppose qu'un
-microservice Gradle multi-sous-projets vit sous un unique répertoire de
-premier niveau (convention observée dans le repo qui a motivé cette
-tâche) — un layout Gradle qui met tous les sous-projets à plat à la
-racine sans regroupement par service ne serait pas correctement détecté ;
-non traité ici, à revisiter si un tel layout se présente. Pas de
-distinction microservice/module-partagé côté Gradle (contrairement à
-Maven, ADR-30 CA5) : tout répertoire portant une classe `main()` Spring
-Boot devient un service, sans notion de bibliothèque interne exclue des
-endpoints — accepté pour ce premier support, à affiner si nécessaire.
+**Consequences**: a mixed repo (some Maven modules, some Gradle ones) works
+file by file, with no explicit build-tool configuration. The “first path
+segment” granularity assumes a Gradle microservice split across subprojects lives
+under one top-level directory (the convention observed in the repo that
+motivated this task) — a Gradle layout that puts all subprojects flat at the
+root with no per-service grouping would not be correctly detected ; not handled
+here, to revisit if such a layout appears. No microservice/shared-module
+distinction on the Gradle side (unlike Maven, ADR-30 AC5): every directory with
+a Spring Boot `main()` class becomes a service, with no notion of internal
+library excluded from endpoints — accepted for this first support, to refine if
+needed.
 
 ---
 
-## ADR-34 — Exclusion du code de test de tout le scan (findings et
-endpoints), en rupture avec ADR-14/R2
+## ADR-34 — Excluding test code from the entire scan (findings and endpoints), breaking with ADR-14/R2
 
-**Statut** : Acté.
+**Status**: Accepted.
 
-**Contexte** : ADR-14 (BACKLOG-2 R2) avait délibérément choisi de **ne
-jamais** exclure silencieusement les répertoires de test d'un scan de
-sécurité, pour ne pas manquer des vulnérabilités dans des helpers de test.
-Retour utilisateur direct (2026-07-13) sur le même audit Gradle : un appel
-REST dans un fichier de test (`ApiGatewayComponentTest.java`, un appel
-`WebClient` du harnais de test vers l'API) ressortait comme site
-d'interaction réel dans l'inventaire endpoints, polluant le graphe
-services ↔ services d'appels qui n'existent pas en production. Question
-explicitement posée à l'utilisateur avant d'agir : exclure uniquement de
-l'inventaire endpoints (préserve ADR-14/R2), ou de tout le scan y compris
-les findings de sécurité (revient sur ADR-14/R2) — l'utilisateur a choisi
-la seconde option en toute connaissance du compromis annoncé.
+**Context**: ADR-14 (BACKLOG-2 R2) had deliberately chosen to **never**
+silently exclude test directories from a security scan, so as not to miss
+vulnerabilities in test helpers. Direct user feedback (2026-07-13) on the same
+Gradle audit: a REST call in a test file (`ApiGatewayComponentTest.java`, a
+`WebClient` call from test harness to the API) was appearing as a real
+interaction site in the endpoint inventory, polluting the service↔service graph
+with calls that do not exist in production. Explicit question asked to the user
+before acting: exclude only from endpoint inventory (preserves ADR-14/R2), or
+from the entire scan including security findings (revisits ADR-14/R2) — the
+user chose the second option with full knowledge of the announced trade-off.
 
-**Décision** : `indexer._is_test_source(rel_path)` (BACKLOG-15 H2) exclut
-tout fichier sous un répertoire `src/<jeu-de-sources>` où `<jeu-de-
-sources>` suit la convention Maven/Gradle de nommage des source sets de
-test (`test`, `componentTest`, `contractTest`, `endToEndTest`, etc. — voir
-correctif ci-dessous) — appliqué dans `_list_repo_files`, en amont de
-`config.exclude`/`include`, donc jamais scanné du tout par Semgrep
-(findings **et** endpoints). Décision basée sur les segments du chemin
-plutôt qu'un pattern glob `fnmatch` : `*` ne respecte pas les frontières de
-répertoire dans ce projet (voir `indexer._matches_any`), ce qui
-confondrait un vrai jeu de sources de test avec un simple paquet nommé
-`testutils` sous `src/main`.
+**Decision**: `indexer._is_test_source(rel_path)` (BACKLOG-15 H2) excludes any
+file under a `src/<source-set>` directory where `<source-set>` follows the
+Maven/Gradle naming convention for test source sets (`test`, `componentTest`,
+`contractTest`, `endToEndTest`, etc. — see fix below) — applied in
+`_list_repo_files`, before `config.exclude`/`include`, therefore never scanned
+at all by Semgrep (findings **and** endpoints). Decision based on path segments
+rather than an `fnmatch` glob pattern: `*` does not respect directory boundaries
+in this project (see `indexer._matches_any`), which would confuse a real test
+source set with a mere package named `testutils` under `src/main`.
 
-**Conséquences** : une vulnérabilité qui n'existe que dans un helper de
-test redevient invisible sans aucun signal — exactement le risque
-qu'ADR-14/R2 visait à éliminer, désormais accepté explicitement plutôt que
-subi silencieusement. Un fichier déjà indexé qui devient exclu par ce
-changement est purgé au prochain `cccr index` via le mécanisme existant
-`deleted = previous_paths - current_paths`, sans migration dédiée.
+**Consequences**: a vulnerability that exists only in a test helper becomes
+invisible again with no signal — exactly the risk ADR-14/R2 aimed to eliminate,
+now explicitly accepted rather than silently suffered. A file already indexed
+that becomes excluded by this change is purged on the next `cccr index` through
+the existing mechanism `deleted = previous_paths - current_paths`, with no
+dedicated migration.
 
-**Correctif (BACKLOG-16 P1, 2026-07-13)** : la règle initiale (« tout
-`src/<x>` avec `x != "main"` ») excluait aussi tout layout Python/JS/Rust
-en `src/<package>` — dont `cccr` lui-même — puisque `<package>` n'est
-jamais `"main"`. `_is_test_source` ne reconnaît désormais un jeu de
-sources de test que si son nom suit la convention Maven/Gradle
-`test`/`<préfixe>Test` (`_is_maven_or_gradle_test_source_set`), ce qui
-préserve l'intention d'ADR-34 (exclure `src/test`, `src/componentTest`,
-...) sans capturer un layout `src/<package>` générique.
+**Fix (BACKLOG-16 P1, 2026-07-13)**: the initial rule (“any `src/<x>` with
+`x != "main"`”) also excluded any Python/JS/Rust `src/<package>` layout —
+including `cccr` itself — because `<package>` is never `"main"`.
+`_is_test_source` now recognizes a test source set only if its name follows the
+Maven/Gradle convention `test`/`<prefix>Test`
+(`_is_maven_or_gradle_test_source_set`), preserving ADR-34's intent
+(exclude `src/test`, `src/componentTest`, ...) without capturing a generic
+`src/<package>` layout.

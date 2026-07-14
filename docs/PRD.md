@@ -1,192 +1,238 @@
-# PRD — ccc-radar : enrichissement de cocoindex-code par les résultats Semgrep
+# PRD — ccc-radar: enriching cocoindex-code with Semgrep results
 
 | | |
 |---|---|
-| **Produit** | ccc-radar (nom de travail) — extension de [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) |
-| **Auteur** | Mehdi El-Kouhen |
-| **Statut** | Draft v0.1 — vision produit d'origine, en partie antérieure aux décisions d'architecture |
+| **Product** | ccc-radar (working name) — extension of [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) |
+| **Author** | Mehdi El-Kouhen |
+| **Status** | Draft v0.1 — original product vision, partly predating architecture decisions |
 | **Date** | 2026-07-11 |
 
-> **Note de lecture** : ce document capture la vision produit et les cas d'usage
-> tels que formulés au démarrage du projet. Certains détails de mécanique (ex. `ccc
-> findings`/`ccc index --with-findings` intégrés à `ccc`, store LMDB+SQLite unique)
-> ont été **remplacés** par les décisions d'architecture actées dans
-> [`ADR.md`](./ADR.md) (notamment ADR-1 : package compagnon `cccr` plutôt que fork
-> de `ccc`). Pour ce qui a été **effectivement livré**, se référer à
-> [`SPEC-FONC.md`](./SPEC-FONC.md) (comportement utilisateur) et
-> [`SPEC-TECH.md`](./SPEC-TECH.md) (architecture technique réelle). Ce PRD reste la
-> référence pour : le problème, la vision, les personas/cas d'usage, et les
-> métriques de succès — qui n'ont pas changé.
+> **Reading note**: this document captures the product vision and use cases as
+> they were stated at project kickoff. Some implementation details (e.g. `ccc
+> findings`/`ccc index --with-findings` integrated into `ccc`, single LMDB+SQLite
+> store) have been **replaced** by the architecture decisions recorded in
+> [`ADR.md`](./ADR.md) (notably ADR-1: companion package `cccr` rather than a
+> fork of `ccc`). For what has been **actually delivered**, refer to
+> [`SPEC-FONC.md`](./SPEC-FONC.md) (user-visible behavior) and
+> [`SPEC-TECH.md`](./SPEC-TECH.md) (real technical architecture). This PRD remains
+> the reference for: the problem, the vision, the personas/use cases, and the
+> success metrics — which have not changed. The repo has since developed a
+> **Java/Spring microservices audit extension** (REST/Kafka inventory, graph,
+> flow) that relies on the same index but was not part of this PRD's initial V1
+> commitment.
 
 ---
 
-## 1. Contexte et problème
+## 1. Context and problem
 
-`cocoindex-code` (CLI `ccc`) offre aux agents de codage une recherche **sémantique** (embeddings sur chunks AST) et **structurelle** (pattern matching AST) du code, exposée via skill Claude Code, serveur MCP et hooks. Il répond bien à la question *« où est le code qui fait X ? »*.
+`cocoindex-code` (CLI `ccc`) gives coding agents **semantic** search
+(embeddings on AST chunks) and **structural** search (AST pattern matching) for
+code, exposed through a Claude Code skill, MCP server, and hooks. It answers
+*“where is the code that does X?”* well.
 
-Il ne répond pas aux questions de **qualité et de sécurité** que se posent quotidiennement développeurs et agents :
+It does not answer the **quality and security** questions developers and agents
+ask every day:
 
-- *« Quelles injections SQL potentielles dans ce module ? »*
-- *« Ce fichier que je m'apprête à modifier porte-t-il des findings connus ? »*
-- *« Corrige toutes les violations de la règle `no-raw-sql` dans `src/api/`. »*
+- *“What potential SQL injections are in this module?”*
+- *“Does this file I am about to edit already carry known findings?”*
+- *“Fix all violations of the `no-raw-sql` rule in `src/api/`.”*
 
-Aujourd'hui, un agent qui veut ces réponses doit lancer Semgrep lui-même à chaque question : lent (scan complet), coûteux en tokens (sortie JSON verbeuse, non filtrée sémantiquement), et déconnecté du contexte code que `ccc` sait déjà restituer. Les findings ne sont ni persistés, ni incrémentaux, ni interrogeables en langage naturel.
+Today, an agent that wants these answers must run Semgrep itself for every
+question: slow (full scan), expensive in tokens (verbose JSON output, not
+semantically filtered), and disconnected from the code context that `ccc`
+already knows how to surface. Findings are neither persisted, incremental, nor
+queryable in natural language.
 
-**Opportunité** : Semgrep produit des résultats structurés (règle, sévérité, message, localisation précise) qui se marient naturellement avec l'index AST de `ccc`. En indexant les findings *avec* le code, on donne à l'agent une réponse complète en une requête : le code, ses problèmes connus, et le contexte pour les corriger.
+**Opportunity**: Semgrep produces structured results (rule, severity, message,
+precise location) that pair naturally with `ccc`'s AST index. By indexing
+findings *alongside* the code, the agent gets a complete answer in one query:
+the code, its known issues, and the context needed to fix them.
 
-## 2. Vision et objectif
+## 2. Vision and objective
 
-> **Un agent de codage interroge en langage naturel un index unifié « code + analyse statique » et obtient des réponses pertinentes, sourcées et économes en tokens.**
+> **A coding agent queries a unified “code + static analysis” index in natural language and gets relevant, sourced, token-efficient answers.**
 
-Objectifs produit :
+Product goals:
 
-1. **Indexer** les résultats de règles Semgrep (règles configurées par le projet : registry semgrep, packs custom, règles maison) dans un pipeline incrémental.
-2. **Lier** chaque finding au code concerné (chunk AST via `ccc`, ou a minima fichier + plage de lignes), pour que toute réponse combine finding + code.
-3. **Exposer** cette connaissance aux LLM via les mêmes types de surfaces que `ccc` : CLI, skill, serveur MCP.
+1. **Index** Semgrep rule results (rules configured by the project: Semgrep
+   registry, custom packs, in-house rules) in an incremental pipeline.
+2. **Link** each finding to the relevant code (AST chunk via `ccc`, or at least
+   file + line range), so every answer combines finding + code.
+3. **Expose** that knowledge to LLMs through the same kinds of surfaces as
+   `ccc`: CLI, skill, MCP server.
 
-Non-objectifs (voir §5) : remplacer Semgrep CI/CD, faire du triage de vulnérabilités, réécrire un moteur d'analyse.
+Non-goals (see §5): replacing Semgrep CI/CD, doing vulnerability triage,
+rewriting an analysis engine.
 
-## 3. Personas et cas d'usage
+**Chosen product framing**:
+
+- **Core product**: indexed, searchable Semgrep findings joined to code.
+- **Separate extension**: Java/Spring microservices audit (REST/Kafka
+  endpoints, inter-service graph, flow tracing), important to the project but
+  treated as an extension on top of the core rather than as the definition of
+  the entire product.
+
+## 3. Personas and use cases
 
 ### Personas
 
-- **P1 — Agent de codage** (Claude Code, agent MCP) : consommateur principal. Interroge l'index avant/pendant une modification, corrige des findings à la demande.
-- **P2 — Développeur** : utilise le CLI directement pour explorer la dette sécurité/qualité de son périmètre.
-- **P3 — Tech lead / AppSec** : configure les règles Semgrep du projet, suit l'évolution des findings, définit les seuils.
+- **P1 — Coding agent** (Claude Code, MCP agent): main consumer. Queries the
+  index before/during an edit, fixes findings on demand.
+- **P2 — Developer**: uses the CLI directly to explore security/quality debt in
+  their scope.
+- **P3 — Tech lead / AppSec**: configures the project's Semgrep rules, tracks
+  findings over time, defines thresholds.
 
-### Cas d'usage prioritaires
+### Priority use cases
 
-| ID | Cas d'usage | Persona | Priorité |
+| ID | Use case | Persona | Priority |
 |----|-------------|---------|----------|
-| UC1 | Recherche en langage naturel sur les findings : *« problèmes de désérialisation non sûre »* → findings pertinents + code + explication de la règle | P1, P2 | Must |
-| UC2 | Contexte pré-édition : avant de modifier un fichier, l'agent récupère les findings qui le concernent (via hook ou requête MCP) | P1 | Must |
-| UC3 | Correction guidée : *« corrige les findings ERROR de `src/api/` »* → l'agent itère sur les findings, avec le chunk de code et le `fix`/message Semgrep comme contexte | P1 | Must |
-| UC4 | Recherche croisée code ↔ findings : *« montre le code de gestion des sessions et ses findings associés »* | P1, P2 | Should |
-| UC5 | Synthèse : *« état des findings par sévérité/règle sur le repo »* (vue agrégée, faible coût tokens) | P2, P3 | Should |
-| UC6 | Diff de findings : findings apparus/résolus depuis la dernière indexation | P3 | Could |
+| UC1 | Natural-language search on findings: *“unsafe deserialization issues”* → relevant findings + code + rule explanation | P1, P2 | Must |
+| UC2 | Pre-edit context: before modifying a file, the agent retrieves the findings that concern it (via hook or MCP query) | P1 | Must |
+| UC3 | Guided remediation: *“fix the ERROR findings in `src/api/`”* → the agent iterates over findings, with the code chunk and Semgrep `fix`/message as context | P1 | Must |
+| UC4 | Cross-search code ↔ findings: *“show the session handling code and its related findings”* | P1, P2 | Should |
+| UC5 | Summary: *“state of findings by severity/rule in the repo”* (aggregated view, low token cost) | P2, P3 | Should |
+| UC6 | Findings diff: findings that appeared/were resolved since the last indexing | P3 | Could |
 
-## 4. Proposition de valeur et différenciation
+## 4. Value proposition and differentiation
 
-- **vs `semgrep scan` à la demande** : réponses en < 1 s (index persistant, pas de re-scan), sortie filtrée sémantiquement et compacte (objectif : 70 %+ d'économie de tokens).
-- **vs SAST plateformes (Semgrep AppSec Platform, SonarQube)** : local-first, sans serveur, conçu pour la boucle interne de l'agent, pas pour la gouvernance.
-- **vs index code seul (`ccc` actuel)** : chaque réponse peut porter la dimension « problèmes connus », ce qu'aucun embedding de code seul ne capture.
+- **vs `semgrep scan` on demand**: answers in < 1 s (persistent index, no
+  re-scan), semantically filtered and compact output (target: 70%+ token
+  savings).
+- **vs SAST platforms (Semgrep AppSec Platform, SonarQube)**: local-first,
+  serverless, designed for the agent's inner loop, not for governance.
+- **vs code-only index (`ccc` today)**: each answer can carry the “known
+  issues” dimension, which no code-only embedding captures.
 
-## 5. Périmètre
+## 5. Scope
 
-### Inclus (V1)
+### Included (V1 — core product)
 
-- Exécution de Semgrep pilotée par la configuration de règles du projet (fichier de règles locales ou pack registry).
-- Indexation incrémentale des findings : re-scan limité aux fichiers modifiés.
-- Modèle de données finding : règle (id, message, sévérité, catégorie/CWE/OWASP si présents), localisation (fichier, lignes), extrait, `fix` suggéré.
-- Embedding des findings (message de règle + métadonnées + extrait) dans un store vectoriel dédié.
-- CLI de recherche/filtres/agrégats en langage naturel.
-- MCP : tools de recherche findings + recherche croisée code ↔ findings.
-- Skill Claude Code (workflow d'interrogation + correction guidée).
+- Running Semgrep driven by the project's rule configuration (local rules file
+  or registry pack).
+- Incremental finding indexing: re-scan limited to modified files.
+- Finding data model: rule (id, message, severity, category/CWE/OWASP when
+  present), location (file, lines), snippet, suggested `fix`.
+- Embedding of findings (rule message + metadata + snippet) into a dedicated
+  vector store.
+- CLI for natural-language search/filters/aggregates.
+- MCP: findings search tools + cross-search code ↔ findings.
+- Claude Code skill (query workflow + guided remediation).
 
-### Exclus (V1)
+### Java/Spring microservices audit extension (outside the initial V1 commitment)
 
-- Autres moteurs que Semgrep (extensibilité prévue dans l'architecture, non livrée).
-- Triage/workflow de findings (assignation, faux positifs persistés, SLA) — hors boucle agent.
-- Exécution de Semgrep Pro / règles interfile taint cross-repo.
-- Application automatique des fixes sans agent (les `fix` Semgrep sont du contexte fourni à l'agent, pas un autofix produit).
-- UI web / dashboards.
+- REST/Kafka endpoint inventory from dedicated Semgrep rules.
+- Inter-service graph, hotspots, and flow tracing.
+- Multi-service Maven workspace discovery and `.drawio` export.
+- Scope focused on Java/Spring repos; best-effort behavior currently being
+  stabilized.
 
-## 6. Exigences fonctionnelles (vision d'origine)
+### Excluded (V1 — core product)
 
-> Le détail fonctionnel réellement livré (commandes, flags, formats) est dans
-> [`SPEC-FONC.md`](./SPEC-FONC.md). Les IDs F1-F4 ci-dessous sont conservés pour la
-> traçabilité avec les cas d'usage §3, mais la mécanique décrite (`ccc findings`,
-> `.cocoindex_code/settings.yml`, `ccc search --with-findings`) est celle du
-> draft initial, antérieure à ADR-1.
+- Engines other than Semgrep (extensibility planned in the architecture, not delivered).
+- Finding triage/workflow (assignment, persisted false positives, SLA) — outside the agent loop.
+- Running Semgrep Pro / cross-repo interfile taint rules.
+- Automatic fix application without an agent (Semgrep `fix` values are context supplied to the agent, not a product autofix).
+- Web UI / dashboards.
+
+## 6. Functional requirements (original vision)
+
+> The actual delivered functional detail (commands, flags, formats) is in
+> [`SPEC-FONC.md`](./SPEC-FONC.md). The F1-F4 IDs below are kept for
+> traceability with the use cases in §3, but the described mechanics (`ccc findings`,
+> `.cocoindex_code/settings.yml`, `ccc search --with-findings`) are those of the
+> initial draft, predating ADR-1.
 
 ### F1 — Configuration
-- F1.1 : la config projet accepte une section dédiée : sources de règles (chemins, packs registry `p/...`), inclusions/exclusions, sévérité minimale indexée, timeout.
-- F1.2 : l'initialisation détecte une config Semgrep existante et propose de l'activer.
-- F1.3 : absence de Semgrep installé → message actionnable, le reste de l'outil fonctionne inchangé (feature strictement additive).
+- F1.1: project config accepts a dedicated section: rule sources (paths, registry packs `p/...`), includes/excludes, minimum indexed severity, timeout.
+- F1.2: initialization detects an existing Semgrep config and offers to enable it.
+- F1.3: missing Semgrep installation → actionable message, the rest of the tool keeps working unchanged (strictly additive feature).
 
-### F2 — Indexation
-- F2.1 : l'indexation exécute le scan Semgrep sur les fichiers nouveaux/modifiés uniquement et met à jour les findings de ces fichiers (suppression des findings obsolètes incluse).
-- F2.2 : chaque finding est rattaché au code concerné (chunk AST si disponible, sinon fichier).
-- F2.3 : les findings sont vectorisés avec un modèle d'embedding (texte embeddé : message règle + id + catégories + extrait normalisé).
-- F2.4 : identité stable d'un finding (hash règle + chemin + empreinte du code concerné) pour permettre le diff entre indexations (UC6) et éviter les doublons.
-- F2.5 : un scan complet reste possible en complément de l'incrémental.
+### F2 — Indexing
+- F2.1: indexing runs the Semgrep scan only on new/modified files and updates the findings for those files (including deletion of obsolete findings).
+- F2.2: each finding is attached to the relevant code (AST chunk when available, otherwise file).
+- F2.3: findings are vectorized with an embedding model (embedded text: rule message + id + categories + normalized snippet).
+- F2.4: stable finding identity (rule hash + path + fingerprint of the relevant code) to enable diffing between indexings (UC6) and avoid duplicates.
+- F2.5: a full scan remains available in addition to incremental indexing.
 
-### F3 — Requêtage
-- F3.1 : recherche en langage naturel → top-k findings par similarité, avec filtres sévérité/règle/chemin/langue, pagination.
-- F3.2 : sortie compacte par défaut (règle, sévérité, fichier:lignes, message court) ; option pour ajouter le contexte de code lié.
-- F3.3 : la recherche de code peut être annotée du nombre et de la sévérité max des findings de chaque résultat.
-- F3.4 : agrégats par règle/sévérité/répertoire (UC5), format tableau court.
-- F3.5 : sortie JSON sur toutes les commandes pour consommation machine.
+### F3 — Querying
+- F3.1: natural-language search → top-k findings by similarity, with severity/rule/path/language filters and pagination.
+- F3.2: compact output by default (rule, severity, file:lines, short message); option to add the linked code context.
+- F3.3: code search can be annotated with the count and max severity of findings for each result.
+- F3.4: aggregates by rule/severity/directory (UC5), short table format.
+- F3.5: JSON output on all commands for machine consumption.
 
-### F4 — Intégrations agent
-- F4.1 : tool MCP de recherche findings retournant le format compact F3.2.
-- F4.2 : tool MCP de recherche croisée code ↔ findings.
-- F4.3 : skill décrivant : quand interroger les findings, comment mener une correction guidée (récupérer finding → lire contexte → patcher → réindexer → vérifier disparition du finding).
-- F4.4 : hook (optionnel) de rafraîchissement de l'index et de signalement des findings des fichiers touchés (UC2), désactivable.
+### F4 — Agent integrations
+- F4.1: MCP findings search tool returning the compact F3.2 format.
+- F4.2: MCP cross-search tool for code ↔ findings.
+- F4.3: skill describing when to query findings and how to run guided remediation (retrieve finding → read context → patch → reindex → verify disappearance of the finding).
+- F4.4: (optional) hook to refresh the index and report findings on touched files (UC2), disableable.
 
-## 7. Exigences non fonctionnelles
+## 7. Non-functional requirements
 
-- **NF1 — Performance requête** : p95 < 1 s sur un repo de 500k LOC déjà indexé.
-- **NF2 — Performance indexation** : surcoût Semgrep incrémental < 10 s pour un changement de 20 fichiers avec les packs par défaut ; jamais bloquant pour la recherche code.
-- **NF3 — Économie de tokens** : une réponse recherche top-5 ≤ ~1 200 tokens.
-- **NF4 — Local-first & confidentialité** : aucun code, chemin, finding ni requête envoyé à l'extérieur (hors provider d'embedding cloud si explicitement configuré).
-- **NF5 — Robustesse** : échec ou timeout Semgrep → l'index existant reste valide et interrogeable ; les findings ne sont jamais supprimés silencieusement suite à une erreur.
-- **NF6 — Compatibilité** : Python 3.10+.
+- **NF1 — Query performance**: p95 < 1 s on a 500k LOC repo already indexed.
+- **NF2 — Indexing performance**: incremental Semgrep overhead < 10 s for a 20-file change with default packs; never blocking for code search.
+- **NF3 — Token savings**: one top-5 search answer ≤ ~1,200 tokens.
+- **NF4 — Local-first & privacy**: no code, path, finding, or query sent outside (except to a cloud embedding provider if explicitly configured).
+- **NF5 — Robustness**: Semgrep failure or timeout → the existing index remains valid and queryable; findings are never silently deleted after an error.
+- **NF6 — Compatibility**: Python 3.10+.
 
-## 8. Expérience cible (exemples)
+## 8. Target experience (examples)
 
 ```bash
 # Setup
-cccr init                              # détecte une config Semgrep, sinon p/security-audit
-cccr index                             # findings, incrémental
+cccr init                              # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
+cccr index                             # findings, incremental
 
-# Développeur
-cccr search "injection sql" --severity ERROR
+# Developer
+cccr search "sql injection" --severity ERROR
 cccr summary
 ```
 
 ```text
 # Agent (via MCP / skill)
-Utilisateur : « corrige les problèmes de sécurité du module paiements »
-Agent : search_findings("sécurité", path_glob="src/payments/*", severity="ERROR")
-      → findings compacts + contexte
-      → patch fichier par fichier, reindex_findings, re-vérifie que les findings ont disparu
+User: “fix the security issues in the payments module”
+Agent: search_findings("security", path_glob="src/payments/*", severity="ERROR")
+      → compact findings + context
+      → patch file by file, reindex_findings, re-check that the findings are gone
 ```
 
-## 9. Métriques de succès
+## 9. Success metrics
 
-| Métrique | Cible V1 |
+| Metric | V1 target |
 |----------|----------|
-| Pertinence : % de requêtes NL findings où le bon finding est dans le top-5 (jeu d'éval interne) | ≥ 85 % |
-| Économie de tokens vs `semgrep scan --json` brut pour répondre à la même question | ≥ 70 % |
-| Latence requête p95 (repo 500k LOC) | < 1 s |
-| Surcoût d'indexation incrémentale (20 fichiers) | < 10 s |
-| Boucle de correction agent : % de findings corrigés dont le finding disparaît à la réindexation | ≥ 90 % |
-| Adoption : % d'utilisateurs activant la feature à 3 mois | ≥ 25 % |
+| Relevance: % of NL findings queries where the correct finding is in the top 5 (internal eval set) | ≥ 85 % |
+| Token savings vs raw `semgrep scan --json` to answer the same question | ≥ 70 % |
+| Query latency p95 (500k LOC repo) | < 1 s |
+| Incremental indexing overhead (20 files) | < 10 s |
+| Agent remediation loop: % of fixed findings whose finding disappears after reindexing | ≥ 90 % |
+| Adoption: % of users enabling the feature after 3 months | ≥ 25 % |
 
-## 10. Risques et mitigations
+## 10. Risks and mitigations
 
-| Risque | Impact | Mitigation |
+| Risk | Impact | Mitigation |
 |--------|--------|------------|
-| Faux positifs Semgrep → l'agent « corrige » du code sain | Confiance, régressions | Sévérité min configurable ; le skill impose de valider le finding avant patch ; support des `# nosemgrep` existants |
-| Coût du scan sur gros repos / packs lourds | Indexation lente | Incrémental par fichier, timeout par règle |
-| Dérive de version Semgrep (format JSON, comportement des règles) | Casse silencieuse | Contrat de parsing testé sur fixtures (voir ADR-8) |
-| Embeddings de findings peu discriminants (messages de règles répétitifs) | Pertinence UC1 | Texte embeddé enrichi (extrait de code + catégories) ; jeu d'éval dès le MVP |
-| Dépendance amont `cocoindex-code` (API interne non stable) | Maintenance | Package compagnon plutôt que fork (ADR-1) |
+| Semgrep false positives → the agent “fixes” healthy code | Trust, regressions | Configurable minimum severity; the skill requires validating the finding before patching; support existing `# nosemgrep` |
+| Scan cost on large repos / heavy packs | Slow indexing | Per-file incremental mode, per-rule timeout |
+| Semgrep version drift (JSON format, rule behavior) | Silent breakage | Parsing contract tested on fixtures (see ADR-8) |
+| Findings embeddings not discriminative enough (repetitive rule messages) | UC1 relevance | Enriched embedded text (code snippet + categories); eval set from the MVP onward |
+| Upstream dependency on `cocoindex-code` (unstable internal API) | Maintenance | Companion package rather than fork (ADR-1) |
 
-## 11. Jalons
+## 11. Milestones
 
-| Jalon | Contenu | Critère de sortie |
+| Milestone | Content | Exit criterion |
 |-------|---------|-------------------|
-| **M1 — MVP CLI** | Configuration, indexation, recherche/résumé CLI ; jeu d'éval pertinence | UC1 utilisable au quotidien ; métriques pertinence/latence mesurées |
-| **M2 — Intégration agent** | MCP (findings + jointure code), skill | UC2/UC3 démontrés dans Claude Code de bout en bout |
-| **M3 — V1** | Documentation, éval de bout en bout | Cibles §9 atteintes sur le jeu d'éval interne |
+| **M1 — CLI MVP** | Configuration, indexing, CLI search/summary; relevance eval set | UC1 usable day to day; relevance/latency metrics measured |
+| **M2 — Agent integration** | MCP (findings + code join), skill | UC2/UC3 demonstrated end to end in Claude Code |
+| **M3 — V1** | Documentation, end-to-end eval | §9 targets reached on the internal eval set |
 
-Statut réel (voir `archive/BACKLOG.md`) : M1, M2 et M3 sont atteints — l'ensemble
-des tâches F0.1 à F7.2 du plan d'implémentation initial est livré.
+Real status: the **core product** corresponding to this PRD is delivered
+(`archive/BACKLOG.md`, tasks F0.1 to F7.2). The repo also carries an important
+but distinct Java/Spring microservices audit extension whose stabilization
+continues in more recent backlogs.
 
-## 12. Questions ouvertes restantes
+## 12. Remaining open questions
 
-1. Les findings **supprimés** doivent-ils être conservés en historique (audit, UC6 étendu) ou purgés ? V1 a retenu : purge (`replace_findings_for_files` supprime puis réinsère), pas de diff persistant — UC6 (Could) n'est pas livré en V1.
-2. ~~Faut-il embarquer un **pack de règles par défaut** quand le projet n'a pas de config Semgrep ?~~ Tranché (ADR-13) : `cccr init` se replie sur le pack registry `p/security-audit` quand rien n'est détecté ni passé en `--rules` — revient sur le choix initial « config explicite obligatoire » pour réduire la friction de démarrage (voir `SPEC-FONC.md`, commande `init`).
-3. Politique sur **Semgrep Pro** (règles interfile) : toujours hors scope, non traité.
+1. Should **deleted** findings be kept as history (audit, extended UC6) or purged? V1 chose: purge (`replace_findings_for_files` deletes then reinserts), no persisted diff — UC6 (Could) is not delivered in V1.
+2. ~~Should a **default rule pack** be shipped when the project has no Semgrep config?~~ Settled: `cccr init` first tries to copy the skill packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`) and falls back to `p/security-audit` when nothing is detected or passed through `--rules` — reducing startup friction while keeping a generic fallback (see `SPEC-FONC.md`, `init` command).
+3. Policy on **Semgrep Pro** (interfile rules): still out of scope, not addressed.

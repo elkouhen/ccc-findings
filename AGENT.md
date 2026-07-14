@@ -1,72 +1,87 @@
-# AGENT.md — Comment naviguer et maintenir la documentation de ce projet
+# AGENT.md — How to navigate and maintain this project's documentation
 
-> Ce fichier s'adresse à tout agent (Claude Code ou autre) qui intervient sur
-> `ccc-radar`. Il décrit où vit chaque type de documentation et la règle
-> non négociable : **tout changement se documente dans un fichier BACKLOG**.
+> This file is intended for any agent (Claude Code or otherwise) working on
+> `ccc-radar`. It describes where each kind of documentation lives and the
+> non-negotiable rule: **every change must be documented in a BACKLOG file**.
 
-## Carte des documents
+## Document map
 
-| Document | Contenu | Quand le lire |
+| Document | Content | When to read it |
 |---|---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Problème, vision, personas, cas d'usage, métriques de succès | Pour comprendre *pourquoi* le produit existe et ce qu'il doit accomplir |
-| [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) | Comportement observable : commandes CLI, flags, messages d'erreur/codes de sortie, tools MCP, workflows du skill | Avant de modifier tout ce qu'un utilisateur ou un agent voit (CLI, MCP, skill) |
-| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, modèle de données, schéma SQLite, algorithmes, contrat JSON | Avant de modifier l'architecture interne (`src/ccc_radar/*.py`) |
-| [`docs/ADR.md`](docs/ADR.md) | Décisions d'architecture : contexte, choix, conséquences | Avant de revenir sur un choix déjà tranché — pour savoir si c'est une décision D1-D6 « ne pas rediscuter » ou une adaptation ADR-7+ documentée |
-| `archive/BACKLOG*.md` | Tâches de travail (implémentation initiale, remédiations) — voir ci-dessous | Pour tout travail nouveau ou en cours |
+| [`docs/PRD.md`](docs/PRD.md) | Problem, vision, personas, use cases, success metrics | To understand *why* the product exists and what it must achieve |
+| [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) | Observable behavior: CLI commands, flags, error messages/exit codes, MCP tools, skill workflows | Before changing anything a user or agent sees (CLI, MCP, skill) |
+| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, data model, SQLite schema, algorithms, JSON contract | Before changing internal architecture (`src/ccc_radar/*.py`) |
+| [`docs/ADR.md`](docs/ADR.md) | Architecture decisions: context, choice, consequences | Before revisiting an already-settled choice — to know whether it is a D1-D6 “do not reopen” decision or a documented ADR-7+ adaptation |
+| `archive/BACKLOG*.md` | Work tasks (initial implementation, remediations) — see below | For any new or ongoing work |
 
-`README.md` reste le point d'entrée court (installation, démarrage) et
-renvoie vers ces documents ; il ne duplique pas leur contenu.
+`README.md` remains the short entry point (installation, getting started) and
+points to these documents; it does not duplicate their content.
 
-## Règle d'or : tout changement se documente dans un BACKLOG
+## Hugging Face model downloads
 
-Aucune tâche (feature, fix, refactor, changement de doc) ne doit être menée
-sans une entrée correspondante dans un fichier `archive/BACKLOG-<n>.md` :
+When a model must be downloaded with `hf`, **disable `SSL_CERT_FILE` first** in
+the current shell, otherwise environments with proxy/intercepted TLS often fail
+with `CERTIFICATE_VERIFY_FAILED`.
 
-1. **Avant de commencer** : vérifier si la tâche existe déjà dans un backlog
-   en cours (`archive/BACKLOG-2.md` ou le plus récent). Sinon, l'ajouter avec
-   le même gabarit que l'existant : titre, `Fichiers` (périmètre exact),
-   `Description`, `CA` (critères d'acceptation vérifiables).
-2. **Pendant** : une tâche = un commit (`F<epic>.<n>: <titre>` pour le
-   backlog d'implémentation d'origine, `R<n>: <titre>` pour les
-   remédiations, `N<n>: <titre>` pour le nettoyage transverse — voir
-   `archive/BACKLOG-2.md`).
-3. **Après** : cocher la case (`[ ]` → `[x]`) dans le fichier BACKLOG
-   correspondant dans le même commit (ou un commit dédié explicite) — ne
-   jamais laisser le fichier mentir sur l'état réel du repo.
-4. **Si le changement révèle une décision d'architecture** (nouvelle,
-   ou déviation d'une décision existante) : ajouter une entrée à
-   `docs/ADR.md` (contexte / décision / conséquences), ne pas la laisser
-   implicite dans un message de commit.
-5. **Si le changement modifie le comportement observable ou l'architecture
-   interne** : mettre à jour `docs/SPEC-FONC.md` et/ou `docs/SPEC-TECH.md`
-   dans le même commit que le code — ces documents décrivent le code
-   *tel qu'il est*, pas tel qu'il était prévu.
+Reference command for the repository's default model:
 
-## Cycle de vie des fichiers BACKLOG
+```bash
+env -u SSL_CERT_FILE uvx --from huggingface_hub hf download \
+  jinaai/jina-code-embeddings-1.5b \
+  --local-dir ~/models/jina-code-embeddings-1.5b
+```
 
-- Tous les backlogs (terminés ou en cours) vivent dans `archive/`, numérotés
-  séquentiellement : `BACKLOG.md` (plan d'implémentation initial, terminé),
-  `BACKLOG-2.md` (findings de revue de code, en cours), `BACKLOG-3.md`, etc.
-- Un nouveau chantier de travail (feature notable, campagne de
-  remédiation) crée un nouveau `archive/BACKLOG-<n>.md` plutôt que de
-  rallonger indéfiniment un fichier existant déjà clos.
-- Un backlog existant et encore ouvert (cases non cochées) reçoit les
-  nouvelles tâches qui prolongent son sujet.
+The local path expected by default on the `cccr` side is
+`~/models/jina-code-embeddings-1.5b`.
 
-## Conventions héritées (ne pas rediscuter)
+## Golden rule: every change must be documented in a BACKLOG
 
-Reprises d'`archive/BACKLOG.md` §« Conventions pour l'agent exécutant » —
-valables pour tout fichier BACKLOG présent ou futur :
+No task (feature, fix, refactor, documentation change) should be carried out
+without a matching entry in an `archive/BACKLOG-<n>.md` file:
 
-1. Traiter les tâches dans l'ordre ; ne commencer une tâche que si ses
-   dépendances déclarées sont `DONE`.
-2. Une tâche est `DONE` uniquement quand tous ses critères d'acceptation
-   passent, plus la DoD globale.
-3. **DoD globale** : `uv run pytest` passe entièrement, `uv run ruff check .`
-   sans erreur, aucun fichier hors du périmètre `Fichiers` de la tâche n'est
-   modifié (toute exception à cette règle doit être signalée et approuvée
-   avant d'être appliquée — voir `docs/ADR.md` ADR-7 pour un précédent), pas
-   de `TODO` laissé dans le code livré.
-4. Si un critère d'acceptation est impossible à satisfaire tel quel :
-   s'arrêter et signaler, ne pas réinterpréter silencieusement (voir
-   `docs/ADR.md` pour les précédents où cette règle a été appliquée).
+1. **Before starting**: check whether the task already exists in an ongoing
+   backlog (`archive/BACKLOG-2.md` or the most recent one). Otherwise add it
+   using the same template as the existing entries: title, `Files` (exact
+   scope), `Description`, `AC` (verifiable acceptance criteria).
+2. **During**: one task = one commit (`F<epic>.<n>: <title>` for the original
+   implementation backlog, `R<n>: <title>` for remediations, `N<n>: <title>`
+   for cross-cutting cleanup — see `archive/BACKLOG-2.md`).
+3. **After**: check the box (`[ ]` → `[x]`) in the matching BACKLOG file in the
+   same commit (or an explicit dedicated commit) — never let the file lie about
+   the repository's real state.
+4. **If the change reveals an architecture decision** (new, or a deviation from
+   an existing decision): add an entry to `docs/ADR.md` (context / decision /
+   consequences); do not leave it implicit in a commit message.
+5. **If the change modifies observable behavior or internal architecture**:
+   update `docs/SPEC-FONC.md` and/or `docs/SPEC-TECH.md` in the same commit as
+   the code — these documents describe the code *as it is*, not as it was
+   planned.
+
+## BACKLOG file lifecycle
+
+- All backlogs (completed or ongoing) live in `archive/`, sequentially
+  numbered: `BACKLOG.md` (initial implementation plan, completed),
+  `BACKLOG-2.md` (code review findings, ongoing), `BACKLOG-3.md`, etc.
+- A new body of work (notable feature, remediation campaign) creates a new
+  `archive/BACKLOG-<n>.md` rather than extending an already-closed file
+  indefinitely.
+- An existing and still-open backlog (unchecked boxes) receives new tasks that
+  extend its subject.
+
+## Inherited conventions (do not reopen)
+
+Taken from `archive/BACKLOG.md` §“Conventions for the executing agent” — valid
+for any present or future BACKLOG file:
+
+1. Handle tasks in order; only start a task if its declared dependencies are
+   `DONE`.
+2. A task is `DONE` only when all its acceptance criteria pass, plus the global
+   DoD.
+3. **Global DoD**: `uv run pytest` passes completely, `uv run ruff check .`
+   without errors, no file outside the task's `Files` scope is modified (any
+   exception to this rule must be reported and approved before being applied —
+   see `docs/ADR.md` ADR-7 for a precedent), and no `TODO` remains in the
+   delivered code.
+4. If an acceptance criterion is impossible to satisfy as written: stop and
+   report it, do not silently reinterpret it (see `docs/ADR.md` for previous
+   cases where this rule was applied).
