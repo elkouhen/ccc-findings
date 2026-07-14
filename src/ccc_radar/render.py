@@ -946,9 +946,12 @@ def _kafka_layered_drawio_positions(
 ) -> dict[tuple[str, str], tuple[int, int]]:
     """Use the conventional two-band view whenever Kafka is present.
 
-    Services stay in the upper band even when consume/produce cycles or HTTP
-    calls exist; topics stay below. Topic order follows their producers whenever
-    possible, which keeps each producer-to-topic segment close to vertical.
+    Services are placed in dependency columns in the upper band: HTTP calls and
+    Kafka producer-to-consumer flows advance a service to a later column.
+    Topics stay below. Cyclic services remain in the first column, which keeps
+    the layout deterministic without pretending that a cycle is topologically
+    sortable. Topic order follows their producers whenever possible, which keeps
+    each producer-to-topic segment close to vertical.
     """
     left_margin = 24
     top_margin = 24
@@ -957,14 +960,29 @@ def _kafka_layered_drawio_positions(
     band_gap = 128
     positions: dict[tuple[str, str], tuple[int, int]] = {}
 
-    x = left_margin
-    service_height = 0
+    ranks = _service_dependency_ranks(ordered_services, visual_edges)
+    service_layers: dict[int, list[str]] = {}
     for service in ordered_services:
-        node = ("microservice", service)
-        width, height = node_dimensions[node]
-        positions[node] = (x, top_margin)
-        x += width + service_gap
-        service_height = max(service_height, height)
+        service_layers.setdefault(ranks[service], []).append(service)
+    for services in service_layers.values():
+        services.sort()
+
+    layer_heights = {
+        rank: sum(node_dimensions[("microservice", service)][1] for service in services)
+        + service_gap * max(0, len(services) - 1)
+        for rank, services in service_layers.items()
+    }
+    service_band_height = max(layer_heights.values(), default=0)
+    x = left_margin
+    for rank in sorted(service_layers):
+        services = service_layers[rank]
+        y = top_margin + (service_band_height - layer_heights[rank]) // 2
+        for service in services:
+            node = ("microservice", service)
+            width, height = node_dimensions[node]
+            positions[node] = (x, y)
+            y += height + service_gap
+        x += max(node_dimensions[("microservice", service)][0] for service in services) + service_gap
 
     producer_centers: dict[str, list[float]] = {topic: [] for topic in kafka_topics}
     for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
@@ -983,7 +1001,7 @@ def _kafka_layered_drawio_positions(
             topic,
         ),
     )
-    topic_y = top_margin + service_height + band_gap
+    topic_y = top_margin + service_band_height + band_gap
     next_x = left_margin
     for topic in ordered_topics:
         width, _height = node_dimensions[("kafka_topic", topic)]
@@ -996,6 +1014,57 @@ def _kafka_layered_drawio_positions(
         positions[("kafka_topic", topic)] = (x, topic_y)
         next_x = x + width + topic_gap
     return positions
+
+
+def _service_dependency_ranks(
+    ordered_services: list[str],
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+) -> dict[str, int]:
+    """Return deterministic topological ranks for dependencies between services.
+
+    Kafka visual edges are decomposed through their topic node, so their direct
+    producer-to-consumer dependencies are reconstructed before ranking.
+    """
+    services = set(ordered_services)
+    predecessors: dict[str, set[str]] = {service: set() for service in ordered_services}
+    successors: dict[str, set[str]] = {service: set() for service in ordered_services}
+    producers: dict[str, set[str]] = {}
+    consumers: dict[str, set[str]] = {}
+
+    for source_kind, source_name, target_kind, target_name, _label, kind in visual_edges:
+        if kind == "rest" and source_kind == "microservice" and target_kind == "microservice":
+            if source_name in services and target_name in services and source_name != target_name:
+                successors[source_name].add(target_name)
+                predecessors[target_name].add(source_name)
+        elif kind == "kafka" and source_kind == "microservice" and target_kind == "kafka_topic":
+            producers.setdefault(target_name, set()).add(source_name)
+        elif kind == "kafka" and source_kind == "kafka_topic" and target_kind == "microservice":
+            consumers.setdefault(source_name, set()).add(target_name)
+
+    for topic, topic_producers in producers.items():
+        for producer in topic_producers:
+            for consumer in consumers.get(topic, set()):
+                if producer != consumer:
+                    successors[producer].add(consumer)
+                    predecessors[consumer].add(producer)
+
+    indegree = {service: len(predecessors[service]) for service in ordered_services}
+    ranks = {service: 0 for service in ordered_services}
+    ready = sorted(service for service in ordered_services if indegree[service] == 0)
+    processed: set[str] = set()
+    while ready:
+        service = ready.pop(0)
+        processed.add(service)
+        for dependent in sorted(successors[service]):
+            ranks[dependent] = max(ranks[dependent], ranks[service] + 1)
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+        ready.sort()
+
+    # Members of cycles are deliberately left at rank zero. Their successors
+    # retain their own deterministic rank only when an acyclic path establishes it.
+    return ranks
 
 
 class EndpointHit(TypedDict):

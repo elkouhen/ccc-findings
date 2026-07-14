@@ -305,6 +305,18 @@ def test_render_graph_drawio_places_topics_below_services_in_mixed_graph() -> No
     assert min(topic_positions) > max(service_positions)
 
 
+def test_render_graph_drawio_layers_services_from_mixed_dependencies() -> None:
+    endpoints_by_service = _fixture()
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+
+    service_a = _vertex_for_service(root, "service-a")
+    service_b = _vertex_for_service(root, "service-b")
+    service_a_x = int(float(service_a.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
+    service_b_x = int(float(service_b.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
+
+    assert service_a_x < service_b_x
+
+
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
