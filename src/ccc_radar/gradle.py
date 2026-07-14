@@ -47,6 +47,16 @@ def clear_caches() -> None:
     _service_roots.cache_clear()
 
 
+def discover_gradle_service_roots(repo_root: Path) -> list[str]:
+    """Noms des microservices Gradle détectés sous `repo_root`.
+
+    Chaque nom correspond au premier segment de chemin d'une classe Java
+    Spring Boot exécutable détectée par `_service_roots`. L'ordre est trié
+    pour rester déterministe.
+    """
+    return sorted(_service_roots(str(repo_root.resolve())))
+
+
 def gradle_service_for_path(repo_root: Path, rel_path: str) -> str | None:
     """Service Gradle (BACKLOG-15 H1) : premier segment de `rel_path` s'il
     correspond à un répertoire qui contient, quelque part dans son

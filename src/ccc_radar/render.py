@@ -868,7 +868,7 @@ def render_workspace_json(
 
 def render_workspace_text(result: WorkspaceResult) -> str:
     if not result["services"]:
-        return "Aucun module Maven découvert (pom.xml introuvable)."
+        return "Aucun service workspace découvert (ni module Maven runtime, ni microservice Gradle Spring Boot)."
     lines = []
     for info in result["services"]:
         status = "indexé" if info["indexed"] else "non indexé"

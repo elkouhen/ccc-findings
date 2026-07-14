@@ -454,17 +454,17 @@ def graph_cmd(
 def microservices_cmd(
     root: Optional[Path] = typer.Argument(  # noqa: UP007
         None,
-        help="Répertoire parent à explorer (multi-modules Maven). Défaut : répertoire courant.",
+        help="Répertoire parent à explorer (workspace Maven/Gradle). Défaut : répertoire courant.",
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module par
-    `pom.xml`, nommé d'après son `artifactId`, classé `microservice`
-    (référence `spring-boot-maven-plugin`) ou `shared-module`. Lit en
-    lecture seule les projets déjà indexés (`cccr index`) pour compter
-    endpoints/findings par service — n'écrit jamais dans leurs bases.
-    Un module non indexé ou dont la base est incompatible est signalé en
-    avertissement, sans faire échouer la commande.
+    """Découvre les services fédérables sous `root` (BACKLOG-11 A2) :
+    modules Maven runtime/shared (`pom.xml`) et microservices Gradle
+    Spring Boot. Lit en lecture seule les projets déjà indexés
+    (`cccr index`) pour compter endpoints/findings par service — n'écrit
+    jamais dans leurs bases. Un service non indexé ou dont la base est
+    incompatible est signalé en avertissement, sans faire échouer la
+    commande.
     """
     root = root or Path.cwd()
     services = discover_maven_services(root)

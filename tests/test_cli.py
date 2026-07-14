@@ -730,6 +730,39 @@ def test_microservices_defaults_to_current_directory(
     assert by_name["order-service"]["kind"] == "microservice"
 
 
+def test_microservices_discovers_gradle_services(tmp_path: Path) -> None:
+    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    service.mkdir(parents=True)
+    (service / "BillingServiceMain.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class BillingServiceMain {
+    public static void main(String[] args) {
+        SpringApplication.run(BillingServiceMain.class, args);
+    }
+}
+""".strip()
+    )
+    with Store(tmp_path):
+        pass
+
+    result = runner.invoke(app, ["microservices", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["services"] == [
+        {
+            "name": "billing-service",
+            "path": str((tmp_path / "billing-service").resolve()),
+            "kind": "microservice",
+            "indexed": True,
+            "endpoint_count": 0,
+            "finding_count": 0,
+        }
+    ]
+
+
 def test_workspace_command_is_no_longer_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

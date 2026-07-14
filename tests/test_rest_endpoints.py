@@ -159,6 +159,42 @@ def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic(
     assert endpoints[0].topic_dynamic is True
 
 
+def test_parse_semgrep_endpoints_renders_request_param_as_query_string(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "OrderHistoryController.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping(path = "/orders")
+public class OrderHistoryController {
+  @RequestMapping(method = RequestMethod.GET)
+  public void getOrders(@RequestParam(name = "consumerId") String consumerId) {}
+}
+""".strip()
+    )
+    raw = """
+    {"results": [{
+        "check_id": "rules.cccr.rest.java.serve-get",
+        "path": "src/main/java/OrderHistoryController.java",
+        "start": {"line": 9}, "end": {"line": 10},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "role": "serve", "http_method": "GET",
+                                "framework": "spring"}}
+    }]}
+    """
+
+    endpoints = parse_semgrep_endpoints(raw, tmp_path)
+
+    assert len(endpoints) == 1
+    assert endpoints[0].topic == "GET /orders?consumerId"
+    assert endpoints[0].topic_dynamic is False
+
+
 @pytest.mark.integration
 def test_java_feign_client_methods_are_call_sites_not_server_routes() -> None:
     endpoints = run_semgrep_endpoints(
@@ -264,6 +300,41 @@ def test_java_webclient_fluent_calls_are_call_sites() -> None:
 
 
 @pytest.mark.integration
+def test_spring_cloud_gateway_and_webflux_routes_are_inferred() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO,
+        make_config(),
+        files=[
+            "app/java/GatewayConsumerConfiguration.java",
+            "app/java/GatewayOrderConfiguration.java",
+        ],
+    )
+
+    serves = {(endpoint.topic, endpoint.framework) for endpoint in endpoints if endpoint.role == "serve"}
+    calls = {(endpoint.topic, endpoint.framework) for endpoint in endpoints if endpoint.role == "call"}
+
+    assert serves == {
+        ("POST /consumers", "spring-cloud-gateway"),
+        ("PUT /consumers", "spring-cloud-gateway"),
+        ("POST /orders", "spring-cloud-gateway"),
+        ("PUT /orders", "spring-cloud-gateway"),
+        ("POST /orders/**", "spring-cloud-gateway"),
+        ("PUT /orders/**", "spring-cloud-gateway"),
+        ("GET /orders", "spring-cloud-gateway"),
+        ("GET /orders/{orderId}", "spring-webflux"),
+    }
+    assert calls == {
+        ("POST /consumers", "spring-cloud-gateway"),
+        ("PUT /consumers", "spring-cloud-gateway"),
+        ("POST /orders", "spring-cloud-gateway"),
+        ("PUT /orders", "spring-cloud-gateway"),
+        ("POST /orders/**", "spring-cloud-gateway"),
+        ("PUT /orders/**", "spring-cloud-gateway"),
+        ("GET /orders", "spring-cloud-gateway"),
+    }
+
+
+@pytest.mark.integration
 def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
@@ -275,7 +346,8 @@ def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> Non
     # + 3 call feign (PaymentClient) + 2 call feign résolus (ResolvedFeignClient)
     # + 2 call feign via config-server (CloudFeignClient)
     # + 3 call webclient (WebClientCaller)
-    assert len(endpoints) == 40
+    # + 8 serve gateway/webflux + 7 call gateway proxy routes
+    assert len(endpoints) == 55
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}
@@ -287,6 +359,8 @@ def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> Non
         "resttemplate",
         "feign",
         "webclient",
+        "spring-cloud-gateway",
+        "spring-webflux",
     }
 
 

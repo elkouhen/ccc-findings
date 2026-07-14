@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v3"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v5"
 
 
 def current_endpoint_inventory_signature() -> str:

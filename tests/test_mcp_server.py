@@ -265,6 +265,38 @@ def test_list_workspace_services_tool_discovers_and_flags_unindexed(tmp_path: Pa
     assert any("payment-service" in w for w in result["warnings"])
 
 
+def test_list_workspace_services_tool_discovers_gradle_services(tmp_path: Path) -> None:
+    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    service.mkdir(parents=True)
+    (service / "BillingServiceMain.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class BillingServiceMain {
+    public static void main(String[] args) {
+        SpringApplication.run(BillingServiceMain.class, args);
+    }
+}
+""".strip()
+    )
+    with Store(tmp_path):
+        pass
+
+    result = list_workspace_services(str(tmp_path))
+
+    assert result["services"] == [
+        {
+            "name": "billing-service",
+            "path": str((tmp_path / "billing-service").resolve()),
+            "kind": "microservice",
+            "indexed": True,
+            "endpoint_count": 0,
+            "finding_count": 0,
+        }
+    ]
+    assert any("billing-service" in warning and "obsolète" in warning for warning in result["warnings"])
+
+
 @pytest.mark.integration
 def test_graph_tool_with_workspace_root_reports_a_real_cross_service_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

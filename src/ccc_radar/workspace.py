@@ -1,16 +1,16 @@
-"""Fédération read-only d'un répertoire multi-services Maven (BACKLOG-11 A2).
+"""Fédération read-only d'un répertoire multi-services Maven/Gradle (BACKLOG-11 A2).
 
-Découvre les modules Maven d'un répertoire parent (chaque `pom.xml` est un
-module), leur donne un nom logique stable (`artifactId`), les classe en
-microservice déployable ou module partagé, puis lit — en lecture seule,
-jamais d'écriture (ADR-30) — les `.cccr/findings.db` déjà indexés pour
-construire une vue fédérée (`endpoints_by_service`/`findings_by_service`)
-consommable par `graph.py`.
+Découvre les services d'un répertoire parent : modules Maven (`pom.xml`) ou
+microservices Gradle détectés via leur classe Spring Boot principale. Puis
+lit — en lecture seule, jamais d'écriture (ADR-30) — les `.cccr/findings.db`
+déjà indexés pour construire une vue fédérée
+(`endpoints_by_service`/`findings_by_service`) consommable par `graph.py`.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 
+from ccc_radar.gradle import discover_gradle_service_roots
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.maven import is_runtime_service, parse_pom
 from ccc_radar.models import Finding, MessageEndpoint
@@ -45,15 +45,18 @@ def _dedupe_by_id(items: list[Finding] | list[MessageEndpoint]) -> list[Finding]
     return deduped
 
 
-def discover_maven_services(root: Path) -> list[DiscoveredService]:
-    """Explore `root` pour des `pom.xml` — chaque répertoire qui en porte un
-    est un module. Nom de service : `artifactId` du pom (repli : nom du
-    répertoire, si le pom est absent d'artifactId ou illisible). Classé
-    `microservice` si le pom référence `spring-boot-maven-plugin` (produit
-    un jar exécutable), `shared-module` sinon (bibliothèque interne) — voir
-    ADR-30. Triés par chemin pour un ordre stable et déterministe."""
+def _service_index_state(root: Path, service_dir: Path) -> tuple[bool, Path]:
     root = root.resolve()
     root_indexed = db_path(root).is_file()
+    direct_indexed = db_path(service_dir).is_file()
+    parent_indexed = root_indexed and service_dir != root
+    indexed = direct_indexed or parent_indexed
+    index_root = service_dir if direct_indexed or service_dir == root else root
+    return indexed, index_root
+
+
+def _discover_maven_services(root: Path) -> list[DiscoveredService]:
+    """Découvre les modules Maven runtime ou partagés sous `root`."""
     services: list[DiscoveredService] = []
     for pom_path in sorted(root.rglob("pom.xml")):
         module_dir = pom_path.parent
@@ -62,10 +65,7 @@ def discover_maven_services(root: Path) -> list[DiscoveredService]:
             continue
         name = artifact_id or module_dir.name
         kind = "microservice" if is_runtime_service(packaging, is_spring_boot_app) else "shared-module"
-        direct_indexed = db_path(module_dir).is_file()
-        parent_indexed = root_indexed and module_dir != root
-        indexed = direct_indexed or parent_indexed
-        index_root = module_dir if direct_indexed or module_dir == root else root
+        indexed, index_root = _service_index_state(root, module_dir)
         services.append(
             DiscoveredService(
                 name=name,
@@ -76,6 +76,50 @@ def discover_maven_services(root: Path) -> list[DiscoveredService]:
             )
         )
     return services
+
+
+def _discover_gradle_services(root: Path, seen_paths: set[Path]) -> list[DiscoveredService]:
+    """Découvre les microservices Gradle de premier niveau sous `root`.
+
+    Contrairement à Maven, on ne tente pas de modéliser des `shared-module`
+    Gradle ici : le besoin utilisateur porte sur les services runtime
+    visibles via `cccr microservices`.
+    """
+    services: list[DiscoveredService] = []
+    for service_name in discover_gradle_service_roots(root):
+        service_dir = (root / service_name).resolve()
+        if service_dir in seen_paths or not service_dir.is_dir():
+            continue
+        indexed, index_root = _service_index_state(root, service_dir)
+        services.append(
+            DiscoveredService(
+                name=service_name,
+                path=service_dir,
+                kind="microservice",
+                indexed=indexed,
+                index_root=index_root,
+            )
+        )
+    return services
+
+
+def discover_workspace_services(root: Path) -> list[DiscoveredService]:
+    """Découvre les services fédérables sous `root`.
+
+    - Maven : un service/module par `pom.xml` runtime.
+    - Gradle : un microservice par répertoire de premier niveau contenant une
+      classe Java Spring Boot exécutable, directement ou dans un sous-projet.
+    """
+    root = root.resolve()
+    services = _discover_maven_services(root)
+    seen_paths = {service.path.resolve() for service in services}
+    services.extend(_discover_gradle_services(root, seen_paths))
+    return sorted(services, key=lambda service: str(service.path))
+
+
+def discover_maven_services(root: Path) -> list[DiscoveredService]:
+    """Compatibilité historique : alias vers `discover_workspace_services`."""
+    return discover_workspace_services(root)
 
 
 def load_federation(services: list[DiscoveredService]) -> FederationResult:

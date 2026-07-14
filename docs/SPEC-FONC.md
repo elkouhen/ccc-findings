@@ -277,11 +277,15 @@ them without an explicit handler that a rule can use:
 - `@RequestMapping(...)` without `method=` on a Java method → `ANY /path`;
 - `@RepositoryRestResource(path = "...")` → `GET/POST /path` and
   `GET/PUT/PATCH/DELETE /path/{id}` endpoints;
+- Spring Cloud Gateway `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`
+  → one exposed `serve` route and one outbound `call` route per proxy route;
+- WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)` →
+  exposed `serve` routes;
 - `@EnableSwagger2` → `GET /swagger-ui.html`;
 - `management.endpoints.web.exposure.include=*` → `GET /actuator/**`.
 These endpoints stay tagged by `framework` (`spring`, `spring-data-rest`,
-`swagger-ui`, `spring-actuator`) so they remain distinguishable from explicit
-application routes.
+`spring-cloud-gateway`, `spring-webflux`, `swagger-ui`, `spring-actuator`) so
+they remain distinguishable from explicit application routes.
 
 `--json` rendering: list of `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
@@ -307,13 +311,13 @@ included: synchronous REST calls detected inside a Kafka consumer handler
 range).
 
 For the inter-service topology, two sources are possible, tried in this order:
-1. **Without `--workspace`**: if the index covers a multi-module Maven
-  directory (`cccr index` run at the parent directory, with endpoints
+1. **Without `--workspace`**: if the index covers a multi-module Maven or
+  Gradle directory (`cccr index` run at the parent directory, with endpoints
   assigned to a module during indexing), endpoints are grouped by module and
   the graph is built directly from that single index —
   no federation needed for a monorepo.
-2. **With `--workspace ROOT`**: also federates Maven microservices under `ROOT`,
-  indexed **separately** (read-only —
+2. **With `--workspace ROOT`**: also federates Maven/Gradle microservices
+  under `ROOT`, indexed **separately** (read-only —
   `discover_maven_services`/`load_federation`) — the path for services that
   live in genuinely separate repos.
 
@@ -325,8 +329,9 @@ Both sources feed the same algorithm (`graph.build_graph`) and report:
 - **outbound_calls_in_consumers**: synchronous REST calls detected inside a
   Kafka consumer handler of the current project.
 
-If neither is available (non-Maven repo without `--workspace`, or no Maven
-module detected), `services`/`nodes`/`edges` remain empty, with a `note`
+If neither is available (repo without module attribution and without
+`--workspace`, or no federable service detected), `services`/`nodes`/`edges`
+remain empty, with a `note`
 explicitly saying so (see ADR-27) rather than making the absence of a result
 ambiguous.
 
@@ -504,7 +509,7 @@ the **Java/Spring microservices extension**.
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
-| `list_workspace_services(root)` | `WorkspaceResult` | Maven module discovery + endpoint/finding counts per service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
+| `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` |
 
 `search` adds to each code result:
@@ -662,7 +667,10 @@ best-effort scanner logic now:
    without a dedicated Semgrep rule, with best-effort resolution of local
    `@Value` fields, concatenated literal suffixes, and Spring Cloud Config
    Server files such as `configurations/order-service.yml`;
-3. keeps a `.put(...)` match as a REST call only when the file actually shows a
+3. infers Spring Cloud Gateway proxy routes as both exposed `serve` endpoints
+   and outbound `call` endpoints, and WebFlux `RouterFunctions.route(...)`
+   declarations as exposed `serve` routes;
+4. keeps a `.put(...)` match as a REST call only when the file actually shows a
    `RestTemplate` footprint, which removes `Map.put(...)` false positives.
 Scope: Java only — target stack is Java + Spring + Maven. Remaining gap:
 `WebClient` chain split across several

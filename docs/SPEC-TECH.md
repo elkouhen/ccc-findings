@@ -462,11 +462,16 @@ concerned files. Covered cases:
 - `@EnableSwagger2`: endpoint `GET /swagger-ui.html`;
 - `RestTemplate.exchange(urlExpr, HttpMethod.X, ...)`: `call/rest` endpoint
   inferred directly from Java source when no Semgrep rule matches it;
+- Spring Cloud Gateway `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`:
+  infer both the exposed `serve/rest` route and the proxy `call/rest` route;
+- WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)`:
+  infer exposed `serve/rest` routes;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/
   `.yaml`: endpoint `GET /actuator/**`.
 These endpoints reuse the same `MessageEndpoint` model as Semgrep matches, but
-with dedicated `framework` values (`spring-data-rest`, `swagger-ui`,
-`spring-actuator`) so they remain distinguishable in rendering and graph logic.
+with dedicated `framework` values (`spring-data-rest`, `spring-cloud-gateway`,
+`spring-webflux`, `swagger-ui`, `spring-actuator`) so they remain
+distinguishable in rendering and graph logic.
 
 **Kafka** (`system: kafka`) — `_extract_kafka_topic(snippet, repo_root,
 source_path)`: same literal extraction as REST (`_find_first_literal`,
@@ -759,14 +764,16 @@ reading shared between `workspace.py` and `scanner.py`:
   `scanner.py` (§4bis), not by `workspace.py` (see §6bis).
 
 - `discover_maven_services(root: Path) -> list[DiscoveredService]` —
-  `root.rglob("pom.xml")`, sorted by path. For each `pom.xml`: `artifactId`
-  (XML, with or without declared Maven namespace, via `maven.parse_pom`) as
-  service name, falling back to directory name if the pom is unreadable /
-  malformed / lacks `artifactId`. Non-runtime `packaging=pom` poms are ignored.
-  `kind = "microservice"` if `parse_pom` reports a Spring Boot signal,
-  otherwise `"shared-module"`. `indexed` is true if `<module>/.cccr/findings.db`
-  exists, or if `<root>/.cccr/findings.db` exists (case of a Maven monorepo
-  indexed only once at the parent).
+  compatibility wrapper now delegating to workspace discovery. It still
+  returns Maven modules exactly as before, but also adds Gradle microservices
+  detected from top-level directories containing a Spring Boot `main()`
+  somewhere in their subtree (`gradle.discover_gradle_service_roots`).
+  Maven entries still come from `root.rglob("pom.xml")`, sorted by path, with
+  `artifactId` (fallback: directory name) and `kind =
+  "microservice"|"shared-module"` according to `maven.parse_pom`; Gradle
+  entries are always `kind="microservice"`. `indexed` is true if
+  `<service>/.cccr/findings.db` exists, or if `<root>/.cccr/findings.db`
+  exists (mono-indexed parent workspace).
 - `load_federation(services) -> FederationResult` — for each indexed service,
   open `Store(service.index_root, readonly=True)`: either the module database,
   or the parent mono-indexed one. In the parent-database case, findings and

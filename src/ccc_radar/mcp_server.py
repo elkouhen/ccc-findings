@@ -219,13 +219,12 @@ def graph(workspace_root: str | None = None) -> GraphResult:
 
 @mcp.tool()
 def list_workspace_services(root: str) -> WorkspaceResult:
-    """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module
-    par `pom.xml`, classé `microservice` (référence
-    `spring-boot-maven-plugin`) ou `shared-module`. Lit en lecture seule les
-    projets déjà indexés (`cccr index`) pour compter endpoints/findings par
-    service — n'écrit jamais dans leurs bases. Utiliser avant `graph` pour
-    vérifier quels services d'un répertoire multi-services sont prêts à
-    être fédérés.
+    """Découvre les services fédérables sous `root` (BACKLOG-11 A2) :
+    modules Maven runtime/shared et microservices Gradle Spring Boot.
+    Lit en lecture seule les projets déjà indexés (`cccr index`) pour
+    compter endpoints/findings par service — n'écrit jamais dans leurs
+    bases. Utiliser avant `graph` pour vérifier quels services d'un
+    répertoire multi-services sont prêts à être fédérés.
     """
     services = discover_maven_services(Path(root))
     federation = load_federation(services)

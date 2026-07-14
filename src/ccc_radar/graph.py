@@ -2,6 +2,7 @@
 d'endpoints déjà indexés — aucune table de graphe en base (ADR-27)."""
 
 from dataclasses import dataclass
+import re
 
 from ccc_radar.models import MessageEndpoint
 
@@ -42,7 +43,19 @@ def group_endpoints_by_module(
 
 
 def _split_path(path: str) -> list[str]:
-    return [segment for segment in path.split("/") if segment]
+    return [segment for segment in path.partition("?")[0].split("/") if segment]
+
+
+def _matches_wildcard_path(pattern_segments: list[str], concrete_segments: list[str]) -> bool:
+    if not pattern_segments or pattern_segments[-1] != "**":
+        return False
+    prefix = pattern_segments[:-1]
+    if len(concrete_segments) <= len(prefix):
+        return False
+    return all(
+        _segment_matches(pattern_seg, concrete_seg)
+        for pattern_seg, concrete_seg in zip(prefix, concrete_segments)
+    )
 
 
 def _is_template_segment(segment: str) -> bool:
@@ -53,6 +66,31 @@ def _segment_matches(call_segment: str, serve_segment: str) -> bool:
     if call_segment == serve_segment:
         return True
     return _is_template_segment(serve_segment) or _is_template_segment(call_segment)
+
+
+_SERVICE_URL_GETTER_RE = re.compile(r"\.get([A-Z][A-Za-z0-9]*)ServiceUrl\(")
+_SERVICE_URL_HOST_RE = re.compile(r'https?://([a-z0-9-]+(?:-[a-z0-9-]+)*-service)\b', re.IGNORECASE)
+
+
+def _camel_to_kebab(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
+
+
+def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
+    getter_match = _SERVICE_URL_GETTER_RE.search(call.snippet)
+    if getter_match is not None:
+        return f"{_camel_to_kebab(getter_match.group(1))}-service"
+    host_match = _SERVICE_URL_HOST_RE.search(call.snippet)
+    if host_match is not None:
+        return host_match.group(1).lower()
+    return None
+
+
+def _service_matches_hint(service_name: str, hint: str | None) -> bool:
+    if hint is None:
+        return True
+    normalized = service_name.lower()
+    return normalized == hint or normalized.endswith(f"-{hint}") or hint in normalized
 
 
 def paths_match(call_topic: str, serve_topic: str) -> bool:
@@ -68,12 +106,18 @@ def paths_match(call_topic: str, serve_topic: str) -> bool:
 
     call_segments = _split_path(call_path)
     serve_segments = _split_path(serve_path)
-    if not call_segments or len(call_segments) > len(serve_segments):
+    if not call_segments:
         return False
-    return all(
-        _segment_matches(call_seg, serve_seg)
-        for call_seg, serve_seg in zip(call_segments, serve_segments)
-    )
+    if len(call_segments) == len(serve_segments):
+        return all(
+            _segment_matches(call_seg, serve_seg)
+            for call_seg, serve_seg in zip(call_segments, serve_segments)
+        )
+    if _matches_wildcard_path(call_segments, serve_segments):
+        return True
+    if _matches_wildcard_path(serve_segments, call_segments):
+        return True
+    return False
 
 
 def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[GraphEdge]:
@@ -97,6 +141,8 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     for call_service, call in calls:
         for serve_service, serve in serves:
             if call_service == serve_service:
+                continue
+            if not _service_matches_hint(serve_service, _rest_target_service_hint(call)):
                 continue
             if paths_match(call.topic, serve.topic):
                 key = ("rest", call_service, serve_service, call.id, serve.id)

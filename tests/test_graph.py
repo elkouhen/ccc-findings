@@ -19,6 +19,7 @@ def make_endpoint(
     system: str = "rest",
     framework: str | None = None,
     module: str | None = None,
+    snippet: str = "",
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
@@ -31,7 +32,7 @@ def make_endpoint(
         path=path,
         start_line=start_line,
         end_line=end_line,
-        snippet="",
+        snippet=snippet,
         module=module,
     )
 
@@ -64,8 +65,8 @@ def test_paths_match_rejects_different_segment_count() -> None:
     assert not paths_match("GET /orders/123/status", "GET /orders/{id}")
 
 
-def test_paths_match_allows_call_prefix_shorter_than_serve() -> None:
-    assert paths_match("GET /orders", "GET /orders/{id}")
+def test_paths_match_rejects_shorter_literal_call_without_wildcard() -> None:
+    assert not paths_match("GET /orders", "GET /orders/{id}")
 
 
 def test_paths_match_rejects_fully_dynamic_call() -> None:
@@ -74,6 +75,16 @@ def test_paths_match_rejects_fully_dynamic_call() -> None:
 
 def test_paths_match_rejects_unrelated_paths() -> None:
     assert not paths_match("GET /payments/{id}", "GET /orders/{id}")
+
+
+def test_paths_match_ignores_query_string_for_path_comparison() -> None:
+    assert paths_match("GET /orders", "GET /orders?consumerId")
+    assert not paths_match("GET /orders/{id}", "GET /orders?consumerId")
+
+
+def test_paths_match_allows_gateway_wildcard_to_match_deeper_serve_routes() -> None:
+    assert paths_match("POST /orders/**", "POST /orders/{id}/cancel")
+    assert not paths_match("POST /orders/**", "POST /orders")
 
 
 def test_build_graph_creates_rest_edges_between_distinct_services_only() -> None:
@@ -126,6 +137,39 @@ def test_build_graph_deduplicates_duplicate_edges() -> None:
     edges = build_graph({"service-a": [call, call], "service-b": [serve, serve]})
 
     assert len(edges) == 1
+
+
+def test_build_graph_uses_service_hint_from_call_snippet_to_disambiguate_targets() -> None:
+    call = make_endpoint(
+        "call",
+        "GET /orders/{orderId}",
+        "gateway/Proxy.java",
+        module="api-gateway",
+        snippet='webClient.get().uri(orderDestinations.getOrderServiceUrl() + "/orders/{orderId}", orderId)',
+    )
+    order_service = make_endpoint(
+        "serve",
+        "GET /orders/{orderId}",
+        "order/Controller.java",
+        module="ftgo-order-service",
+    )
+    order_history_service = make_endpoint(
+        "serve",
+        "GET /orders/{orderId}",
+        "history/Controller.java",
+        module="ftgo-order-history-service",
+    )
+
+    edges = build_graph(
+        {
+            "ftgo-api-gateway": [call],
+            "ftgo-order-service": [order_service],
+            "ftgo-order-history-service": [order_history_service],
+        }
+    )
+
+    assert len(edges) == 1
+    assert edges[0].to_service == "ftgo-order-service"
 
 
 def test_find_outbound_calls_in_consumers_flags_call_inside_handler_range() -> None:

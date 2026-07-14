@@ -241,8 +241,12 @@ _CLASS_DECL_RE = re.compile(
     r"(?:class|interface|record)\s+\w+"
 )
 _MAPPING_ANNOTATION_RE = re.compile(r"@\w+Mapping\s*(?:\(([^)]*)\))?")
+_MAPPING_ANNOTATION_BLOCK_RE = re.compile(r"@\w+Mapping\s*(?:\((.*?)\))?", re.DOTALL)
 _REQUEST_MAPPING_RE = re.compile(r"@RequestMapping\s*(?:\(([^)]*)\))?")
 _REQUEST_MAPPING_BLOCK_RE = re.compile(r"@RequestMapping\s*(?:\((.*?)\))?", re.DOTALL)
+_REQUEST_PARAM_RE = re.compile(
+    r"@RequestParam\s*(?:\((.*?)\))?\s+[\w<>\[\], ?]+\s+(\w+)", re.DOTALL
+)
 _NON_PATH_MAPPING_ATTRS = {"method", "produces", "consumes", "headers", "params", "name"}
 _REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]*)\))?")
 _FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
@@ -264,6 +268,17 @@ _REST_TEMPLATE_CALL_RE = re.compile(
 )
 _REST_TEMPLATE_EXCHANGE_RE = re.compile(
     r"\.exchange\(\s*(.+?)\s*,\s*(?:HttpMethod\.)?([A-Z]+)\s*,",
+    re.DOTALL,
+)
+_GATEWAY_ROUTE_PATH_RE = re.compile(r'\.path\(\s*"([^"]+)"\s*\)')
+_GATEWAY_ROUTE_METHOD_RE = re.compile(r'\.method\(\s*(?:"([A-Z]+)"|HttpMethod\.([A-Z]+))\s*\)')
+_GATEWAY_ROUTE_URI_RE = re.compile(r"\.uri\(\s*([^)]+?)\s*\)", re.DOTALL)
+_ROUTER_FUNCTION_ROUTE_RE = re.compile(
+    r"(?:RouterFunctions\.)?route\(\s*(?:RequestPredicates\.)?([A-Z]+)\(\s*\"([^\"]+)\"\s*\)",
+    re.DOTALL,
+)
+_ROUTER_FUNCTION_AND_ROUTE_RE = re.compile(
+    r"\.andRoute\(\s*(?:RequestPredicates\.)?([A-Z]+)\(\s*\"([^\"]+)\"\s*\)",
     re.DOTALL,
 )
 
@@ -471,21 +486,56 @@ def _extract_rest_path(
     if repo_root is not None and source_path is not None and start_line is not None:
         prefix, prefix_dynamic = _class_base_path(str(repo_root), source_path, start_line)
 
-    literal, method_dynamic = _find_first_literal(snippet)
-    if literal is None:
-        first_line = snippet.splitlines()[0] if snippet else ""
-        match = _MAPPING_ANNOTATION_RE.search(first_line)
-        if match is None or not _mapping_args_have_only_non_path_attrs(match.group(1) or ""):
+    lines = snippet.splitlines()
+    decl_idx = _next_declaration_line(lines, 0)
+    annotation_block = "\n".join(lines[:decl_idx]) if decl_idx is not None else snippet
+    match = _MAPPING_ANNOTATION_BLOCK_RE.search(annotation_block)
+    mapping_args = (match.group(1) or "") if match is not None else None
+
+    if mapping_args is not None:
+        literal, method_dynamic = _find_first_literal(mapping_args)
+        if literal is None:
+            if not _mapping_args_have_only_non_path_attrs(mapping_args or ""):
+                return "<dynamic>", True
+            literal, method_dynamic = "", False
+    else:
+        literal, method_dynamic = _find_first_literal(snippet)
+        if literal is None:
             return "<dynamic>", True
-        literal, method_dynamic = "", False  # annotation sans valeur : hérite du préfixe
 
     if prefix_dynamic:
         return "<dynamic>", True
 
     method_path = _normalize_rest_path(literal) if literal else "/"
-    if not prefix:
-        return method_path, method_dynamic
-    return _join_rest_paths(_normalize_rest_path(prefix), method_path), method_dynamic
+    route = method_path if not prefix else _join_rest_paths(_normalize_rest_path(prefix), method_path)
+    query_params = _extract_request_param_names(snippet)
+    if query_params:
+        route = _with_query_params(route, query_params)
+    return route, method_dynamic
+
+
+def _extract_request_param_names(snippet: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in _REQUEST_PARAM_RE.finditer(snippet):
+        args = match.group(1) or ""
+        name = (
+            _named_string_arg(args, "name")
+            or _named_string_arg(args, "value")
+            or _find_first_literal(args)[0]
+            or match.group(2)
+        )
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _with_query_params(route: str, params: list[str]) -> str:
+    if not params or route == "<dynamic>":
+        return route
+    return f"{route}?{'&'.join(params)}"
 
 
 def _join_rest_paths(prefix: str, suffix: str) -> str:
@@ -893,6 +943,85 @@ def _infer_resttemplate_exchange_endpoints(
     return inferred
 
 
+def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    inferred: list[MessageEndpoint] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if ".route(" not in line:
+            idx += 1
+            continue
+        block_lines = [line]
+        block_end = idx
+        while block_end + 1 < len(lines):
+            next_line = lines[block_end + 1]
+            if ".route(" in next_line:
+                break
+            block_end += 1
+            block_lines.append(next_line)
+            if ".build()" in next_line:
+                break
+        snippet = "\n".join(block_lines)
+        path_match = _GATEWAY_ROUTE_PATH_RE.search(snippet)
+        method_match = _GATEWAY_ROUTE_METHOD_RE.search(snippet)
+        uri_match = _GATEWAY_ROUTE_URI_RE.search(snippet)
+        if path_match is not None and method_match is not None and uri_match is not None:
+            route = _normalize_rest_path(path_match.group(1))
+            http_method = method_match.group(1) or method_match.group(2)
+            for role in ("serve", "call"):
+                inferred.append(
+                    _build_endpoint(
+                        repo_root,
+                        rel_path,
+                        idx + 1,
+                        block_end + 1,
+                        role,
+                        "rest",
+                        f"{http_method} {route}",
+                        "spring-cloud-gateway",
+                        snippet,
+                    )
+                )
+        idx = block_end + 1
+    return inferred
+
+
+def _infer_spring_webflux_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    inferred: list[MessageEndpoint] = []
+    for pattern in (_ROUTER_FUNCTION_ROUTE_RE, _ROUTER_FUNCTION_AND_ROUTE_RE):
+        for match in pattern.finditer(text):
+            http_method = match.group(1)
+            route = _normalize_rest_path(match.group(2))
+            line_no = text.count("\n", 0, match.start()) + 1
+            snippet = text.splitlines()[line_no - 1].strip()
+            inferred.append(
+                _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    line_no,
+                    line_no,
+                    "serve",
+                    "rest",
+                    f"{http_method} {route}",
+                    "spring-webflux",
+                    snippet,
+                )
+            )
+    return inferred
+
+
 def _resolve_topic_expression(
     expr: str, repo_root: Path, source_path: str
 ) -> tuple[str, bool]:
@@ -995,6 +1124,8 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_spring_data_rest_endpoints(repo_root, rel_path)
                 + _infer_swagger_endpoint(repo_root, rel_path)
                 + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
+                + _infer_spring_cloud_gateway_routes(repo_root, rel_path)
+                + _infer_spring_webflux_routes(repo_root, rel_path)
                 + _infer_message_builder_kafka_producers(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint

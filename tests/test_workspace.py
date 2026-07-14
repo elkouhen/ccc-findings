@@ -5,7 +5,7 @@ import pytest
 
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 from ccc_radar.store import Store, StoreError
-from ccc_radar.workspace import discover_maven_services, load_federation
+from ccc_radar.workspace import discover_maven_services, discover_workspace_services, load_federation
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
@@ -170,6 +170,29 @@ public class ShippingApplication {
     services = discover_maven_services(tmp_path)
 
     assert [service.name for service in services] == ["shipping-service"]
+
+
+def test_discover_workspace_services_detects_gradle_microservices(tmp_path: Path) -> None:
+    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    service.mkdir(parents=True)
+    (service / "BillingServiceMain.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class BillingServiceMain {
+    public static void main(String[] args) {
+        SpringApplication.run(BillingServiceMain.class, args);
+    }
+}
+""".strip()
+    )
+    (tmp_path / "billing-service" / "billing-service-domain").mkdir(parents=True)
+
+    services = discover_workspace_services(tmp_path)
+
+    assert [service.name for service in services] == ["billing-service"]
+    assert services[0].kind == "microservice"
+    assert services[0].path == (tmp_path / "billing-service").resolve()
 
 
 def test_load_federation_reports_stale_endpoint_inventory_as_warning(workspace_copy: Path) -> None:
