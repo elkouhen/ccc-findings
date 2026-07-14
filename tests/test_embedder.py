@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from cccf.embedder import Embedder, finding_to_text, make_embedder
-from cccf.models import Finding
+from ccc_radar.embedder import Embedder, finding_to_text, make_embedder
+from ccc_radar.models import Finding
 
 
 def make_finding() -> Finding:
@@ -35,7 +35,7 @@ def test_finding_to_text_exact_format() -> None:
 
 
 def test_make_embedder_reuses_cached_instances(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     first = make_embedder("test-cache-model")
     second = make_embedder("test-cache-model")

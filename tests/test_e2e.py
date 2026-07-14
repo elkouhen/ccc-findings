@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
+from ccc_radar.cli import app
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -20,23 +20,23 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
     repo = tmp_path / "vuln_repo"
     shutil.copytree(VULN_REPO, repo)
     monkeypatch.chdir(repo)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     init_result = runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    assert init_result.exit_code == 0, f"cccf init a échoué : {init_result.output}"
-    assert (repo / ".cccf" / "config.yml").is_file(), (
-        "cccf init n'a pas créé .cccf/config.yml"
+    assert init_result.exit_code == 0, f"cccr init a échoué : {init_result.output}"
+    assert (repo / ".cccr" / "config.yml").is_file(), (
+        "cccr init n'a pas créé .cccr/config.yml"
     )
 
     index_result = runner.invoke(app, ["index"])
-    assert index_result.exit_code == 0, f"cccf index a échoué : {index_result.output}"
+    assert index_result.exit_code == 0, f"cccr index a échoué : {index_result.output}"
     assert "+findings=4" in index_result.output, (
-        f"cccf index n'a pas trouvé les 4 findings attendus : {index_result.output}"
+        f"cccr index n'a pas trouvé les 4 findings attendus : {index_result.output}"
     )
 
     search_result = runner.invoke(app, ["findings", "injection sql", "--json"])
     assert search_result.exit_code == 0, (
-        f"cccf findings a échoué : {search_result.output}"
+        f"cccr findings a échoué : {search_result.output}"
     )
     hits = json.loads(search_result.output)
     sql_hit = next((h for h in hits if h["path"] == "app/db.py"), None)
@@ -55,7 +55,7 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
 
     reindex_result = runner.invoke(app, ["index"])
     assert reindex_result.exit_code == 0, (
-        f"cccf index (après correction) a échoué : {reindex_result.output}"
+        f"cccr index (après correction) a échoué : {reindex_result.output}"
     )
     assert "-findings=1" in reindex_result.output, (
         f"la correction de app/db.py n'a pas fait disparaître son finding : "
@@ -66,7 +66,7 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
         app, ["findings", "injection sql", "--path", "app/db.py", "--json"]
     )
     assert search_after_fix.exit_code == 0, (
-        f"cccf findings (après correction) a échoué : {search_after_fix.output}"
+        f"cccr findings (après correction) a échoué : {search_after_fix.output}"
     )
     hits_after_fix = json.loads(search_after_fix.output)
     assert hits_after_fix == [], (
@@ -76,7 +76,7 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
 
     summary_result = runner.invoke(app, ["summary", "--json"])
     assert summary_result.exit_code == 0, (
-        f"cccf summary a échoué : {summary_result.output}"
+        f"cccr summary a échoué : {summary_result.output}"
     )
     summary_data = json.loads(summary_result.output)
     assert summary_data["by_severity"] == {"ERROR": 1, "WARNING": 2}, (

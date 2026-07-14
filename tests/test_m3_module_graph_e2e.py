@@ -1,4 +1,4 @@
-"""BACKLOG-13 M3 — `cccf graph`/`cccf flow` sans `--workspace` détectent de
+"""BACKLOG-13 M3 — `cccr graph`/`cccr flow` sans `--workspace` détectent de
 vrais cycles/hotspots (ou attribuent un site à son module) à partir d'un
 **seul** index couvrant un répertoire parent multi-modules Maven — pas de
 fédération multi-dépôts (A2/K7) nécessaire. Réutilise la fixture
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
+from ccc_radar.cli import app
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REST_CYCLE_WORKSPACE = FIXTURES_DIR / "rest_cycle_workspace"
@@ -27,7 +27,7 @@ runner = CliRunner()
 def single_index_cycle_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(REST_CYCLE_WORKSPACE, dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest)
     init_result = runner.invoke(app, ["init", "--rules", "service-x/rules/java.yaml"])
     assert init_result.exit_code == 0
@@ -58,7 +58,7 @@ def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
 ) -> None:
     """Non-régression : un repo sans layout Maven multi-modules continue de
     renvoyer la note explicite (cycles/hotspots vides), même après M1/M2/M3."""
-    from cccf.store import Store
+    from ccc_radar.store import Store
 
     monkeypatch.chdir(tmp_path)
     with Store(tmp_path):
@@ -77,6 +77,7 @@ def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
 def single_index_kafka_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest)
     init_result = runner.invoke(app, ["init", "--rules", "order-service/rules/java.yaml"])
     assert init_result.exit_code == 0

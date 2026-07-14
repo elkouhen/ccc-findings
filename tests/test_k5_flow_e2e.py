@@ -1,4 +1,4 @@
-"""BACKLOG-10 K5 — `cccf flow` de bout en bout : deux microservices indexés
+"""BACKLOG-10 K5 — `cccr flow` de bout en bout : deux microservices indexés
 séparément (producteur Kafka dans l'un, consommateur dans l'autre), fédérés
 via `--workspace` (BACKLOG-11 A2), et un finding qui recouvre le site du
 producteur ressort attaché à son endpoint (CA1)."""
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
+from ccc_radar.cli import app
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 KAFKA_WORKSPACE = FIXTURES_DIR / "kafka_workspace"
@@ -24,7 +24,7 @@ def test_flow_resolves_topic_across_federated_services_with_overlapping_finding(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
@@ -43,7 +43,7 @@ def test_flow_resolves_topic_across_federated_services_with_overlapping_finding(
     producer_site = sites_by_service["order-service"]
     assert producer_site["role"] == "produce"
     assert producer_site["path"] == "app/OrderProducer.java"
-    assert producer_site["finding_rule_ids"] == ["rules.cccf.demo.kafka-send-fire-and-forget"]
+    assert producer_site["finding_rule_ids"] == ["rules.cccr.demo.kafka-send-fire-and-forget"]
 
     consumer_site = sites_by_service["payment-service"]
     assert consumer_site["role"] == "consume"
@@ -58,7 +58,7 @@ def test_flow_reports_warning_when_a_federated_service_is_not_indexed(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
     assert runner.invoke(app, ["index"]).exit_code == 0
@@ -80,17 +80,17 @@ def test_flow_reports_warning_when_a_federated_service_is_not_indexed(
 def test_flow_falls_back_to_similarity_when_textual_resolution_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-10 K3 : quand `resolve_topic` échoue, `cccf flow` retente via
+    """BACKLOG-10 K3 : quand `resolve_topic` échoue, `cccr flow` retente via
     `resolve_topic_by_similarity` — vérifié en substituant cette fonction
     (déjà testée isolément dans tests/test_flow.py avec des vecteurs
     contrôlés) pour ne pas dépendre du comportement d'un embedder réel/faux
     sur du texte arbitraire (non calibré, voir test_flow.py)."""
-    import cccf.cli as cli_module
+    import ccc_radar.cli as cli_module
 
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     assert runner.invoke(app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
     assert runner.invoke(app, ["index"]).exit_code == 0
@@ -115,7 +115,7 @@ def test_flow_unresolved_topic_exits_with_error(
     échoue, et le repli par similarité (K3) échoue lui aussi de façon
     déterministe (aucun endpoint embeddé) — pas de dépendance à un seuil de
     similarité calibré sur un modèle réel."""
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "rules").mkdir()
     (tmp_path / "rules" / "empty.yaml").write_text("rules: []\n")

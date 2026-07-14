@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
-from cccf.models import Finding
-from cccf.store import Store
+from ccc_radar.models import Finding
+from ccc_radar.store import Store
 
 _SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
 
@@ -21,7 +21,7 @@ _SEVERITY_BOOST: dict[str | None, float] = {
     "ERROR": 0.15,
 }
 
-# ccc truncates to --limit before cccf ever sees the results, so a relevant
+# ccc truncates to --limit before cccr ever sees the results, so a relevant
 # hit just outside the top N would never be considered for the severity
 # boost. Over-fetch, boost, re-sort, then truncate to the caller's limit.
 _OVERFETCH_FACTOR = 3
@@ -44,7 +44,7 @@ class FindingRef(TypedDict):
 
 
 class CodeHitWithFindings(TypedDict):
-    """Shape returned by `cccf search` (--json) and the `search_code_with_findings` MCP tool."""
+    """Shape returned by `cccr search` (--json) and the `search_code_with_findings` MCP tool."""
 
     path: str
     start_line: int

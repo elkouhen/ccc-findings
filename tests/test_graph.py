@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cccf.graph import (
+from ccc_radar.graph import (
     build_graph,
     find_cycles,
     find_hotspots,
@@ -10,8 +10,8 @@ from cccf.graph import (
     paths_match,
     rank_hotspots,
 )
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
-from cccf.store import Store
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.store import Store
 
 
 def make_endpoint(
@@ -45,7 +45,7 @@ def make_finding(
 ) -> Finding:
     return Finding(
         id=f"finding-{path}-{start_line}",
-        rule_id="cccf.liveness.requests-no-timeout",
+        rule_id="cccr.liveness.requests-no-timeout",
         severity=severity,
         message="Appel HTTP sans timeout.",
         path=path,

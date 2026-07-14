@@ -1,7 +1,7 @@
 [project]
-name = "ccc-findings"
+name = "ccc-radar"
 version = "0.1.0"
-description = "Index Semgrep interrogeable par LLM, combiné à cocoindex-code"
+description = "Indexe findings, code et signaux d'architecture interrogeables par agent"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cccf = "cccf.cli:app"
+cccr = "ccc_radar.cli:app"
 
 [dependency-groups]
 dev = [
@@ -27,7 +27,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cccf"]
+packages = ["src/ccc_radar"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not slow'"

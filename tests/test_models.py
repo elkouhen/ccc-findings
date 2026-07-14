@@ -1,4 +1,4 @@
-from cccf.models import compute_finding_id
+from ccc_radar.models import compute_finding_id
 
 
 def test_compute_finding_id_ignores_indentation_differences() -> None:

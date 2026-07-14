@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
-from cccf.store import Store, StoreError
-from cccf.workspace import discover_maven_services, load_federation
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
+from ccc_radar.store import Store, StoreError
+from ccc_radar.workspace import discover_maven_services, load_federation
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
@@ -68,7 +68,7 @@ def test_discover_maven_services_names_kinds_and_ignores_non_maven_dirs(
 
 def test_discover_maven_services_detects_indexed_projects(workspace_copy: Path) -> None:
     with Store(workspace_copy / "service-a"):
-        pass  # crée .cccf/findings.db
+        pass  # crée .cccr/findings.db
 
     services = discover_maven_services(workspace_copy)
 
@@ -126,7 +126,7 @@ def test_load_federation_includes_shared_module_findings_but_not_endpoints(
 def test_load_federation_reports_incompatible_schema_as_warning_not_crash(
     workspace_copy: Path,
 ) -> None:
-    db_path = workspace_copy / "service-a" / ".cccf" / "findings.db"
+    db_path = workspace_copy / "service-a" / ".cccr" / "findings.db"
     db_path.parent.mkdir(parents=True)
     import sqlite3
 

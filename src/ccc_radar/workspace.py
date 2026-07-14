@@ -3,7 +3,7 @@
 Découvre les modules Maven d'un répertoire parent (chaque `pom.xml` est un
 module), leur donne un nom logique stable (`artifactId`), les classe en
 microservice déployable ou module partagé, puis lit — en lecture seule,
-jamais d'écriture (ADR-30) — les `.cccf/findings.db` déjà indexés pour
+jamais d'écriture (ADR-30) — les `.cccr/findings.db` déjà indexés pour
 construire une vue fédérée (`endpoints_by_service`/`findings_by_service`)
 consommable par `graph.py`.
 """
@@ -11,9 +11,10 @@ consommable par `graph.py`.
 from dataclasses import dataclass
 from pathlib import Path
 
-from cccf.maven import parse_pom
-from cccf.models import Finding, MessageEndpoint
-from cccf.store import Store, StoreError
+from ccc_radar.maven import parse_pom
+from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.paths import db_path
+from ccc_radar.store import Store, StoreError
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ def discover_maven_services(root: Path) -> list[DiscoveredService]:
         artifact_id, is_spring_boot_app = parse_pom(pom_path)
         name = artifact_id or module_dir.name
         kind = "microservice" if is_spring_boot_app else "shared-module"
-        indexed = (module_dir / ".cccf" / "findings.db").is_file()
+        indexed = db_path(module_dir).is_file()
         services.append(
             DiscoveredService(name=name, path=module_dir, kind=kind, indexed=indexed)
         )
@@ -67,7 +68,7 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
         if not service.indexed:
             warnings.append(
                 f"{service.name} ({service.path}) : non indexé, ignoré "
-                "(lancez cccf index sur ce projet)."
+                "(lancez cccr index sur ce projet)."
             )
             continue
         try:

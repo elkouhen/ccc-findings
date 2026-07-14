@@ -1,5 +1,5 @@
-import cccf
+import ccc_radar
 
 
 def test_version() -> None:
-    assert cccf.__version__ == "0.1.0"
+    assert ccc_radar.__version__ == "0.1.0"

@@ -22,8 +22,8 @@ from typing import Protocol
 
 import numpy as np
 
-from cccf.models import Finding, MessageEndpoint
-from cccf.store import Store
+from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.store import Store
 
 
 class EmbedderLike(Protocol):
@@ -65,7 +65,7 @@ def group_endpoints_by_module_for_flow(
     endpoints: list[MessageEndpoint],
 ) -> dict[str | None, list[MessageEndpoint]]:
     """Regroupe par module Maven (`endpoint.module`, BACKLOG-13 M1) pour
-    `cccf flow` (M3). Contrairement à `graph.group_endpoints_by_module`
+    `cccr flow` (M3). Contrairement à `graph.group_endpoints_by_module`
     (qui ignore les endpoints sans module — sans nom stable, ils ne
     peuvent jamais former une arête inter-service fiable), `flow` ne
     supprime jamais un site : lister tous les producteurs/consommateurs
@@ -97,7 +97,7 @@ def resolve_topic_by_similarity(
 ) -> str | None:
     """Dernier recours (BACKLOG-10 K3) quand `resolve_topic` ne trouve aucun
     candidat textuel unique : plus proche voisin parmi les endpoints déjà
-    embeddés (`cccf index`) dans `store`, mais seulement si son score dépasse
+    embeddés (`cccr index`) dans `store`, mais seulement si son score dépasse
     `min_score` — sous ce seuil, aucun résultat n'est un meilleur signal
     qu'une requête qui ne ressemble à rien d'indexé, mieux vaut échouer
     explicitement que renvoyer un candidat non pertinent (même philosophie

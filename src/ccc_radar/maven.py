@@ -42,7 +42,7 @@ def clear_caches() -> None:
     """BACKLOG-16 P2 : à appeler en tête de chaque indexation dans un
     process long-vivant (serveur MCP) — `_cached_module_name` est caché par
     chemin de pom.xml pour toute la durée du process, un artifactId modifié
-    entre deux `cccf index` resterait sinon périmé."""
+    entre deux `cccr index` resterait sinon périmé."""
     _cached_module_name.cache_clear()
 
 

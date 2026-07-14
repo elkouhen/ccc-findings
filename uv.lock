@@ -54,7 +54,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ccc-findings"
+name = "ccc-radar"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

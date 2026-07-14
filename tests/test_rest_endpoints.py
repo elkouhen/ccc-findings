@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from cccf.config import Config
-from cccf.scanner import SemgrepError, parse_semgrep_endpoints, run_semgrep_endpoints
+from ccc_radar.config import Config
+from ccc_radar.scanner import SemgrepError, parse_semgrep_endpoints, run_semgrep_endpoints
 
-# Le pack de règles vit dans le repo skill (ccc-findings-skill/skills/cccf/
+# Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/rest/), pas dans ce repo (ADR-24). Les fixtures ci-dessous sont une
 # copie de test tenue à jour manuellement avec cette source.
 #
@@ -111,7 +111,7 @@ def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic(
     # au milieu de l'expression, toujours marqué dynamique (concaténation).
     raw = """
     {"results": [{
-        "check_id": "rules.cccf.rest.java.call-get",
+        "check_id": "rules.cccr.rest.java.call-get",
         "path": "app/java/OrderClient.java",
         "start": {"line": 31}, "end": {"line": 31},
         "extra": {"metadata": {"category": "endpoint-inventory",
@@ -179,7 +179,7 @@ def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> Non
 def test_parse_semgrep_endpoints_missing_role_raises_semgrep_error() -> None:
     raw = """
     {"results": [{
-        "check_id": "rules.cccf.rest.java.call-get",
+        "check_id": "rules.cccr.rest.java.call-get",
         "path": "app/java/OrderClient.java",
         "start": {"line": 1}, "end": {"line": 1},
         "extra": {"metadata": {"category": "endpoint-inventory",

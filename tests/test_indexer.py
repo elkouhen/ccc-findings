@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cccf.config import Config
-from cccf.indexer import _is_test_source, index_repo
-from cccf.coco_indexer import index_repo_with_cocoindex
-from cccf.store import Store
+from ccc_radar.config import Config
+from ccc_radar.indexer import _is_test_source, index_repo
+from ccc_radar.coco_indexer import index_repo_with_cocoindex
+from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -367,7 +367,7 @@ def test_index_repo_reresolves_spring_property_after_application_yml_change(
     [
         # BACKLOG-16 P1 : un layout Python/JS/Rust en `src/<package>` n'est
         # pas un jeu de sources de test Maven/Gradle.
-        ("src/cccf/store.py", False),
+        ("src/ccc_radar/store.py", False),
         ("src/mypkg/api/views.py", False),
         # Maven/Gradle : `main` n'est jamais du test, les variants suivant
         # la convention `test`/`<prefixe>Test` le sont tous.

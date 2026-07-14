@@ -5,7 +5,7 @@ indexés (K1) — aucune table de graphe en base (ADR-27).
 
 from dataclasses import dataclass
 
-from cccf.models import Finding, MessageEndpoint
+from ccc_radar.models import Finding, MessageEndpoint
 
 _SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
 

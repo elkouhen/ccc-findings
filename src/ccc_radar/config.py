@@ -3,8 +3,10 @@ from pathlib import Path
 
 import yaml
 
+from ccc_radar.paths import config_path, state_dir
+
 DEFAULT_INCLUDE = ["**/*"]
-DEFAULT_EXCLUDE = [".git/**", ".venv/**", "node_modules/**", ".cccf/**"]
+DEFAULT_EXCLUDE = [".git/**", ".venv/**", "node_modules/**", ".cccr/**"]
 DEFAULT_MIN_SEVERITY = "INFO"
 DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs"
 DEFAULT_SEMGREP_TIMEOUT_S = 120
@@ -26,16 +28,12 @@ class Config:
     semgrep_timeout_s: int = DEFAULT_SEMGREP_TIMEOUT_S
 
 
-def _config_path(repo_root: Path) -> Path:
-    return repo_root / ".cccf" / "config.yml"
-
-
 def load_config(repo_root: Path) -> Config:
-    path = _config_path(repo_root)
+    path = config_path(repo_root)
     if not path.is_file():
         raise ConfigError(
             f"Fichier de configuration introuvable : {path}. "
-            "Lancez d'abord: cccf init"
+            "Lancez d'abord: cccr init"
         )
 
     raw = yaml.safe_load(path.read_text()) or {}
@@ -64,11 +62,11 @@ def load_config(repo_root: Path) -> Config:
 
 
 def init_config(repo_root: Path, rules_path: list[str]) -> Path:
-    path = _config_path(repo_root)
+    path = config_path(repo_root)
     if path.exists():
         raise ConfigError(f"Une configuration existe déjà : {path}.")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    state_dir(repo_root).mkdir(parents=True, exist_ok=True)
     content = {
         "rules": rules_path,
         "include": DEFAULT_INCLUDE,

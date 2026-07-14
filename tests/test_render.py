@@ -1,8 +1,8 @@
 import xml.etree.ElementTree as ET
 
-from cccf.graph import build_graph, find_cycles
-from cccf.models import MessageEndpoint, compute_endpoint_id
-from cccf.render import render_graph_drawio
+from ccc_radar.graph import build_graph, find_cycles
+from ccc_radar.models import MessageEndpoint, compute_endpoint_id
+from ccc_radar.render import render_graph_drawio
 
 
 def make_endpoint(

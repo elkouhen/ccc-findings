@@ -9,7 +9,8 @@ from types import TracebackType
 import numpy as np
 import sqlite_vec
 
-from cccf.models import Finding, MessageEndpoint
+from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.paths import db_path
 
 SCHEMA_VERSION = "5"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
@@ -44,7 +45,7 @@ class CodeChunk:
 
 class Store:
     def __init__(self, repo_root: Path, readonly: bool = False) -> None:
-        self._db_path = Path(repo_root) / ".cccf" / "findings.db"
+        self._db_path = db_path(repo_root)
         self._conn: sqlite3.Connection | None = None
         self._readonly = readonly
 
@@ -92,7 +93,7 @@ class Store:
         if version != SCHEMA_VERSION:
             raise StoreError(
                 f"Schéma incompatible ({self._db_path}) : version {version!r}, "
-                f"attendu {SCHEMA_VERSION!r} — relancez cccf index sur ce projet."
+                f"attendu {SCHEMA_VERSION!r} — relancez cccr index sur ce projet."
             )
 
     @property
@@ -173,7 +174,7 @@ class Store:
         cosine in Python). v2 moves them to a `vec0` virtual table (sqlite-vec,
         SIMD-accelerated KNN) — same store ccc/cocoindex-code already uses for its
         own index. Dropping the old column forces a transparent full re-embed on
-        the next `cccf index`, since embedding_signature no longer matches.
+        the next `cccr index`, since embedding_signature no longer matches.
         """
         cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(findings)")}
         if "embedding" not in cols:
@@ -187,7 +188,7 @@ class Store:
     def _migrate_module_columns(self) -> None:
         """Schema v4 -> v5 (BACKLOG-13 M1) : `module`/`qualified_name`
         ajoutés à `findings`/`endpoints`, purement additifs (`NULL` pour les
-        lignes existantes jusqu'au prochain `cccf index` qui les
+        lignes existantes jusqu'au prochain `cccr index` qui les
         recalculera) — pas de ré-embedding forcé, contrairement à la
         migration v1 -> v2."""
         for table in ("findings", "endpoints"):

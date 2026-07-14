@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
-from cccf.models import MessageEndpoint, compute_endpoint_id
-from cccf.store import Store
+from ccc_radar.cli import app
+from ccc_radar.models import MessageEndpoint, compute_endpoint_id
+from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -34,7 +34,7 @@ def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
 
     assert result.exit_code == 0
     assert "p/security-audit" in result.output
-    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    config_content = (tmp_path / ".cccr" / "config.yml").read_text()
     assert "p/security-audit" in config_content
 
 
@@ -43,7 +43,7 @@ def test_index_with_default_registry_pack_succeeds_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     (tmp_path / "app.py").write_text(
         "import sqlite3\n\n\n"
         "def find_user(conn: sqlite3.Connection, name: str):\n"
@@ -69,7 +69,7 @@ def test_init_with_explicit_rules_takes_priority_over_default_pack(
     result = runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
 
     assert result.exit_code == 0
-    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    config_content = (tmp_path / ".cccr" / "config.yml").read_text()
     assert "rules/rules.yml" in config_content
     assert "p/security-audit" not in config_content
 
@@ -83,7 +83,7 @@ def test_init_detects_local_semgrep_config_over_default_pack(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    config_content = (tmp_path / ".cccf" / "config.yml").read_text()
+    config_content = (tmp_path / ".cccr" / "config.yml").read_text()
     assert ".semgrep.yml" in config_content
     assert "p/security-audit" not in config_content
 
@@ -92,11 +92,11 @@ def test_init_detects_local_semgrep_config_over_default_pack(
 def test_init_with_rules_then_index_reports_correctly(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     init_result = runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     assert init_result.exit_code == 0
-    assert (repo_copy / ".cccf" / "config.yml").is_file()
+    assert (repo_copy / ".cccr" / "config.yml").is_file()
 
     index_result = runner.invoke(app, ["index"])
 
@@ -110,7 +110,7 @@ def test_init_with_rules_then_index_reports_correctly(
 def test_index_twice_second_run_scans_nothing(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
@@ -129,14 +129,14 @@ def test_findings_without_index_fails_with_exact_message_and_code_2(
     result = runner.invoke(app, ["findings", "injection sql"])
 
     assert result.exit_code == 2
-    assert "Index absent. Lancez d'abord: cccf index" in result.output
+    assert "Index absent. Lancez d'abord: cccr index" in result.output
 
 
 @pytest.mark.integration
 def test_findings_json_output_matches_contract(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
@@ -167,7 +167,7 @@ def test_findings_invalid_severity_fails_with_exit_code_2(
 ) -> None:
     """BACKLOG-16 P4 : `--severity HIGH` (sévérité Semgrep brute, jamais
     stockée telle quelle) échouait auparavant avec un ValueError brut."""
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
@@ -181,7 +181,7 @@ def test_findings_invalid_severity_fails_with_exit_code_2(
 def test_findings_context_includes_offending_source_line(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
@@ -196,12 +196,12 @@ def test_findings_context_includes_offending_source_line(
 def test_search_renders_ccc_format_with_findings_blocks(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`cccf search` répond « de la même manière » que ccc : même format de
+    """`cccr search` répond « de la même manière » que ccc : même format de
     résultats, enrichi d'un bloc findings sous les résultats concernés, le
     finding ERROR faisant remonter app/db.py devant app/other.py."""
     monkeypatch.chdir(tmp_path)
-    from cccf.models import Finding
-    from cccf.store import Store
+    from ccc_radar.models import Finding
+    from ccc_radar.store import Store
 
     finding = Finding(
         id="cli-search-finding",
@@ -236,7 +236,7 @@ def test_search_json_returns_stable_code_search_result_schema(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    from cccf.store import Store
+    from ccc_radar.store import Store
 
     with Store(tmp_path):
         pass  # index findings vide mais présent
@@ -255,7 +255,7 @@ def test_search_json_returns_stable_code_search_result_schema(
 def test_search_prefers_experimental_indexed_code_when_available(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     index_result = runner.invoke(app, ["index", "--engine", "cocoindex"])
     assert index_result.exit_code == 0
@@ -327,7 +327,7 @@ def test_search_returns_error_when_ccc_returns_error(
 def test_summary_json_has_expected_structure(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
@@ -400,7 +400,7 @@ def test_graph_text_reports_no_outbound_calls_when_none_found(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     with Store(tmp_path):
-        pass  # crée .cccf/findings.db, vide
+        pass  # crée .cccr/findings.db, vide
 
     result = runner.invoke(app, ["graph"])
 
@@ -488,17 +488,17 @@ def test_endpoints_text_reports_none_when_empty(
 
 
 @pytest.mark.integration
-def test_graph_and_endpoints_reflect_a_real_cccf_index_run(
+def test_graph_and_endpoints_reflect_a_real_cccr_index_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-11 A1 CA4 : cccf graph/endpoints reflètent une indexation
+    """BACKLOG-11 A1 CA4 : cccr graph/endpoints reflètent une indexation
     standard (init + index), sans fixture injectée directement dans le
     store — le scénario de OrderConsumer.java (@KafkaListener contenant un
     appel RestTemplate) doit ressortir de bout en bout."""
     dest = tmp_path / "endpoint_index_repo"
     shutil.copytree(ENDPOINT_INDEX_REPO, dest)
     monkeypatch.chdir(dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     index_result = runner.invoke(app, ["index"])
@@ -531,7 +531,7 @@ def test_workspace_discovers_maven_modules_and_flags_unindexed(
     dest = tmp_path / "maven_workspace"
     shutil.copytree(MAVEN_WORKSPACE, dest)
     with Store(dest / "service-a"):
-        pass  # crée .cccf/findings.db, vide
+        pass  # crée .cccr/findings.db, vide
 
     result = runner.invoke(app, ["workspace", str(dest), "--json"])
 

@@ -4,10 +4,10 @@ from typing import Protocol
 
 import numpy as np
 
-from cccf.config import VALID_SEVERITIES
-from cccf.embedder import EmbeddingError
-from cccf.models import Finding
-from cccf.store import Store
+from ccc_radar.config import VALID_SEVERITIES
+from ccc_radar.embedder import EmbeddingError
+from ccc_radar.models import Finding
+from ccc_radar.store import Store
 
 _KNN_OVERFETCH_FACTOR = 3
 _KNN_MIN_FETCH = 20
@@ -62,7 +62,7 @@ def search_findings(
     if stored_signature and query_signature and stored_signature != query_signature:
         raise EmbeddingError(
             f"Signature d'embedding incompatible : index={stored_signature}, "
-            f"requête={query_signature}. Relancez: cccf index --full"
+            f"requête={query_signature}. Relancez: cccr index --full"
         )
 
     query_vec = embedder.embed_query(query)
@@ -70,7 +70,7 @@ def search_findings(
     if stored_dim is not None and query_vec.shape[0] != stored_dim:
         raise EmbeddingError(
             f"Dimension d'embedding incompatible : index={stored_dim}, "
-            f"requête={query_vec.shape[0]}. Relancez: cccf index --full"
+            f"requête={query_vec.shape[0]}. Relancez: cccr index --full"
         )
 
     total_vectors = store.embedding_count()

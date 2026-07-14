@@ -4,19 +4,19 @@ from typing import Literal, Optional
 
 import typer
 
-from cccf import __version__
-from cccf.code_search import search_code_with_findings
-from cccf.config import ConfigError, init_config, load_config
-from cccf.embedder import EmbeddingError, make_embedder
-from cccf.coco_indexer import index_repo_with_cocoindex
-from cccf.flow import (
+from ccc_radar import __version__
+from ccc_radar.code_search import search_code_with_findings
+from ccc_radar.config import ConfigError, init_config, load_config
+from ccc_radar.embedder import EmbeddingError, make_embedder
+from ccc_radar.coco_indexer import index_repo_with_cocoindex
+from ccc_radar.flow import (
     FlowError,
     group_endpoints_by_module_for_flow,
     group_findings_by_module_for_flow,
     resolve_topic_by_similarity,
     trace_flow,
 )
-from cccf.graph import (
+from ccc_radar.graph import (
     GraphEdge,
     build_graph,
     find_cycles,
@@ -26,9 +26,9 @@ from cccf.graph import (
     group_findings_by_module,
     rank_hotspots,
 )
-from cccf.indexer import index_repo
-from cccf.models import MessageEndpoint
-from cccf.render import (
+from ccc_radar.indexer import index_repo
+from ccc_radar.models import MessageEndpoint
+from ccc_radar.render import (
     render_code_search_text,
     render_endpoints_json,
     render_endpoints_text,
@@ -45,13 +45,16 @@ from cccf.render import (
     render_workspace_json,
     render_workspace_text,
 )
-from cccf.scanner import SemgrepError
-from cccf.search import SearchError, search_findings
-from cccf.search import summary as compute_summary
-from cccf.store import Store
-from cccf.workspace import discover_maven_services, load_federation
+from ccc_radar.scanner import SemgrepError
+from ccc_radar.search import SearchError, search_findings
+from ccc_radar.search import summary as compute_summary
+from ccc_radar.paths import db_path
+from ccc_radar.store import Store
+from ccc_radar.workspace import discover_maven_services, load_federation
 
-app = typer.Typer(help="ccc-findings: index Semgrep interrogeable par LLM")
+app = typer.Typer(
+    help="ccc-radar: indexe findings, code associé et signaux d'architecture exploitables par agent"
+)
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_PACK = "p/security-audit"
@@ -59,7 +62,7 @@ DEFAULT_REGISTRY_PACK = "p/security-audit"
 
 @app.callback()
 def main() -> None:
-    """ccc-findings: index Semgrep interrogeable par LLM."""
+    """ccc-radar: indexe findings, code associé et signaux d'architecture."""
 
 
 @app.command()
@@ -81,7 +84,7 @@ def init(
         None, "--rules", help="Chemin ou pack de règles Semgrep (répétable)."
     ),
 ) -> None:
-    """Initialise la configuration .cccf/config.yml du projet."""
+    """Initialise la configuration .cccr/config.yml du projet."""
     repo_root = Path.cwd()
 
     rules_paths = list(rules) if rules else None
@@ -147,9 +150,9 @@ def index_cmd(
 
 
 def _require_index(repo_root: Path) -> None:
-    db_path = repo_root / ".cccf" / "findings.db"
-    if not db_path.is_file():
-        typer.echo("Index absent. Lancez d'abord: cccf index", err=True)
+    index_path = db_path(repo_root)
+    if not index_path.is_file():
+        typer.echo("Index absent. Lancez d'abord: cccr index", err=True)
         raise typer.Exit(code=2)
 
 
@@ -293,7 +296,7 @@ def graph_cmd(
     """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
     K12) : appels REST synchrones détectés dans un handler de consommation
     Kafka du projet courant. Sans `--workspace`, si l'index couvre un
-    répertoire multi-modules Maven (`cccf index` lancé au parent, BACKLOG-13),
+    répertoire multi-modules Maven (`cccr index` lancé au parent, BACKLOG-13),
     les endpoints/findings attribués à un module sont automatiquement
     groupés pour rapporter de vrais cycles/hotspots inter-modules — pas
     besoin de fédération pour un monorepo. Avec `--workspace <root>`, fédère
@@ -365,7 +368,7 @@ def workspace_cmd(
     """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module par
     `pom.xml`, nommé d'après son `artifactId`, classé `microservice`
     (référence `spring-boot-maven-plugin`) ou `shared-module`. Lit en
-    lecture seule les projets déjà indexés (`cccf index`) pour compter
+    lecture seule les projets déjà indexés (`cccr index`) pour compter
     endpoints/findings par service — n'écrit jamais dans leurs bases.
     Un module non indexé ou dont la base est incompatible est signalé en
     avertissement, sans faire échouer la commande.
@@ -452,9 +455,9 @@ def mcp_cmd() -> None:
 
     Enregistrement client (ex. Claude Code), à ajouter à la config MCP :
 
-    {"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}
+    {"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
     """
-    from cccf.mcp_server import mcp as fastmcp_app
+    from ccc_radar.mcp_server import mcp as fastmcp_app
 
     fastmcp_app.run()
 

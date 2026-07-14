@@ -2,7 +2,7 @@
 par A2, l'intention de K7 : deux dépôts indexés séparément (un producteur
 Kafka dans l'un, un consommateur dans l'autre) sont fédérés, chaque site
 attribué à son propre service, et la relation entre les deux ressort du
-graphe. K7 visait initialement `cccf flow --workspace <nom>` (jamais
+graphe. K7 visait initialement `cccr flow --workspace <nom>` (jamais
 livré, K5) ; l'adaptation actée (voir `archive/BACKLOG-PRIORITY.md`,
 cadrage 2026-07-13) est la découverte automatique d'un répertoire parent
 Maven (A2) plutôt qu'un fichier de workspace nommé — ce test valide que
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
-from cccf.graph import build_graph
-from cccf.workspace import discover_maven_services, load_federation
+from ccc_radar.cli import app
+from ccc_radar.graph import build_graph
+from ccc_radar.workspace import discover_maven_services, load_federation
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 KAFKA_WORKSPACE = FIXTURES_DIR / "kafka_workspace"
@@ -32,10 +32,10 @@ def test_two_independently_indexed_services_federate_with_a_kafka_edge_between_t
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     # K7 CA1 (adapté) : chaque service est indexé séparément, comme deux
-    # dépôts distincts — cccf n'a jamais connaissance de l'autre pendant
-    # cccf init/cccf index.
+    # dépôts distincts — cccr n'a jamais connaissance de l'autre pendant
+    # cccr init/cccr index.
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         init_result = runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
@@ -77,7 +77,7 @@ def test_missing_service_in_workspace_warns_without_failing_federation(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     monkeypatch.chdir(dest / "order-service")
     runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
     index_result = runner.invoke(app, ["index"])
@@ -99,14 +99,14 @@ def test_federation_never_writes_to_the_other_services_databases(
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(KAFKA_WORKSPACE, dest)
 
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
         runner.invoke(app, ["index"])
 
     db_paths = [
-        dest / service / ".cccf" / "findings.db"
+        dest / service / ".cccr" / "findings.db"
         for service in ("order-service", "payment-service")
     ]
     mtimes_before = [p.stat().st_mtime_ns for p in db_paths]

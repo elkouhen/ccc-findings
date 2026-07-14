@@ -1,8 +1,8 @@
-# PRD — ccc-findings : enrichissement de cocoindex-code par les résultats Semgrep
+# PRD — ccc-radar : enrichissement de cocoindex-code par les résultats Semgrep
 
 | | |
 |---|---|
-| **Produit** | ccc-findings (nom de travail) — extension de [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) |
+| **Produit** | ccc-radar (nom de travail) — extension de [cocoindex-code](https://github.com/cocoindex-io/cocoindex-code) |
 | **Auteur** | Mehdi El-Kouhen |
 | **Statut** | Draft v0.1 — vision produit d'origine, en partie antérieure aux décisions d'architecture |
 | **Date** | 2026-07-11 |
@@ -11,7 +11,7 @@
 > tels que formulés au démarrage du projet. Certains détails de mécanique (ex. `ccc
 > findings`/`ccc index --with-findings` intégrés à `ccc`, store LMDB+SQLite unique)
 > ont été **remplacés** par les décisions d'architecture actées dans
-> [`ADR.md`](./ADR.md) (notamment ADR-1 : package compagnon `cccf` plutôt que fork
+> [`ADR.md`](./ADR.md) (notamment ADR-1 : package compagnon `cccr` plutôt que fork
 > de `ccc`). Pour ce qui a été **effectivement livré**, se référer à
 > [`SPEC-FONC.md`](./SPEC-FONC.md) (comportement utilisateur) et
 > [`SPEC-TECH.md`](./SPEC-TECH.md) (architecture technique réelle). Ce PRD reste la
@@ -137,12 +137,12 @@ Non-objectifs (voir §5) : remplacer Semgrep CI/CD, faire du triage de vulnérab
 
 ```bash
 # Setup
-cccf init                              # détecte une config Semgrep, sinon p/security-audit
-cccf index                             # findings, incrémental
+cccr init                              # détecte une config Semgrep, sinon p/security-audit
+cccr index                             # findings, incrémental
 
 # Développeur
-cccf search "injection sql" --severity ERROR
-cccf summary
+cccr search "injection sql" --severity ERROR
+cccr summary
 ```
 
 ```text
@@ -188,5 +188,5 @@ des tâches F0.1 à F7.2 du plan d'implémentation initial est livré.
 ## 12. Questions ouvertes restantes
 
 1. Les findings **supprimés** doivent-ils être conservés en historique (audit, UC6 étendu) ou purgés ? V1 a retenu : purge (`replace_findings_for_files` supprime puis réinsère), pas de diff persistant — UC6 (Could) n'est pas livré en V1.
-2. ~~Faut-il embarquer un **pack de règles par défaut** quand le projet n'a pas de config Semgrep ?~~ Tranché (ADR-13) : `cccf init` se replie sur le pack registry `p/security-audit` quand rien n'est détecté ni passé en `--rules` — revient sur le choix initial « config explicite obligatoire » pour réduire la friction de démarrage (voir `SPEC-FONC.md`, commande `init`).
+2. ~~Faut-il embarquer un **pack de règles par défaut** quand le projet n'a pas de config Semgrep ?~~ Tranché (ADR-13) : `cccr init` se replie sur le pack registry `p/security-audit` quand rien n'est détecté ni passé en `--rules` — revient sur le choix initial « config explicite obligatoire » pour réduire la friction de démarrage (voir `SPEC-FONC.md`, commande `init`).
 3. Politique sur **Semgrep Pro** (règles interfile) : toujours hors scope, non traité.

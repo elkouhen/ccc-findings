@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from cccf.config import Config
-from cccf.scanner import resolve_spring_property, run_semgrep_endpoints
+from ccc_radar.config import Config
+from ccc_radar.scanner import resolve_spring_property, run_semgrep_endpoints
 
-# Le pack de règles vit dans le repo skill (ccc-findings-skill/skills/cccf/
+# Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/kafka/), pas dans ce repo (ADR-24). Cible d'analyse : Java + Spring
 # + Maven uniquement (pas de pack Python/JS).
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

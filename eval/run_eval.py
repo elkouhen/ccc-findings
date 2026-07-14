@@ -6,11 +6,11 @@ from pathlib import Path
 
 import yaml
 
-from cccf.config import Config
-from cccf.embedder import Embedder
-from cccf.indexer import index_repo
-from cccf.search import search_findings
-from cccf.store import Store
+from ccc_radar.config import Config
+from ccc_radar.embedder import Embedder
+from ccc_radar.indexer import index_repo
+from ccc_radar.search import search_findings
+from ccc_radar.store import Store
 
 FIXTURE_REPO = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "vuln_repo"
 QUERIES_PATH = Path(__file__).resolve().parent / "queries.yml"
@@ -29,7 +29,7 @@ def main() -> int:
     queries = load_queries()
 
     rows = []
-    # copie temporaire : ne jamais laisser de .cccf/findings.db dans le fixture committée
+    # copie temporaire : ne jamais laisser de .cccr/findings.db dans le fixture committée
     with tempfile.TemporaryDirectory() as tmp_dir:
         repo_root = Path(tmp_dir) / "vuln_repo"
         shutil.copytree(FIXTURE_REPO, repo_root)

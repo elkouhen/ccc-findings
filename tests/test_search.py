@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cccf.embedder import EmbeddingError, finding_to_text
-from cccf.models import Finding
-from cccf.render import render_search_json, render_search_text
-from cccf.search import SearchError, SearchHit, get_context, search_findings, summary
-from cccf.store import Store
+from ccc_radar.embedder import EmbeddingError, finding_to_text
+from ccc_radar.models import Finding
+from ccc_radar.render import render_search_json, render_search_text
+from ccc_radar.search import SearchError, SearchHit, get_context, search_findings, summary
+from ccc_radar.store import Store
 
 
 class BagOfWordsFakeEmbedder:

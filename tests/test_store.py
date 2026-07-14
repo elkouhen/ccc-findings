@@ -3,8 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
-from cccf.store import Store
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.store import Store
 
 
 def make_finding(
@@ -87,7 +87,7 @@ def test_reopening_existing_database_reads_schema_version(tmp_path: Path) -> Non
 
 def _make_legacy_v1_db(tmp_path: Path) -> None:
     """Simulate a pre-migration store: schema v1, embedding as a BLOB column."""
-    db_path = tmp_path / ".cccf" / "findings.db"
+    db_path = tmp_path / ".cccr" / "findings.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(
@@ -117,7 +117,7 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
 
     with Store(tmp_path) as store:
         assert store.get_meta("schema_version") == "5"
-        # signature/dim cleared -> next `cccf index` re-embeds everything
+        # signature/dim cleared -> next `cccr index` re-embeds everything
         assert store.get_meta("embedding_signature") is None
         assert store.get_embedding_dim() is None
         # findings themselves survive the migration
@@ -127,7 +127,7 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
 
 
 def test_replace_code_chunks_for_files_removes_only_targeted_paths(tmp_path: Path) -> None:
-    from cccf.store import CodeChunk
+    from ccc_radar.store import CodeChunk
 
     db_chunk = CodeChunk("db", "app/db.py", 1, 3, "python", "db code")
     shell_chunk = CodeChunk("shell", "app/shell.py", 1, 3, "python", "shell code")
@@ -144,7 +144,7 @@ def test_replace_code_chunks_for_files_removes_only_targeted_paths(tmp_path: Pat
 def test_knn_search_code_chunks_filters_by_language_and_path_and_paginates(
     tmp_path: Path,
 ) -> None:
-    from cccf.store import CodeChunk
+    from ccc_radar.store import CodeChunk
 
     py_chunk = CodeChunk("py", "app/db.py", 1, 3, "python", "python code")
     ts_chunk = CodeChunk("ts", "web/app.ts", 1, 3, "typescript", "ts code")

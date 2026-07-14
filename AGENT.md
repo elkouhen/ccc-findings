@@ -1,7 +1,7 @@
 # AGENT.md — Comment naviguer et maintenir la documentation de ce projet
 
 > Ce fichier s'adresse à tout agent (Claude Code ou autre) qui intervient sur
-> `ccc-findings`. Il décrit où vit chaque type de documentation et la règle
+> `ccc-radar`. Il décrit où vit chaque type de documentation et la règle
 > non négociable : **tout changement se documente dans un fichier BACKLOG**.
 
 ## Carte des documents
@@ -10,7 +10,7 @@
 |---|---|---|
 | [`docs/PRD.md`](docs/PRD.md) | Problème, vision, personas, cas d'usage, métriques de succès | Pour comprendre *pourquoi* le produit existe et ce qu'il doit accomplir |
 | [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) | Comportement observable : commandes CLI, flags, messages d'erreur/codes de sortie, tools MCP, workflows du skill | Avant de modifier tout ce qu'un utilisateur ou un agent voit (CLI, MCP, skill) |
-| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, modèle de données, schéma SQLite, algorithmes, contrat JSON | Avant de modifier l'architecture interne (`src/cccf/*.py`) |
+| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, modèle de données, schéma SQLite, algorithmes, contrat JSON | Avant de modifier l'architecture interne (`src/ccc_radar/*.py`) |
 | [`docs/ADR.md`](docs/ADR.md) | Décisions d'architecture : contexte, choix, conséquences | Avant de revenir sur un choix déjà tranché — pour savoir si c'est une décision D1-D6 « ne pas rediscuter » ou une adaptation ADR-7+ documentée |
 | `archive/BACKLOG*.md` | Tâches de travail (implémentation initiale, remédiations) — voir ci-dessous | Pour tout travail nouveau ou en cours |
 

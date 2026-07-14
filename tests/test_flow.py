@@ -2,9 +2,9 @@ from pathlib import Path
 
 import numpy as np
 
-from cccf.flow import FlowError, resolve_topic, resolve_topic_by_similarity, trace_flow
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
-from cccf.store import Store
+from ccc_radar.flow import FlowError, resolve_topic, resolve_topic_by_similarity, trace_flow
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.store import Store
 
 
 def make_endpoint(
@@ -103,11 +103,11 @@ def test_trace_flow_reports_federation_warnings_verbatim() -> None:
         "orders.created",
         endpoints_by_service={"order-service": [produce]},
         findings_by_service={"order-service": []},
-        warnings=["payment-service (path) : non indexé, ignoré (lancez cccf index sur ce projet)."],
+        warnings=["payment-service (path) : non indexé, ignoré (lancez cccr index sur ce projet)."],
     )
 
     assert result.warnings == [
-        "payment-service (path) : non indexé, ignoré (lancez cccf index sur ce projet)."
+        "payment-service (path) : non indexé, ignoré (lancez cccr index sur ce projet)."
     ]
 
 

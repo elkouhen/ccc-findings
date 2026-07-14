@@ -3,16 +3,16 @@ from pathlib import Path
 from typing import TypedDict
 from xml.sax.saxutils import quoteattr
 
-from cccf.ccc_bridge import CodeHitWithFindings
-from cccf.flow import FlowResult
-from cccf.graph import Cycle, GraphEdge, Hotspot, OutboundCallInConsumer
-from cccf.models import MessageEndpoint
-from cccf.search import SearchHit, Summary, get_context
-from cccf.workspace import DiscoveredService, FederationResult
+from ccc_radar.ccc_bridge import CodeHitWithFindings
+from ccc_radar.flow import FlowResult
+from ccc_radar.graph import Cycle, GraphEdge, Hotspot, OutboundCallInConsumer
+from ccc_radar.models import MessageEndpoint
+from ccc_radar.search import SearchHit, Summary, get_context
+from ccc_radar.workspace import DiscoveredService, FederationResult
 
 
 class FindingHit(TypedDict):
-    """Shape returned by `cccf search --json` and the `search_findings` MCP tool."""
+    """Shape returned by `cccr search --json` and the `search_findings` MCP tool."""
 
     id: str
     rule_id: str
@@ -35,7 +35,7 @@ class RuleCount(TypedDict):
 
 
 class FindingsSummary(TypedDict):
-    """Shape returned by `cccf summary --json` and the `findings_summary` MCP tool."""
+    """Shape returned by `cccr summary --json` and the `findings_summary` MCP tool."""
 
     by_severity: dict[str, int]
     top_rules: list[RuleCount]
@@ -98,10 +98,10 @@ def render_search_json(
 def render_code_search_text(
     hits: list[CodeHitWithFindings], warning: str | None = None
 ) -> str:
-    """Rendu texte de `cccf search` : même format que `ccc search`
+    """Rendu texte de `cccr search` : même format que `ccc search`
     (`--- Result N (score) --- / File: ...`), chaque résultat suivi d'un bloc
     des findings Semgrep qui le chevauchent — un utilisateur de `ccc` garde
-    ses repères, `cccf` ajoute la couche findings.
+    ses repères, `cccr` ajoute la couche findings.
     """
     lines: list[str] = []
     if warning:
@@ -128,8 +128,8 @@ def render_code_search_text(
 
 
 def render_fallback_findings_text(fallback: list[FindingHit]) -> str:
-    """Rendu texte du repli findings-only de `cccf search` quand ccc est
-    indisponible — même style numéroté que `cccf findings`."""
+    """Rendu texte du repli findings-only de `cccr search` quand ccc est
+    indisponible — même style numéroté que `cccr findings`."""
     lines: list[str] = []
     for i, hit in enumerate(fallback, start=1):
         lines.append(
@@ -198,7 +198,7 @@ class HotspotInfo(TypedDict):
 
 
 class GraphResult(TypedDict):
-    """Shape returned by `cccf graph --json` et le tool MCP `graph`.
+    """Shape returned by `cccr graph --json` et le tool MCP `graph`.
 
     `cycles`/`hotspots` restent vides tant qu'aucune donnée inter-module
     n'est disponible : ni fédération explicite (`--workspace`/
@@ -380,8 +380,8 @@ def render_graph_drawio(
     body = "\n        ".join(cells)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<mxfile host="cccf">\n'
-        '  <diagram name="cccf graph" id="cccf-graph">\n'
+        '<mxfile host="cccr">\n'
+        '  <diagram name="cccr graph" id="cccr-graph">\n'
         '    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" '
         'connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" '
         'pageHeight="1100" math="0" shadow="0">\n'
@@ -397,7 +397,7 @@ def render_graph_drawio(
 
 
 class EndpointHit(TypedDict):
-    """Shape returned by `cccf endpoints --json` and the `list_endpoints`
+    """Shape returned by `cccr endpoints --json` and the `list_endpoints`
     MCP tool (BACKLOG-11 A1)."""
 
     id: str
@@ -458,7 +458,7 @@ class WorkspaceServiceInfo(TypedDict):
 
 
 class WorkspaceResult(TypedDict):
-    """Shape returned by `cccf workspace <root> --json` and the
+    """Shape returned by `cccr workspace <root> --json` and the
     `list_workspace_services` MCP tool (BACKLOG-11 A2)."""
 
     services: list[WorkspaceServiceInfo]
@@ -513,7 +513,7 @@ class FlowSiteInfo(TypedDict):
 
 
 class FlowResultInfo(TypedDict):
-    """Shape returned by `cccf flow <query> --json` and the
+    """Shape returned by `cccr flow <query> --json` and the
     `trace_message_flow` MCP tool (BACKLOG-10 K5/K6)."""
 
     query: str

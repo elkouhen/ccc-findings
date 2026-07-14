@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from cccf.config import Config
-from cccf.scanner import SemgrepError, parse_semgrep_json, run_semgrep
+from ccc_radar.config import Config
+from ccc_radar.scanner import SemgrepError, parse_semgrep_json, run_semgrep
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"

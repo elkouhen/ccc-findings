@@ -6,17 +6,17 @@ from typing import Protocol
 
 import numpy as np
 
-from cccf.config import Config
-from cccf.embedder import EmbeddingError, endpoint_to_text, finding_to_text
-from cccf.models import Finding, MessageEndpoint
-from cccf.scanner import (
+from ccc_radar.config import Config
+from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
+from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
     invoke_semgrep_raw,
     parse_semgrep_endpoints,
     parse_semgrep_json,
 )
-from cccf.store import CodeChunk, Store
+from ccc_radar.store import CodeChunk, Store
 
 
 class EmbedderLike(Protocol):
@@ -212,7 +212,7 @@ def index_repo(
     # Java, propriétés Spring, module Maven/Gradle) avant de relire le
     # repo — nécessaire dans un process long-vivant (serveur MCP) où
     # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
-    # pas tels qu'un `cccf index` précédent les avait mémorisés.
+    # pas tels qu'un `cccr index` précédent les avait mémorisés.
     clear_analysis_caches()
 
     current_hashes = _list_repo_files(repo_root, config)

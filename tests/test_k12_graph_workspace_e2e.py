@@ -1,4 +1,4 @@
-"""BACKLOG-10 K12 — cccf graph --workspace de bout en bout : trois vrais
+"""BACKLOG-10 K12 — cccr graph --workspace de bout en bout : trois vrais
 microservices Maven indexés séparément, avec un cycle d'appels REST
 A -> B -> C -> A, et un site sur ce cycle recouvert par un finding liveness
 (hotspot). CA1 (cycle rapporté avec les sites des deux extrémités) et CA3
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.cli import app
+from ccc_radar.cli import app
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REST_CYCLE_WORKSPACE = FIXTURES_DIR / "rest_cycle_workspace"
@@ -24,7 +24,7 @@ runner = CliRunner()
 def indexed_cycle_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(REST_CYCLE_WORKSPACE, dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     for service in ("service-x", "service-y", "service-z"):
         monkeypatch.chdir(dest / service)
         init_result = runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
@@ -70,7 +70,7 @@ def test_graph_workspace_reports_hotspot_where_finding_overlaps_a_cycle_site(
     hotspot = data["hotspots"][0]
     assert hotspot["service"] == "service-x"
     assert hotspot["site"]["path"] == "app/YClient.java"
-    assert hotspot["finding_rule_id"] == "rules.cccf.liveness.java.new-resttemplate-no-timeout"
+    assert hotspot["finding_rule_id"] == "rules.cccr.liveness.java.new-resttemplate-no-timeout"
     assert hotspot["finding_severity"] == "WARNING"
 
 
@@ -91,7 +91,7 @@ def test_graph_text_renders_cycle_and_hotspot(
 def test_graph_without_workspace_still_reports_the_no_workspace_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cccf.store import Store
+    from ccc_radar.store import Store
 
     monkeypatch.chdir(tmp_path)
     with Store(tmp_path):
@@ -138,7 +138,7 @@ def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_not
     """BACKLOG-14 G1 CA2."""
     import xml.etree.ElementTree as ET
 
-    from cccf.store import Store
+    from ccc_radar.store import Store
 
     monkeypatch.chdir(tmp_path)
     with Store(tmp_path):

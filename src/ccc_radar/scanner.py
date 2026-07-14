@@ -8,12 +8,12 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from cccf.config import Config
-from cccf import gradle as gradle_module
-from cccf import maven as maven_module
-from cccf.gradle import gradle_service_for_path
-from cccf.maven import module_name_for_path
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
+from ccc_radar.config import Config
+from ccc_radar import gradle as gradle_module
+from ccc_radar import maven as maven_module
+from ccc_radar.gradle import gradle_service_for_path
+from ccc_radar.maven import module_name_for_path
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 
@@ -129,7 +129,7 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
         if metadata.get("category") == "endpoint-inventory":
             # Règle d'inventaire d'endpoints (K2/K11) : ce n'est pas un
             # finding, même si elle a tourné dans le même scan Semgrep que
-            # les règles de findings (cccf index les exécute ensemble) —
+            # les règles de findings (cccr index les exécute ensemble) —
             # voir parse_semgrep_endpoints.
             continue
 

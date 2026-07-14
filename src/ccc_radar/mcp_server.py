@@ -2,19 +2,19 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from cccf.code_search import CodeSearchResult
-from cccf.code_search import search_code_with_findings as run_code_search
-from cccf.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
-from cccf.config import ConfigError, load_config
-from cccf.embedder import EmbeddingError, make_embedder
-from cccf.flow import (
+from ccc_radar.code_search import CodeSearchResult
+from ccc_radar.code_search import search_code_with_findings as run_code_search
+from ccc_radar.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
+from ccc_radar.config import ConfigError, load_config
+from ccc_radar.embedder import EmbeddingError, make_embedder
+from ccc_radar.flow import (
     FlowError,
     group_endpoints_by_module_for_flow,
     group_findings_by_module_for_flow,
     resolve_topic_by_similarity,
     trace_flow,
 )
-from cccf.graph import (
+from ccc_radar.graph import (
     build_graph,
     find_cycles,
     find_hotspots,
@@ -23,8 +23,9 @@ from cccf.graph import (
     group_findings_by_module,
     rank_hotspots,
 )
-from cccf.indexer import IndexReport, index_repo
-from cccf.render import (
+from ccc_radar.indexer import IndexReport, index_repo
+from ccc_radar.paths import db_path
+from ccc_radar.render import (
     EndpointHit,
     FindingHit,
     FindingsSummary,
@@ -38,12 +39,12 @@ from cccf.render import (
     render_summary_json,
     render_workspace_json,
 )
-from cccf.search import search_findings as run_search_findings
-from cccf.search import summary as compute_summary
-from cccf.store import Store
-from cccf.workspace import discover_maven_services, load_federation
+from ccc_radar.search import search_findings as run_search_findings
+from ccc_radar.search import summary as compute_summary
+from ccc_radar.store import Store
+from ccc_radar.workspace import discover_maven_services, load_federation
 
-mcp = FastMCP("cccf")
+mcp = FastMCP("cccr")
 
 
 def _repo_root() -> Path:
@@ -51,8 +52,8 @@ def _repo_root() -> Path:
 
 
 def _require_index(repo_root: Path) -> None:
-    if not (repo_root / ".cccf" / "findings.db").is_file():
-        raise RuntimeError("Index absent. Lancez d'abord: cccf index")
+    if not db_path(repo_root).is_file():
+        raise RuntimeError("Index absent. Lancez d'abord: cccr index")
 
 
 @mcp.tool()
@@ -107,7 +108,7 @@ def reindex_findings() -> IndexReport:
     config = load_config(repo_root)
     embedder = make_embedder(config.embedding_model)
     with Store(repo_root) as store:
-        # BACKLOG-16 P3 : même dispatch que `cccf index` (cli.py) — un repo
+        # BACKLOG-16 P3 : même dispatch que `cccr index` (cli.py) — un repo
         # indexé avec `--engine cocoindex` doit continuer de rafraîchir ses
         # chunks de code ici, sinon `search` (MCP) sert des chunks périmés
         # après un `reindex_findings` qui les a silencieusement ignorés.
@@ -133,7 +134,7 @@ def search(
     un résultat de pertinence sémantique proche mais sans finding. Outil à
     privilégier pour explorer du code en tenant compte de sa dette sécurité.
     Même comportement, mêmes paramètres et même nom de tool que le `search`
-    de ccc ; équivalent à la CLI `cccf search`.
+    de ccc ; équivalent à la CLI `cccr search`.
     """
     return run_code_search(
         _repo_root(), query, limit=limit, offset=offset, lang=lang, path=path, refresh=refresh
@@ -168,7 +169,7 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     consommation Kafka du projet courant. Utiliser pour localiser les
     endroits d'une architecture distribuée susceptibles de causer un
     verrouillage intermittent. Sans `workspace_root`, si l'index couvre un
-    répertoire multi-modules Maven (`cccf index` lancé au parent,
+    répertoire multi-modules Maven (`cccr index` lancé au parent,
     BACKLOG-13), les endpoints/findings attribués à un module sont
     automatiquement groupés pour rapporter de vrais cycles/hotspots
     inter-modules. Avec `workspace_root`, fédère en plus les autres
@@ -216,7 +217,7 @@ def list_workspace_services(root: str) -> WorkspaceResult:
     """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module
     par `pom.xml`, classé `microservice` (référence
     `spring-boot-maven-plugin`) ou `shared-module`. Lit en lecture seule les
-    projets déjà indexés (`cccf index`) pour compter endpoints/findings par
+    projets déjà indexés (`cccr index`) pour compter endpoints/findings par
     service — n'écrit jamais dans leurs bases. Utiliser avant `graph` pour
     vérifier quels services d'un répertoire multi-services sont prêts à
     être fédérés.

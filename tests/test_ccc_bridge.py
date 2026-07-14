@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cccf.ccc_bridge import (
+from ccc_radar.ccc_bridge import (
     CccUnavailable,
     CodeHit,
     CodeHitWithFindings,
@@ -13,9 +13,9 @@ from cccf.ccc_bridge import (
     rank_by_severity,
     search_code,
 )
-from cccf.cli import app
-from cccf.models import Finding
-from cccf.store import Store
+from ccc_radar.cli import app
+from ccc_radar.models import Finding
+from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -205,7 +205,7 @@ def test_search_code_with_findings_tool_promotes_finding_despite_lower_score(
     with Store(tmp_path) as store:
         store.replace_findings_for_files(["app/db.py"], [finding])
 
-    from cccf.mcp_server import search
+    from ccc_radar.mcp_server import search
 
     result = search("injection sql", limit=2)
 
@@ -253,12 +253,12 @@ def test_mcp_tool_raises_when_ccc_returns_error(
     dest = tmp_path / "vuln_repo"
     shutil.copytree(VULN_REPO, dest)
     monkeypatch.chdir(dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
 
-    from cccf.mcp_server import search
+    from ccc_radar.mcp_server import search
 
     with pytest.raises(RuntimeError, match="ccc a échoué.*ccc service failed"):
         search("injection sql")

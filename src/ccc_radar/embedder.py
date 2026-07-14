@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from cccf.models import Finding, MessageEndpoint
+from ccc_radar.models import Finding, MessageEndpoint
 
 
 class EmbeddingError(Exception):
@@ -22,7 +22,7 @@ def finding_to_text(f: Finding) -> str:
 def endpoint_to_text(e: MessageEndpoint) -> str:
     """BACKLOG-10 K3 : rôle + topic/route + framework + extrait normalisé —
     même esprit que `finding_to_text`, pour la recherche NL sur les
-    endpoints (résolution `cccf flow` en dernier recours, quand aucune
+    endpoints (résolution `cccr flow` en dernier recours, quand aucune
     correspondance textuelle exacte/non ambiguë n'existe)."""
     return (
         f"{e.role} {e.system} | {e.topic} | {e.framework or ''} | "
@@ -83,4 +83,5 @@ def _make_embedder_cached(model_name: str, fake: bool) -> object:
 
 
 def make_embedder(model_name: str) -> object:
-    return _make_embedder_cached(model_name, os.environ.get("CCCF_FAKE_EMBEDDER") == "1")
+    fake = os.environ.get("CCCR_FAKE_EMBEDDER") == "1"
+    return _make_embedder_cached(model_name, fake)

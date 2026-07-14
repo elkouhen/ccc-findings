@@ -8,9 +8,9 @@ models findings and code chunks as target state produced from files, then lets
 
 from pathlib import Path
 
-from cccf.config import Config
-from cccf.indexer import EmbedderLike, IndexReport, index_repo
-from cccf.store import Store
+from ccc_radar.config import Config
+from ccc_radar.indexer import EmbedderLike, IndexReport, index_repo
+from ccc_radar.store import Store
 
 ENGINE_META_VALUE = "cocoindex-prototype"
 

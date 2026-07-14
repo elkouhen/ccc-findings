@@ -1,7 +1,7 @@
 """Recherche de code (via `ccc`) enrichie des findings Semgrep indexés.
 
 C'est le comportement « sur-ensemble de ccc » exposé à la fois par la CLI
-(`cccf search`) et par le tool MCP `search` : mêmes résultats et mêmes
+(`cccr search`) et par le tool MCP `search` : mêmes résultats et mêmes
 paramètres que `ccc search`, annotés des findings qui les chevauchent et
 classés en tenant compte de leur sévérité.
 """
@@ -9,7 +9,7 @@ classés en tenant compte de leur sévérité.
 from pathlib import Path
 from typing import TypedDict
 
-from cccf.ccc_bridge import (
+from ccc_radar.ccc_bridge import (
     CccUnavailable,
     CodeHit,
     CodeHitWithFindings,
@@ -19,19 +19,20 @@ from cccf.ccc_bridge import (
     search_code,
     without_findings,
 )
-from cccf.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
-from cccf.config import ConfigError, load_config
-from cccf.embedder import make_embedder
-from cccf.render import FindingHit
-from cccf.store import Store
+from ccc_radar.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
+from ccc_radar.config import ConfigError, load_config
+from ccc_radar.embedder import make_embedder
+from ccc_radar.paths import db_path
+from ccc_radar.render import FindingHit
+from ccc_radar.store import Store
 
 WARNING_NO_FINDINGS_INDEX = (
-    "index findings absent (lancez: cccf index) : résultats sans findings"
+    "index findings absent (lancez: cccr index) : résultats sans findings"
 )
 
 
 class CodeSearchResult(TypedDict):
-    """Shape returned by `cccf search --json` and the MCP tool `search`.
+    """Shape returned by `cccr search --json` and the MCP tool `search`.
 
     A single stable schema for nominal results and findings-index-missing
     degraded mode (`results` without findings), `warning` telling the caller
@@ -45,7 +46,7 @@ class CodeSearchResult(TypedDict):
 
 
 def _has_findings_index(repo_root: Path) -> bool:
-    return (repo_root / ".cccf" / "findings.db").is_file()
+    return db_path(repo_root).is_file()
 
 
 def _search_indexed_code(

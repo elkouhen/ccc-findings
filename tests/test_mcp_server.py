@@ -6,9 +6,9 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 from typer.testing import CliRunner
 
-from cccf.cli import app
-from cccf.flow import FlowError
-from cccf.mcp_server import (
+from ccc_radar.cli import app
+from ccc_radar.flow import FlowError
+from ccc_radar.mcp_server import (
     findings_summary,
     graph,
     list_endpoints,
@@ -18,8 +18,8 @@ from cccf.mcp_server import (
     search_findings,
     trace_message_flow,
 )
-from cccf.models import Finding, MessageEndpoint, compute_endpoint_id
-from cccf.store import Store
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -33,7 +33,7 @@ def indexed_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     dest = tmp_path / "vuln_repo"
     shutil.copytree(VULN_REPO, dest)
     monkeypatch.chdir(dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])
     return dest
@@ -51,7 +51,7 @@ def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
 def test_search_findings_tool_rejects_invalid_severity(indexed_repo: Path) -> None:
     """BACKLOG-16 P4 : côté MCP aussi, une sévérité invalide doit lever une
     erreur métier propre (`SearchError`), pas un `ValueError` non géré."""
-    from cccf.search import SearchError
+    from ccc_radar.search import SearchError
 
     with pytest.raises(SearchError, match="HIGH"):
         search_findings("injection sql", severity="HIGH")
@@ -125,14 +125,14 @@ def test_mcp_help_documents_client_registration_block() -> None:
     result = runner.invoke(app, ["mcp", "--help"])
 
     assert result.exit_code == 0
-    assert '{"mcpServers": {"cccf": {"command": "cccf", "args": ["mcp"]}}}' in result.output
+    assert '{"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}' in result.output
 
 
 @pytest.mark.integration
 def test_search_tool_is_exposed_under_the_same_name_as_ccc(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """cccf's code-search MCP tool must be named `search`, like ccc's own
+    """cccr's code-search MCP tool must be named `search`, like ccc's own
     tool — not `search_code_with_findings` — so both take the same name."""
     monkeypatch.chdir(tmp_path)
 
@@ -264,12 +264,12 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
     une fois fédéré, pas seulement les endpoints du projet courant (voir
     aussi tests/test_k12_graph_workspace_e2e.py, côté CLI, pour le détail
     des sites et des hotspots)."""
-    from cccf.cli import app as cli_app
+    from ccc_radar.cli import app as cli_app
 
     rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(rest_cycle_workspace, dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     for service in ("service-x", "service-y", "service-z"):
         monkeypatch.chdir(dest / service)
         runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"])
@@ -321,7 +321,7 @@ def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
     )
     finding = Finding(
         id="finding-1",
-        rule_id="cccf.demo.fire-and-forget",
+        rule_id="cccr.demo.fire-and-forget",
         severity="WARNING",
         message="message",
         path="app/Producer.java",
@@ -340,7 +340,7 @@ def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
 
     assert result["resolved_topic"] == "orders.created"
     by_path = {site["path"]: site for site in result["sites"]}
-    assert by_path["app/Producer.java"]["finding_rule_ids"] == ["cccf.demo.fire-and-forget"]
+    assert by_path["app/Producer.java"]["finding_rule_ids"] == ["cccr.demo.fire-and-forget"]
     assert by_path["app/Consumer.java"]["finding_rule_ids"] == []
     assert result["warnings"] == []
 
@@ -352,7 +352,7 @@ def test_trace_message_flow_tool_falls_back_to_similarity_when_textual_resolutio
     isolément avec des vecteurs contrôlés dans tests/test_flow.py) pour
     vérifier le câblage sans dépendre d'un embedder réel/faux sur du texte
     arbitraire."""
-    import cccf.mcp_server as mcp_server_module
+    import ccc_radar.mcp_server as mcp_server_module
 
     monkeypatch.chdir(tmp_path)
     produce = MessageEndpoint(
@@ -422,7 +422,7 @@ def test_trace_message_flow_tool_with_workspace_root_traces_across_services(
     kafka_workspace = FIXTURES_DIR / "kafka_workspace"
     dest = tmp_path / "kafka_workspace"
     shutil.copytree(kafka_workspace, dest)
-    monkeypatch.setenv("CCCF_FAKE_EMBEDDER", "1")
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         runner.invoke(app, ["init", "--rules", "rules/java.yaml"])

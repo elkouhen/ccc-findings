@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cccf.gradle import gradle_service_for_path
+from ccc_radar.gradle import gradle_service_for_path
 
 
 def test_gradle_service_for_path_groups_all_submodules_under_the_top_level_dir(

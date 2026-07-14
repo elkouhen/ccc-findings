@@ -1,4 +1,4 @@
-# Spécification technique — ccc-findings (`cccf`)
+# Spécification technique — ccc-radar (`cccr`)
 
 > Décrit l'architecture interne réellement livrée : modules, modèle de
 > données, algorithmes, schéma SQLite, contrats internes. Pour le
@@ -6,7 +6,7 @@
 > [`SPEC-FONC.md`](./SPEC-FONC.md). Pour le pourquoi des choix, voir
 > [`ADR.md`](./ADR.md). Pour les défauts connus, voir `archive/BACKLOG-2.md`.
 
-## 1. Carte des modules (`src/cccf/`)
+## 1. Carte des modules (`src/ccc_radar/`)
 
 | Module | Rôle | Dépend de |
 |---|---|---|
@@ -125,7 +125,7 @@ au moment de construire chaque `Finding`/`MessageEndpoint` (`parse_semgrep_json`
   si une déclaration `package ...;` est trouvée par regex (pas d'AST),
   sinon juste le nom de fichier. Caché par fichier (`lru_cache`).
 
-### Schéma SQLite (`.cccf/findings.db`, géré par `Store`)
+### Schéma SQLite (`.cccr/findings.db`, géré par `Store`)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -201,8 +201,8 @@ de `meta`.
 **Migration schema v2 → v3** (ADR-21) : `Store` crée paresseusement
 `code_chunks` et `vec_code_chunks`, puis passe `schema_version` à `3`. Les
 repos déjà indexés restent utilisables : l'index code expérimental reste vide
-tant qu'un `cccf index --engine cocoindex` n'a pas été exécuté. Le prochain
-`cccf index` manuel continue de fonctionner sans remplir `code_chunks`; aucune
+tant qu'un `cccr index --engine cocoindex` n'a pas été exécuté. Le prochain
+`cccr index` manuel continue de fonctionner sans remplir `code_chunks`; aucune
 commande de migration séparée n'est requise.
 
 **Migration schema v3 → v4** (ADR-25) : `Store` crée `endpoints`
@@ -218,7 +218,7 @@ bump séparé pour sa propre table vectorielle.
 ajoute `module`/`qualified_name` à `findings`/`endpoints` via `ALTER TABLE
 ... ADD COLUMN` (guardé par `PRAGMA table_info`, idempotent) puis crée les
 index associés — purement additif, `NULL` pour les lignes existantes
-jusqu'au prochain `cccf index` qui les recalcule. Contrainte d'ordonnancement
+jusqu'au prochain `cccr index` qui les recalcule. Contrainte d'ordonnancement
 notable : les `CREATE INDEX ... ON findings(module)`/`endpoints(module)` ne
 peuvent pas être dans le même `executescript` que les `CREATE TABLE IF NOT
 EXISTS` — sur une base v4 existante, la colonne `module` n'existe pas
@@ -283,7 +283,7 @@ les chunks des fichiers `changed` sont (ré-)embeddés. Les fichiers
 supprimés passent par `Store.remove_files`, qui purge findings, chunks et
 embeddings associés.
 
-`cccf index --engine cocoindex` appelle cet adaptateur expérimental et écrit
+`cccr index --engine cocoindex` appelle cet adaptateur expérimental et écrit
 `meta.index_engine = "cocoindex-prototype"`. Le moteur manuel reste le défaut et
 écrit `meta.index_engine = "manual"` quand il est utilisé via la CLI.
 
@@ -310,7 +310,7 @@ semgrep scan --json --quiet --x-ignore-semgrepignore-files --timeout <semgrep_ti
 Exécutée avec `cwd=repo_root`. Codes retour 0 et 1 sont normaux (1 = « des
 findings ont été trouvés ») ; tout autre code lève `SemgrepError(stderr)`.
 `--x-ignore-semgrepignore-files` est utilisé pour que le périmètre piloté par
-`.cccf/config.yml` ne soit pas silencieusement réduit par les `.semgrepignore`
+`.cccr/config.yml` ne soit pas silencieusement réduit par les `.semgrepignore`
 ou ignores par défaut de Semgrep, notamment sur les répertoires `tests/`.
 
 **Effet de bord notable** : quand une entrée de `config.rules` contient un
@@ -348,7 +348,7 @@ mais sans filtre `min_severity` : les règles d'inventaire n'ont pas de
 sévérité pertinente. `parse_semgrep_endpoints(raw, repo_root)` ne garde que
 les résultats dont `extra.metadata.category == "endpoint-inventory"` (les
 autres résultats — findings de sécurité d'un pack lancé dans le même
-`cccf index` — sont ignorés silencieusement, pas une erreur) et
+`cccr index` — sont ignorés silencieusement, pas une erreur) et
 `extra.metadata.system` (`"rest"` par défaut, ou `"kafka"`) ; tout autre
 système est ignoré. Communs aux deux systèmes :
 
@@ -421,7 +421,7 @@ Streams sans ambiguïté (`Consumed.with(...)`/`Produced.with(...)`, ou
 nichées dans un `.join(...)`/`.peek(...)`) — un `$X.stream($TOPIC)`/
 `$X.to($TOPIC)` bare collisionnerait avec `Arrays.stream(x)`/
 `Collection.stream()`/`Mono.to(...)` (Reactor)/mappers `.to(Class)`, même
-logique que `cccf.kafka.java.consume-raw`. `.to("topic")` est fréquemment
+logique que `cccr.kafka.java.consume-raw`. `.to("topic")` est fréquemment
 chaîné après un `.peek(...)` dont le lambda peut contenir un littéral (message
 de log) avant le topic dans le texte du snippet — `_KAFKA_STREAMS_TO_RE`
 recherche spécifiquement le littéral qui suit directement `.to(`, prioritaire
@@ -449,7 +449,7 @@ placeholder normal (`resolve_spring_property`). Variable absente des champs
 **API bas niveau `kafka-clients` (BACKLOG-10 K2, reliquat)** : produire via
 `new ProducerRecord(...)` était déjà couvert avant cette tâche (même classe
 `org.apache.kafka.clients.producer.ProducerRecord`, Spring ou non).
-Consommer via l'API bas niveau ne l'était pas : `cccf.kafka.java.consume-raw`
+Consommer via l'API bas niveau ne l'était pas : `cccr.kafka.java.consume-raw`
 (côté skill) capte `$CONSUMER.subscribe(Collections.singletonList(...))`/
 `Arrays.asList(...)`/`List.of(...)` — restreint à ces trois formes pour ne
 jamais confondre avec un `.subscribe(...)` non-Kafka (RxJava/Reactor
@@ -477,7 +477,7 @@ d'analyse best-effort par chemin (`_java_qualified_name`,
 `indexer.index_repo`. Ces caches accélèrent une indexation en cours (un
 même `application.yml`/`pom.xml` lu plusieurs fois), mais un serveur MCP
 est un process long-vivant : sans purge à chaque indexation, une propriété
-Spring, un artifactId ou un package Java modifiés entre deux `cccf index`
+Spring, un artifactId ou un package Java modifiés entre deux `cccr index`
 resteraient résolus avec leur ancienne valeur.
 
 ## 5. Embedding et recherche
@@ -543,7 +543,7 @@ même schéma de sur-demande que `ccc_bridge`. Ces hits sont annotés par
 `annotate_with_findings` (égalité stricte de chemin + chevauchement inclusif de
 ligne) puis reclassés par `rank_by_severity`.
 
-Si cet index code expérimental est absent, `cccf` retombe sur le pont `ccc`.
+Si cet index code expérimental est absent, `cccr` retombe sur le pont `ccc`.
 
 ### Pont avec `ccc` (`ccc_bridge.py`)
 
@@ -628,7 +628,7 @@ dict, jamais de son origine :
   inventé entre deux sites non attribués qui se retrouveraient
   arbitrairement dans le même compartiment `None`).
 
-CLI `cccf graph`/tool MCP `graph` (§2/§3) : sans `--workspace`/
+CLI `cccr graph`/tool MCP `graph` (§2/§3) : sans `--workspace`/
 `workspace_root`, tentent d'abord `group_endpoints_by_module` sur les
 endpoints du projet courant ; si le résultat est non vide, construisent le
 graphe directement (pas de fédération). Sinon (aucun module Maven détecté),
@@ -665,7 +665,7 @@ attribut XML — jamais de f-string brute sur du contenu non fiable, pour
 qu'un nom de service ou un chemin contenant `<`/`&`/`"` ne puisse jamais
 produire un document mal formé (BACKLOG-14 G1 CA3).
 
-`cccf graph --drawio FICHIER` (CLI, §2) : calcule `services_by_name`/
+`cccr graph --drawio FICHIER` (CLI, §2) : calcule `services_by_name`/
 `edges`/`cycles` exactement comme pour `--json` (même branchement
 `--workspace`/regroupement par module), écrit le résultat de
 `render_graph_drawio` à `FICHIER`, affiche une confirmation courte puis,
@@ -693,7 +693,7 @@ agent.
   "microservice"` si le texte du pom contient `spring-boot-maven-plugin`,
   `"shared-module"` sinon — recherche textuelle simple, pas de résolution
   de modèle Maven (parent POM, profils). `indexed` :
-  `<module>/.cccf/findings.db` existe.
+  `<module>/.cccr/findings.db` existe.
 - `load_federation(services) -> FederationResult` — pour chaque service
   indexé, ouvre `Store(service.path, readonly=True)` : `findings_by_service`
   toujours peuplé (un module partagé peut porter des findings pertinents
@@ -716,7 +716,7 @@ forme des deux dicts.
 
 `tests/test_k7_federation_e2e.py` (BACKLOG-10 K7) enchaîne les trois
 couches sur de vraies fixtures : deux microservices Maven indexés
-séparément via la CLI (`cccf init`/`cccf index`, chacun ignorant l'autre),
+séparément via la CLI (`cccr init`/`cccr index`, chacun ignorant l'autre),
 fédérés par `discover_maven_services`/`load_federation`, puis
 `graph.build_graph` détecte l'arête Kafka entre le producteur et le
 consommateur — la seule preuve de bout en bout, hors K1/K2/K11 chacun
@@ -768,7 +768,7 @@ Fonctions pures, aucune écriture SQLite :
   les clés entre elles (pas de risque de fausse arête à éviter ici,
   contrairement au graphe).
 
-CLI `cccf flow <requête> [--workspace ROOT]` (§2 SPEC-FONC) : sans
+CLI `cccr flow <requête> [--workspace ROOT]` (§2 SPEC-FONC) : sans
 `--workspace`, `endpoints_by_service = group_endpoints_by_module_for_flow
 (store.all_endpoints())` sur le projet courant — `service` reflète le
 module Maven de chaque site quand l'index en couvre plusieurs (BACKLOG-13),
@@ -792,7 +792,7 @@ sur du texte arbitraire — non calibré, voir `archive/BACKLOG-10.md` K3).
 
 ## 7. Contrat JSON (F4.2 — figé)
 
-Consommé par `cccf search --json`, le tool MCP `search_findings`, et (sans
+Consommé par `cccr search --json`, le tool MCP `search_findings`, et (sans
 `score`) par `search_code_with_findings` :
 ```json
 {
@@ -819,7 +819,7 @@ sérialisation (`render.py`, `ccc_bridge.py`) — actuellement dupliqués, voir
   sentence-transformers réel — **exclus par défaut** (`addopts = "-m 'not
   slow'"` dans `pyproject.toml`, voir ADR-11) ; à lancer explicitement via
   `uv run pytest -m slow`.
-- `CCCF_FAKE_EMBEDDER=1` : bascule `embedder.make_embedder` sur un embedder
+- `CCCR_FAKE_EMBEDDER=1` : bascule `embedder.make_embedder` sur un embedder
   déterministe (hash SHA-256, 8 dimensions, signature `fake:<model>:8`) pour les
   tests d'intégration n'ayant pas besoin de sémantique réelle. Un index créé
   avec ce fake est distingué d'un index de production via `embedding_signature`.

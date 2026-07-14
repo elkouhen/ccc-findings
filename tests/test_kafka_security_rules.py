@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from cccf.config import Config
-from cccf.scanner import run_semgrep
+from ccc_radar.config import Config
+from ccc_radar.scanner import run_semgrep
 
-# Le pack de règles vit dans le repo skill (ccc-findings-skill/skills/cccf/
+# Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/kafka-security/), pas dans ce repo (ADR-24). Cible d'analyse :
 # Java + Spring + Maven uniquement.
 #
 # Volet sécurité de K8 (BACKLOG-10) : les autres items listés à l'origine
 # (producteur non idempotent, enable.auto.commit, handler sans DLQ/retry)
-# sont déjà couverts par le pack `default` (skills/cccf/rules/default/
+# sont déjà couverts par le pack `default` (skills/cccr/rules/default/
 # b-kafka.yaml, règles R7/R10) — pas dupliqués ici.
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 KAFKA_SECURITY_REPO = FIXTURES_DIR / "kafka_security_repo"
@@ -30,7 +30,7 @@ def test_sasl_plaintext_credentials_ignores_credentials_built_from_a_variable() 
     )
 
     hits = [
-        f for f in findings if f.rule_id == "rules.cccf.kafka-security.sasl-plaintext-credentials"
+        f for f in findings if f.rule_id == "rules.cccr.kafka-security.sasl-plaintext-credentials"
     ]
     assert [f.start_line for f in hits] == [10]
 
@@ -41,7 +41,7 @@ def test_plaintext_protocol_flags_string_literal_and_constant_key() -> None:
         KAFKA_SECURITY_REPO, make_config(), files=["app/KafkaConfig.java"]
     )
 
-    hits = [f for f in findings if f.rule_id == "rules.cccf.kafka-security.plaintext-protocol"]
+    hits = [f for f in findings if f.rule_id == "rules.cccr.kafka-security.plaintext-protocol"]
     assert {f.start_line for f in hits} == {26, 32}
 
 
@@ -54,7 +54,7 @@ def test_json_deserializer_trusts_all_packages_ignores_specific_package() -> Non
     hits = [
         f
         for f in findings
-        if f.rule_id == "rules.cccf.kafka-security.json-deserializer-trusts-all-packages"
+        if f.rule_id == "rules.cccr.kafka-security.json-deserializer-trusts-all-packages"
     ]
     assert {f.start_line for f in hits} == {14, 18}
 
@@ -66,7 +66,7 @@ def test_unsafe_java_deserialization_ignores_non_deserializing_stream_read() -> 
     )
 
     hits = [
-        f for f in findings if f.rule_id == "rules.cccf.kafka-security.unsafe-java-deserialization"
+        f for f in findings if f.rule_id == "rules.cccr.kafka-security.unsafe-java-deserialization"
     ]
     assert [f.start_line for f in hits] == [27]
 
@@ -77,8 +77,8 @@ def test_kafka_security_pack_runs_standalone_without_other_backlog_tasks() -> No
 
     assert len(findings) == 6
     assert {f.rule_id for f in findings} == {
-        "rules.cccf.kafka-security.sasl-plaintext-credentials",
-        "rules.cccf.kafka-security.plaintext-protocol",
-        "rules.cccf.kafka-security.json-deserializer-trusts-all-packages",
-        "rules.cccf.kafka-security.unsafe-java-deserialization",
+        "rules.cccr.kafka-security.sasl-plaintext-credentials",
+        "rules.cccr.kafka-security.plaintext-protocol",
+        "rules.cccr.kafka-security.json-deserializer-trusts-all-packages",
+        "rules.cccr.kafka-security.unsafe-java-deserialization",
     }

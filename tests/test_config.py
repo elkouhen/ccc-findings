@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cccf.config import (
+from ccc_radar.config import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EXCLUDE,
     DEFAULT_INCLUDE,
@@ -16,9 +16,9 @@ from cccf.config import (
 
 
 def write_config(repo_root: Path, content: str) -> None:
-    cccf_dir = repo_root / ".cccf"
-    cccf_dir.mkdir(parents=True, exist_ok=True)
-    (cccf_dir / "config.yml").write_text(content)
+    cccr_dir = repo_root / ".cccr"
+    cccr_dir.mkdir(parents=True, exist_ok=True)
+    (cccr_dir / "config.yml").write_text(content)
 
 
 def test_load_valid_config_applies_defaults(tmp_path: Path) -> None:
@@ -70,14 +70,14 @@ def test_load_config_missing_rules_field_raises(tmp_path: Path) -> None:
 
 
 def test_load_config_missing_file_raises(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match="cccf init"):
+    with pytest.raises(ConfigError, match="cccr init"):
         load_config(tmp_path)
 
 
 def test_init_config_writes_default_file(tmp_path: Path) -> None:
     path = init_config(tmp_path, ["rules/rules.yml"])
 
-    assert path == tmp_path / ".cccf" / "config.yml"
+    assert path == tmp_path / ".cccr" / "config.yml"
     config = load_config(tmp_path)
     assert config.rules == ["rules/rules.yml"]
     assert config.min_severity == DEFAULT_MIN_SEVERITY
