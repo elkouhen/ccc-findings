@@ -11,7 +11,8 @@ consommable par `graph.py`.
 from dataclasses import dataclass
 from pathlib import Path
 
-from ccc_radar.maven import parse_pom
+from ccc_radar.inventory_freshness import endpoint_inventory_warning
+from ccc_radar.maven import is_runtime_service, parse_pom
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.paths import db_path
 from ccc_radar.store import Store, StoreError
@@ -23,6 +24,7 @@ class DiscoveredService:
     path: Path
     kind: str  # "microservice" | "shared-module"
     indexed: bool
+    index_root: Path
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,17 @@ class FederationResult:
     warnings: list[str]
 
 
+def _dedupe_by_id(items: list[Finding] | list[MessageEndpoint]) -> list[Finding] | list[MessageEndpoint]:
+    deduped: list[Finding] | list[MessageEndpoint] = []
+    seen: set[str] = set()
+    for item in items:
+        if item.id in seen:
+            continue
+        seen.add(item.id)
+        deduped.append(item)
+    return deduped
+
+
 def discover_maven_services(root: Path) -> list[DiscoveredService]:
     """Explore `root` pour des `pom.xml` — chaque répertoire qui en porte un
     est un module. Nom de service : `artifactId` du pom (repli : nom du
@@ -39,15 +52,28 @@ def discover_maven_services(root: Path) -> list[DiscoveredService]:
     `microservice` si le pom référence `spring-boot-maven-plugin` (produit
     un jar exécutable), `shared-module` sinon (bibliothèque interne) — voir
     ADR-30. Triés par chemin pour un ordre stable et déterministe."""
+    root = root.resolve()
+    root_indexed = db_path(root).is_file()
     services: list[DiscoveredService] = []
     for pom_path in sorted(root.rglob("pom.xml")):
         module_dir = pom_path.parent
-        artifact_id, is_spring_boot_app = parse_pom(pom_path)
+        artifact_id, is_spring_boot_app, packaging = parse_pom(pom_path)
+        if packaging == "pom" and not is_runtime_service(packaging, is_spring_boot_app):
+            continue
         name = artifact_id or module_dir.name
-        kind = "microservice" if is_spring_boot_app else "shared-module"
-        indexed = db_path(module_dir).is_file()
+        kind = "microservice" if is_runtime_service(packaging, is_spring_boot_app) else "shared-module"
+        direct_indexed = db_path(module_dir).is_file()
+        parent_indexed = root_indexed and module_dir != root
+        indexed = direct_indexed or parent_indexed
+        index_root = module_dir if direct_indexed or module_dir == root else root
         services.append(
-            DiscoveredService(name=name, path=module_dir, kind=kind, indexed=indexed)
+            DiscoveredService(
+                name=name,
+                path=module_dir,
+                kind=kind,
+                indexed=indexed,
+                index_root=index_root,
+            )
         )
     return services
 
@@ -72,10 +98,23 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
             )
             continue
         try:
-            with Store(service.path, readonly=True) as store:
-                findings_by_service[service.name] = store.all_findings()
+            with Store(service.index_root, readonly=True) as store:
+                if service.index_root == service.path:
+                    findings = store.all_findings()
+                    endpoints = store.all_endpoints()
+                else:
+                    findings = [f for f in store.all_findings() if f.module == service.name]
+                    endpoints = [e for e in store.all_endpoints() if e.module == service.name]
+                findings = _dedupe_by_id(findings)
+                endpoints = _dedupe_by_id(endpoints)
+                findings_by_service[service.name] = findings
                 if service.kind == "microservice":
-                    endpoints_by_service[service.name] = store.all_endpoints()
+                    endpoints_by_service[service.name] = endpoints
+                stale_warning = endpoint_inventory_warning(
+                    store.get_meta("endpoint_inventory_signature"), scope=service.name
+                )
+                if stale_warning is not None:
+                    warnings.append(stale_warning)
         except StoreError as exc:
             warnings.append(f"{service.name} ({service.path}) : {exc}")
 

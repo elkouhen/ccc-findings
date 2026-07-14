@@ -8,7 +8,7 @@ from ccc_radar.paths import config_path, state_dir
 DEFAULT_INCLUDE = ["**/*"]
 DEFAULT_EXCLUDE = [".git/**", ".venv/**", "node_modules/**", ".cccr/**"]
 DEFAULT_MIN_SEVERITY = "INFO"
-DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs"
+DEFAULT_EMBEDDING_MODEL = "~/models/jina-code-embeddings-1.5b"
 DEFAULT_SEMGREP_TIMEOUT_S = 120
 
 VALID_SEVERITIES = ("INFO", "WARNING", "ERROR")

@@ -24,6 +24,7 @@ from ccc_radar.graph import (
     rank_hotspots,
 )
 from ccc_radar.indexer import IndexReport, index_repo
+from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.paths import db_path
 from ccc_radar.render import (
     EndpointHit,
@@ -54,6 +55,12 @@ def _repo_root() -> Path:
 def _require_index(repo_root: Path) -> None:
     if not db_path(repo_root).is_file():
         raise RuntimeError("Index absent. Lancez d'abord: cccr index")
+
+
+def _current_repo_endpoint_warning(store: Store) -> str | None:
+    return endpoint_inventory_warning(
+        store.get_meta("endpoint_inventory_signature"), scope="ce projet"
+    )
 
 
 @mcp.tool()
@@ -181,12 +188,16 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
         findings = store.all_findings()
+        repo_warning = _current_repo_endpoint_warning(store)
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
     if workspace_root is None:
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if not grouped_endpoints:
-            return render_graph_json(outbound_calls)
+            return render_graph_json(
+                outbound_calls,
+                warnings=[repo_warning] if repo_warning else None,
+            )
         edges = build_graph(grouped_endpoints)
         cycles = find_cycles(edges)
         grouped_findings = group_findings_by_module(findings)
@@ -195,6 +206,7 @@ def graph(workspace_root: str | None = None) -> GraphResult:
             outbound_calls,
             cycles=cycles,
             hotspots=hotspots,
+            warnings=[repo_warning] if repo_warning else None,
             cross_module_data_available=True,
         )
 
@@ -207,7 +219,7 @@ def graph(workspace_root: str | None = None) -> GraphResult:
         outbound_calls,
         cycles=cycles,
         hotspots=hotspots,
-        warnings=federation.warnings,
+        warnings=([repo_warning] if repo_warning else []) + federation.warnings,
         cross_module_data_available=True,
     )
 
@@ -255,8 +267,12 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
             findings_by_service: dict[str | None, list] = group_findings_by_module_for_flow(
                 store.all_findings()
             )
+            warnings = []
+            repo_warning = _current_repo_endpoint_warning(store)
+            if repo_warning is not None:
+                warnings.append(repo_warning)
             try:
-                result = trace_flow(query, endpoints_by_service, findings_by_service)
+                result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
             except FlowError as exc:
                 fallback_topic = None
                 try:
@@ -269,7 +285,9 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
                     pass
                 if fallback_topic is None:
                     raise exc
-                result = trace_flow(fallback_topic, endpoints_by_service, findings_by_service)
+                result = trace_flow(
+                    fallback_topic, endpoints_by_service, findings_by_service, warnings
+                )
         return render_flow_json(result)
 
     services = discover_maven_services(Path(workspace_root))

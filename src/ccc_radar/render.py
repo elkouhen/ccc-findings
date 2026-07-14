@@ -266,8 +266,11 @@ def render_graph_json(
 ) -> GraphResult:
     cycles = cycles or []
     hotspots = hotspots or []
+    warning_note = " ".join(f"⚠ {w}" for w in (warnings or []))
     if cross_module_data_available:
-        note = " ".join(f"⚠ {w}" for w in (warnings or []))
+        note = warning_note
+    elif warning_note:
+        note = f"{_NO_CROSS_MODULE_DATA_NOTE} {warning_note}"
     else:
         note = _NO_CROSS_MODULE_DATA_NOTE
     return GraphResult(
@@ -434,9 +437,12 @@ def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]
     ]
 
 
-def render_endpoints_text(endpoints: list[MessageEndpoint]) -> str:
+def render_endpoints_text(endpoints: list[MessageEndpoint], warnings: list[str] | None = None) -> str:
     if not endpoints:
-        return "Aucun endpoint indexé."
+        lines = ["Aucun endpoint indexé."]
+        for warning in warnings or []:
+            lines.append(f"⚠ {warning}")
+        return "\n".join(lines)
     lines = []
     for e in endpoints:
         dynamic_marker = " (dynamique)" if e.topic_dynamic else ""
@@ -445,6 +451,8 @@ def render_endpoints_text(endpoints: list[MessageEndpoint]) -> str:
             f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}{module_marker}  "
             f"{e.path}:{e.start_line}-{e.end_line}"
         )
+    for warning in warnings or []:
+        lines.append(f"⚠ {warning}")
     return "\n".join(lines)
 
 

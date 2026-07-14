@@ -1,9 +1,11 @@
 import hashlib
 import os
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
+from ccc_radar.config import DEFAULT_EMBEDDING_MODEL
 from ccc_radar.models import Finding, MessageEndpoint
 
 
@@ -33,6 +35,7 @@ def endpoint_to_text(e: MessageEndpoint) -> str:
 class Embedder:
     def __init__(self, model_name: str) -> None:
         self._model_name = model_name
+        self.model_name = model_name
         self._model = None
         self.signature = f"sentence-transformers:{model_name}"
 
@@ -40,7 +43,7 @@ class Embedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name)
+            self._model = SentenceTransformer(os.path.expanduser(self._model_name))
         return self._model
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
@@ -59,6 +62,7 @@ class FakeEmbedder:
 
     def __init__(self, model_name: str, dim: int = 8) -> None:
         self._model_name = model_name
+        self.model_name = model_name
         self._dim = dim
         self.signature = f"fake:{model_name}:{dim}"
 
@@ -82,6 +86,24 @@ def _make_embedder_cached(model_name: str, fake: bool) -> object:
     return Embedder(model_name)
 
 
+def resolve_embedding_model(model_name: str) -> tuple[str, str | None]:
+    if os.environ.get("CCCR_FAKE_EMBEDDER") == "1":
+        return model_name, None
+    expanded = os.path.expanduser(model_name)
+    if model_name.startswith(("~", "/", ".")) or Path(expanded).exists():
+        return expanded, None
+
+    fallback = os.path.expanduser(DEFAULT_EMBEDDING_MODEL)
+    if Path(fallback).exists():
+        return (
+            fallback,
+            f"embedding_model={model_name!r} ressemble à un identifiant distant ; "
+            f"utilisation du modèle local par défaut {DEFAULT_EMBEDDING_MODEL!r}.",
+        )
+    return model_name, None
+
+
 def make_embedder(model_name: str) -> object:
     fake = os.environ.get("CCCR_FAKE_EMBEDDER") == "1"
-    return _make_embedder_cached(model_name, fake)
+    resolved_model, _ = resolve_embedding_model(model_name)
+    return _make_embedder_cached(resolved_model, fake)

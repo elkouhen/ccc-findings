@@ -218,13 +218,36 @@ def test_kafka_streams_consume_and_produce_extract_topics() -> None:
 
 
 @pytest.mark.integration
+def test_kafka_message_builder_send_extracts_topics() -> None:
+    endpoints = run_semgrep_endpoints(
+        KAFKA_REPO, make_config(), files=["app/java/MessageBuilderProducer.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 2
+
+    literal_send = by_line[26]
+    assert literal_send.role == "produce"
+    assert literal_send.framework == "spring-kafka"
+    assert literal_send.topic == "orders.confirmed"
+    assert literal_send.topic_dynamic is False
+
+    resolved_send = by_line[34]
+    assert resolved_send.role == "produce"
+    assert resolved_send.framework == "spring-kafka"
+    assert resolved_send.topic == "payments.received"
+    assert resolved_send.topic_dynamic is False
+
+
+@pytest.mark.integration
 def test_kafka_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(KAFKA_REPO, make_config())
 
     # OrderConsumer/OrderProducer : 4 consume + 4 produce ; ValueAnnotatedConsumer :
     # 1 consume + 2 produce ; RawKafkaConsumer : 1 consume (kafka-clients) ;
-    # KafkaStreamsApp (Q25) : 3 consume + 1 produce (kafka-streams)
-    assert len(endpoints) == 16
+    # KafkaStreamsApp (Q25) : 3 consume + 1 produce (kafka-streams) ;
+    # MessageBuilderProducer : 2 produce (spring-kafka, inférés)
+    assert len(endpoints) == 18
     assert {e.role for e in endpoints} == {"consume", "produce"}
     assert {e.system for e in endpoints} == {"kafka"}
 

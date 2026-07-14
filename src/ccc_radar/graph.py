@@ -121,11 +121,16 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     consumes = [(s, e) for s, e in all_endpoints if e.system == "kafka" and e.role == "consume"]
 
     edges: list[GraphEdge] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
     for call_service, call in calls:
         for serve_service, serve in serves:
             if call_service == serve_service:
                 continue
             if paths_match(call.topic, serve.topic):
+                key = ("rest", call_service, serve_service, call.id, serve.id)
+                if key in seen:
+                    continue
+                seen.add(key)
                 edges.append(GraphEdge("rest", call_service, serve_service, call, serve))
 
     for produce_service, produce in produces:
@@ -133,6 +138,10 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
             if produce_service == consume_service:
                 continue
             if produce.topic == consume.topic:
+                key = ("kafka", produce_service, consume_service, produce.id, consume.id)
+                if key in seen:
+                    continue
+                seen.add(key)
                 edges.append(GraphEdge("kafka", produce_service, consume_service, produce, consume))
 
     return edges

@@ -106,6 +106,40 @@ def test_java_class_level_request_mapping_prefix_is_merged_into_method_path() ->
     assert update.topic_dynamic is False
 
 
+@pytest.mark.integration
+def test_java_generic_request_mapping_without_http_method_is_inferred_as_any() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/RootController.java"]
+    )
+
+    assert [endpoint.topic for endpoint in endpoints] == ["ANY /"]
+    assert endpoints[0].framework == "spring"
+    assert endpoints[0].role == "serve"
+
+
+@pytest.mark.integration
+def test_framework_generated_endpoints_are_inferred() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO,
+        make_config(),
+        files=[
+            "app/java/OrderRepository.java",
+            "app/java/SwaggerConfig.java",
+            "app/resources/application.properties",
+        ],
+    )
+
+    topics = {endpoint.topic: endpoint.framework for endpoint in endpoints}
+    assert topics["GET /order"] == "spring-data-rest"
+    assert topics["POST /order"] == "spring-data-rest"
+    assert topics["GET /order/{id}"] == "spring-data-rest"
+    assert topics["PUT /order/{id}"] == "spring-data-rest"
+    assert topics["PATCH /order/{id}"] == "spring-data-rest"
+    assert topics["DELETE /order/{id}"] == "spring-data-rest"
+    assert topics["GET /swagger-ui.html"] == "swagger-ui"
+    assert topics["GET /actuator/**"] == "spring-actuator"
+
+
 def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic() -> None:
     # getForObject(base + "/orders/" + id, ...) : premier littéral trouvé
     # au milieu de l'expression, toujours marqué dynamique (concaténation).
@@ -144,6 +178,73 @@ def test_java_feign_client_methods_are_call_sites_not_server_routes() -> None:
 
 
 @pytest.mark.integration
+def test_java_feign_client_url_property_is_merged_into_method_routes() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/ResolvedFeignClient.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 2
+    assert by_line[14].topic == "GET /api/v1/customers/{customer-id}"
+    assert by_line[17].topic == "POST /api/v1/customers"
+    for endpoint in endpoints:
+        assert endpoint.role == "call"
+        assert endpoint.framework == "feign"
+        assert endpoint.topic_dynamic is False
+
+
+@pytest.mark.integration
+def test_resttemplate_exchange_resolves_value_annotated_base_urls() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/ExchangeClient.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 2
+
+    purchase = by_line[26]
+    assert purchase.role == "call"
+    assert purchase.framework == "resttemplate"
+    assert purchase.topic == "POST /api/v1/products/purchase"
+    assert purchase.topic_dynamic is False
+
+    fetch_one = by_line[36]
+    assert fetch_one.topic == "GET /api/v1/products/"
+    assert fetch_one.topic_dynamic is True
+
+
+@pytest.mark.integration
+def test_spring_cloud_config_server_properties_resolve_for_feign_and_exchange() -> None:
+    feign_endpoints = run_semgrep_endpoints(
+        REST_REPO,
+        make_config(),
+        files=["services/order/src/main/java/com/example/CloudFeignClient.java"],
+    )
+    feign_by_line = {e.start_line: e for e in feign_endpoints}
+    assert feign_by_line[14].topic == "GET /api/v1/customers/{customer-id}"
+    assert feign_by_line[17].topic == "POST /api/v1/customers"
+    assert all(not endpoint.topic_dynamic for endpoint in feign_endpoints)
+
+    exchange_endpoints = run_semgrep_endpoints(
+        REST_REPO,
+        make_config(),
+        files=["services/order/src/main/java/com/example/CloudExchangeClient.java"],
+    )
+    assert len(exchange_endpoints) == 1
+    assert exchange_endpoints[0].topic == "POST /api/v1/products/purchase"
+    assert exchange_endpoints[0].topic_dynamic is False
+
+
+@pytest.mark.integration
+def test_non_resttemplate_put_calls_are_filtered_out() -> None:
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/HashMapWriter.java"]
+    )
+
+    assert endpoints == []
+
+
+@pytest.mark.integration
 def test_java_webclient_fluent_calls_are_call_sites() -> None:
     endpoints = run_semgrep_endpoints(
         REST_REPO, make_config(), files=["app/java/WebClientCaller.java"]
@@ -167,13 +268,26 @@ def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> Non
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
     # java : 9 serve (OrderController) + 4 serve (OwnerController, Q24)
-    # + 5 call resttemplate (OrderClient) + 3 call feign (PaymentClient)
+    # + 1 serve générique @RequestMapping (RootController)
+    # + 6 serve Spring Data REST + 1 Swagger UI + 1 Actuator
+    # + 5 call resttemplate (OrderClient) + 2 call exchange (ExchangeClient)
+    # + 1 call exchange via config-server (CloudExchangeClient)
+    # + 3 call feign (PaymentClient) + 2 call feign résolus (ResolvedFeignClient)
+    # + 2 call feign via config-server (CloudFeignClient)
     # + 3 call webclient (WebClientCaller)
-    assert len(endpoints) == 24
+    assert len(endpoints) == 40
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}
-    assert {e.framework for e in endpoints} == {"spring", "resttemplate", "feign", "webclient"}
+    assert {e.framework for e in endpoints} == {
+        "spring",
+        "spring-data-rest",
+        "spring-actuator",
+        "swagger-ui",
+        "resttemplate",
+        "feign",
+        "webclient",
+    }
 
 
 def test_parse_semgrep_endpoints_missing_role_raises_semgrep_error() -> None:

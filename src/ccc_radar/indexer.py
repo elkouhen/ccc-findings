@@ -8,10 +8,12 @@ import numpy as np
 
 from ccc_radar.config import Config
 from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
+from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
+    infer_framework_endpoints,
     invoke_semgrep_raw,
     parse_semgrep_endpoints,
     parse_semgrep_json,
@@ -214,6 +216,9 @@ def index_repo(
     # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
     # pas tels qu'un `cccr index` précédent les avait mémorisés.
     clear_analysis_caches()
+    endpoint_signature = current_endpoint_inventory_signature()
+    if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
+        full = True
 
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
@@ -259,6 +264,7 @@ def index_repo(
             if SEVERITY_ORDER.index(f.severity) >= min_index
         ]
         endpoints = parse_semgrep_endpoints(raw, repo_root)
+        endpoints.extend(infer_framework_endpoints(repo_root, changed))
 
         store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
@@ -267,6 +273,8 @@ def index_repo(
 
         for path in changed:
             store.set_file_hash(path, current_hashes[path])
+
+    store.set_meta("endpoint_inventory_signature", endpoint_signature)
 
     if index_code_chunks:
         chunk_paths = changed
@@ -296,7 +304,7 @@ def index_repo(
     signature = _embedder_signature(embedder, config)
     if store.get_meta("embedding_signature") != signature:
         store.set_meta("embedding_signature", signature)
-        store.set_meta("embedding_model", config.embedding_model)
+        store.set_meta("embedding_model", str(getattr(embedder, "model_name", config.embedding_model)))
         store.set_meta("embedding_dim", "")
         dim = _embed_findings(embedder, store, store.all_findings())
         if dim is not None:

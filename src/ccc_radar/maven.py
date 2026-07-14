@@ -5,9 +5,12 @@ entre `workspace.py` (fédération multi-services, BACKLOG-11 A2) et `scanner.py
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
+import re
 
 _MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
 _SPRING_BOOT_PLUGIN_MARKER = "spring-boot-maven-plugin"
+_MAIN_METHOD_RE = re.compile(r"\bstatic\s+void\s+main\s*\(")
+_SPRING_APPLICATION_RUN_RE = re.compile(r"SpringApplication\.run\(")
 
 
 def _pom_child_text(root: ET.Element, tag: str) -> str | None:
@@ -17,24 +20,53 @@ def _pom_child_text(root: ET.Element, tag: str) -> str | None:
     return element.text.strip() if element is not None and element.text else None
 
 
-def parse_pom(pom_path: Path) -> tuple[str | None, bool]:
-    """Renvoie (artifactId, is_spring_boot_app). Un pom.xml illisible ou mal
-    formé renvoie (None, False) plutôt que de faire échouer toute la
+def _is_spring_boot_main_class(text: str) -> bool:
+    return bool(_MAIN_METHOD_RE.search(text)) and bool(_SPRING_APPLICATION_RUN_RE.search(text))
+
+
+@lru_cache(maxsize=256)
+def _module_has_spring_boot_main_class(module_dir_str: str) -> bool:
+    module_dir = Path(module_dir_str)
+    source_root = module_dir / "src" / "main" / "java"
+    if not source_root.is_dir():
+        return False
+    for java_file in source_root.rglob("*.java"):
+        try:
+            text = java_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _is_spring_boot_main_class(text):
+            return True
+    return False
+
+
+def parse_pom(pom_path: Path) -> tuple[str | None, bool, str | None]:
+    """Renvoie (artifactId, is_spring_boot_app, packaging). Un pom.xml illisible ou mal
+    formé renvoie (None, False, None) plutôt que de faire échouer toute la
     découverte — un seul module cassé ne doit pas bloquer les autres."""
     try:
         text = pom_path.read_text(encoding="utf-8", errors="replace")
         root = ET.fromstring(text)
     except (ET.ParseError, OSError):
-        return None, False
+        return None, False, None
     artifact_id = _pom_child_text(root, "artifactId")
-    is_spring_boot_app = _SPRING_BOOT_PLUGIN_MARKER in text
-    return artifact_id, is_spring_boot_app
+    packaging = _pom_child_text(root, "packaging")
+    is_spring_boot_app = _SPRING_BOOT_PLUGIN_MARKER in text or _module_has_spring_boot_main_class(
+        str(pom_path.parent)
+    )
+    return artifact_id, is_spring_boot_app, packaging
+
+
+def is_runtime_service(packaging: str | None, is_spring_boot_app: bool) -> bool:
+    """Un parent/agrégateur Maven `packaging=pom` n'est jamais un service
+    runtime, même s'il déclare le plugin Spring Boot pour ses enfants."""
+    return packaging != "pom" and is_spring_boot_app
 
 
 @lru_cache(maxsize=512)
 def _cached_module_name(pom_path_str: str) -> str:
     pom_path = Path(pom_path_str)
-    artifact_id, _ = parse_pom(pom_path)
+    artifact_id, _, _ = parse_pom(pom_path)
     return artifact_id or pom_path.parent.name
 
 
@@ -44,6 +76,7 @@ def clear_caches() -> None:
     chemin de pom.xml pour toute la durée du process, un artifactId modifié
     entre deux `cccr index` resterait sinon périmé."""
     _cached_module_name.cache_clear()
+    _module_has_spring_boot_main_class.cache_clear()
 
 
 def module_name_for_path(repo_root: Path, rel_path: str) -> str | None:

@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from ccc_radar.embedder import Embedder, finding_to_text, make_embedder
+from ccc_radar.config import DEFAULT_EMBEDDING_MODEL
+import ccc_radar.embedder as embedder_module
+from ccc_radar.embedder import Embedder, finding_to_text, make_embedder, resolve_embedding_model
 from ccc_radar.models import Finding
 
 
@@ -44,9 +48,26 @@ def test_make_embedder_reuses_cached_instances(monkeypatch: pytest.MonkeyPatch) 
     assert getattr(first, "signature") == "fake:test-cache-model:8"
 
 
+def test_resolve_embedding_model_falls_back_to_local_default_for_remote_identifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local_model = tmp_path / "local-model"
+    local_model.mkdir()
+    monkeypatch.setattr(embedder_module, "DEFAULT_EMBEDDING_MODEL", str(local_model))
+
+    resolved, warning = resolve_embedding_model("Snowflake/snowflake-arctic-embed-xs")
+
+    assert resolved == str(local_model)
+    assert warning is not None
+    assert "Snowflake/snowflake-arctic-embed-xs" in warning
+
+
 @pytest.mark.slow
 def test_embed_texts_returns_normalized_vectors() -> None:
-    embedder = Embedder("Snowflake/snowflake-arctic-embed-xs")
+    if not Path(DEFAULT_EMBEDDING_MODEL).expanduser().exists():
+        pytest.skip(f"Modèle local absent: {DEFAULT_EMBEDDING_MODEL}")
+
+    embedder = Embedder(DEFAULT_EMBEDDING_MODEL)
 
     vectors = embedder.embed_texts(["injection SQL", "appel shell dangereux"])
 

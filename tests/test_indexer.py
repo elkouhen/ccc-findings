@@ -7,6 +7,7 @@ import pytest
 
 from ccc_radar.config import Config
 from ccc_radar.indexer import _is_test_source, index_repo
+from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
 from ccc_radar.store import Store
 
@@ -296,6 +297,22 @@ def test_index_repo_second_run_without_changes_leaves_endpoints_untouched(
     assert report.scanned == 0
     assert report.endpoints_added == 0
     assert len(endpoints) == 2
+
+
+@pytest.mark.integration
+def test_index_repo_rescans_all_files_when_endpoint_inventory_signature_is_stale(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        first_report = index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+        store.set_meta("endpoint_inventory_signature", "endpoint-inventory-v0")
+
+        report = index_repo(endpoint_repo_copy, config, store, FakeEmbedder())
+
+        assert report.scanned == first_report.scanned
+        assert store.get_meta("endpoint_inventory_signature") == current_endpoint_inventory_signature()
 
 
 @pytest.fixture

@@ -199,6 +199,10 @@ _SPRING_PROFILE_PATTERNS = (
     "bootstrap-*.yaml",
     "bootstrap-*.properties",
 )
+_SPRING_CLOUD_CONFIG_DIR_PATTERNS = (
+    "src/main/resources/configurations",
+    "configurations",
+)
 
 
 def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
@@ -237,7 +241,31 @@ _CLASS_DECL_RE = re.compile(
     r"(?:class|interface|record)\s+\w+"
 )
 _MAPPING_ANNOTATION_RE = re.compile(r"@\w+Mapping\s*(?:\(([^)]*)\))?")
+_REQUEST_MAPPING_RE = re.compile(r"@RequestMapping\s*(?:\(([^)]*)\))?")
+_REQUEST_MAPPING_BLOCK_RE = re.compile(r"@RequestMapping\s*(?:\((.*?)\))?", re.DOTALL)
 _NON_PATH_MAPPING_ATTRS = {"method", "produces", "consumes", "headers", "params", "name"}
+_REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]*)\))?")
+_FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
+_NAMED_STRING_ARG_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
+_ENABLE_SWAGGER2_RE = re.compile(r"@EnableSwagger2\b")
+_METHOD_DECL_RE = re.compile(
+    r"^\s*(?:public|private|protected)?(?:\s+static)?(?:\s+final)?[\w<>\[\], ?]+\s+\w+\s*\([^;]*\)\s*\{?"
+)
+_MESSAGE_BUILDER_ASSIGNMENT_RE = re.compile(
+    r"^\s*(?:[\w<>\[\], ?]+|var)\s+(\w+)\s*=\s*MessageBuilder\b"
+)
+_MESSAGE_BUILDER_TOPIC_RE = re.compile(
+    r"\.setHeader\(\s*(?:TOPIC|KafkaHeaders\.TOPIC)\s*,\s*([^)]+?)\s*\)"
+)
+_MESSAGE_SEND_RE = re.compile(r"\.send\(\s*(\w+)\s*\)\s*;")
+_REST_TEMPLATE_CALL_RE = re.compile(
+    r"\.(getForObject|getForEntity|postForObject|postForEntity|put|delete)\(\s*(.+?)\s*(?:,|\))",
+    re.DOTALL,
+)
+_REST_TEMPLATE_EXCHANGE_RE = re.compile(
+    r"\.exchange\(\s*(.+?)\s*,\s*(?:HttpMethod\.)?([A-Z]+)\s*,",
+    re.DOTALL,
+)
 
 
 def _mapping_args_have_only_non_path_attrs(args: str) -> bool:
@@ -260,6 +288,119 @@ def _mapping_args_have_only_non_path_attrs(args: str) -> bool:
     return True
 
 
+def _mapping_args_have_http_method(args: str) -> bool:
+    return "method" in args
+
+
+def _next_declaration_line(lines: list[str], start_idx: int) -> int | None:
+    for idx in range(start_idx, len(lines)):
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("@"):
+            continue
+        return idx
+    return None
+
+
+def _named_string_arg(args: str, key: str) -> str | None:
+    for match in _NAMED_STRING_ARG_RE.finditer(args):
+        if match.group(1) == key:
+            return match.group(2)
+    return None
+
+
+def _split_java_concat(expr: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in expr:
+        if quote is not None:
+            current.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            current.append(ch)
+            continue
+        if ch == "+":
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+            continue
+        current.append(ch)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _resolve_rest_path_expression(
+    expr: str, repo_root: Path, source_path: str
+) -> tuple[str, bool]:
+    resolved_parts: list[str] = []
+    dynamic = False
+    for part in _split_java_concat(expr.strip()):
+        if len(part) >= 2 and part[0] == part[-1] == '"':
+            literal = part[1:-1]
+            placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
+            if placeholder is not None:
+                resolved = resolve_spring_property(repo_root, placeholder.group(1), source_path)
+                if resolved is None:
+                    dynamic = True
+                    continue
+                resolved_parts.append(resolved)
+                continue
+            resolved_parts.append(literal)
+            continue
+        if re.fullmatch(r"[A-Za-z_]\w*", part):
+            resolved = _resolve_value_annotated_variable(repo_root, source_path, part)
+            if resolved is None:
+                dynamic = True
+                continue
+            resolved_parts.append(resolved)
+            continue
+        dynamic = True
+    raw = "".join(resolved_parts).strip()
+    if not raw:
+        return "<dynamic>", True
+    return _normalize_rest_path(raw), dynamic
+
+
+def _annotation_block_before_declaration(lines: list[str], decl_idx: int) -> str:
+    block: list[str] = []
+    idx = decl_idx - 1
+    while idx >= 0:
+        stripped = lines[idx].strip()
+        if not stripped:
+            if block:
+                break
+            idx -= 1
+            continue
+        if stripped.startswith("@"):
+            block.append(lines[idx])
+            idx -= 1
+            continue
+        if block:
+            if _CLASS_DECL_RE.match(lines[idx]) or _METHOD_DECL_RE.match(lines[idx]):
+                break
+            block.append(lines[idx])
+            idx -= 1
+            continue
+        if stripped.endswith(("(", ")", ",")) or "=" in stripped:
+            block.append(lines[idx])
+            idx -= 1
+            continue
+        break
+    annotation_block = "\n".join(reversed(block))
+    return annotation_block if "@" in annotation_block else ""
+
+
 @lru_cache(maxsize=1024)
 def _class_base_path(repo_root_str: str, source_path: str, start_line: int) -> tuple[str, bool]:
     """Chemin `@RequestMapping` de la classe/interface qui englobe la
@@ -280,22 +421,38 @@ def _class_base_path(repo_root_str: str, source_path: str, start_line: int) -> t
     if class_line_idx is None:
         return "", False
 
-    annotation_idx = class_line_idx - 1
-    while annotation_idx >= 0:
-        stripped = lines[annotation_idx].strip()
-        if not stripped:
-            annotation_idx -= 1
-            continue
-        if not stripped.startswith("@"):
-            break
-        if stripped.startswith("@RequestMapping"):
-            match = _MAPPING_ANNOTATION_RE.match(stripped)
-            args = match.group(1) or "" if match is not None else ""
-            literal, _ = _find_first_literal(args)
-            if literal is not None:
-                return literal, False
-            return "", True  # @RequestMapping de classe présent mais valeur non littérale
-        annotation_idx -= 1
+    annotation_block = _annotation_block_before_declaration(lines, class_line_idx)
+    if not annotation_block:
+        return "", False
+
+    request_mapping = _REQUEST_MAPPING_BLOCK_RE.search(annotation_block)
+    if request_mapping is not None:
+        args = request_mapping.group(1) or ""
+        literal, _ = _find_first_literal(args)
+        if literal is not None:
+            return literal, False
+        return "", True  # @RequestMapping de classe présent mais valeur non littérale
+
+    feign_client = _FEIGN_CLIENT_RE.search(annotation_block)
+    if feign_client is not None:
+        args = feign_client.group(1) or ""
+        prefix = ""
+        dynamic = False
+        for key in ("url", "path"):
+            value = _named_string_arg(args, key)
+            if value is None:
+                continue
+            resolved, part_dynamic = _resolve_rest_path_expression(
+                f'"{value}"', Path(repo_root_str), source_path
+            )
+            dynamic = dynamic or part_dynamic
+            if resolved == "<dynamic>":
+                continue
+            prefix = _join_rest_paths(prefix, resolved) if prefix else resolved
+        if prefix:
+            return prefix, dynamic
+        if dynamic:
+            return "", True
 
     return "", False
 
@@ -354,6 +511,35 @@ def _normalize_rest_path(literal: str) -> str:
     if not normalized.startswith("/"):
         normalized = f"/{normalized}"
     return normalized or "/"
+
+
+def _build_endpoint(
+    repo_root: Path,
+    rel_path: str,
+    start_line: int,
+    end_line: int,
+    role: str,
+    system: str,
+    topic: str,
+    framework: str,
+    snippet: str,
+    topic_dynamic: bool = False,
+) -> MessageEndpoint:
+    return MessageEndpoint(
+        id=compute_endpoint_id(role, topic, rel_path, start_line, end_line),
+        role=role,
+        system=system,
+        topic=topic,
+        topic_dynamic=topic_dynamic,
+        source="code",
+        framework=framework,
+        path=rel_path,
+        start_line=start_line,
+        end_line=end_line,
+        snippet=snippet,
+        module=_module_for_path(repo_root, rel_path),
+        qualified_name=_java_qualified_name(str(repo_root), rel_path),
+    )
 
 
 def _flatten_properties(data: object, prefix: str = "") -> dict[str, str]:
@@ -417,6 +603,51 @@ def _discover_spring_property_files(
                     if candidate.is_file() and candidate not in seen:
                         seen.add(candidate)
                         discovered.append(str(candidate))
+    for candidate in _discover_spring_cloud_config_files(repo_root, source_path):
+        if candidate not in seen:
+            seen.add(candidate)
+            discovered.append(str(candidate))
+    return tuple(discovered)
+
+
+def _local_spring_application_names(repo_root: Path, source_path: str | None) -> tuple[str, ...]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for root in _candidate_spring_roots(repo_root, source_path):
+        for config_dir in (root / "src" / "main" / "resources", root):
+            for filename in _SPRING_BASE_FILENAMES:
+                candidate = config_dir / filename
+                if not candidate.is_file():
+                    continue
+                name = _load_flat_spring_properties(str(candidate)).get("spring.application.name")
+                if name and name not in seen:
+                    seen.add(name)
+                    names.append(name)
+            for pattern in _SPRING_PROFILE_PATTERNS:
+                for candidate in sorted(config_dir.glob(pattern)):
+                    if not candidate.is_file():
+                        continue
+                    name = _load_flat_spring_properties(str(candidate)).get("spring.application.name")
+                    if name and name not in seen:
+                        seen.add(name)
+                        names.append(name)
+    return tuple(names)
+
+
+def _discover_spring_cloud_config_files(
+    repo_root: Path, source_path: str | None
+) -> tuple[Path, ...]:
+    discovered: list[Path] = []
+    seen: set[Path] = set()
+    for app_name in _local_spring_application_names(repo_root, source_path):
+        for config_dir_pattern in _SPRING_CLOUD_CONFIG_DIR_PATTERNS:
+            for suffix in (".yml", ".yaml", ".properties"):
+                for candidate in sorted(
+                    repo_root.glob(f"**/{config_dir_pattern}/{app_name}{suffix}")
+                ):
+                    if candidate.is_file() and candidate not in seen:
+                        seen.add(candidate)
+                        discovered.append(candidate)
     return tuple(discovered)
 
 
@@ -452,6 +683,325 @@ def resolve_spring_property(
         if key in flat:
             return flat[key]
     return default or None
+
+
+def _infer_generic_request_mapping_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    endpoints: list[MessageEndpoint] = []
+    for idx, line in enumerate(lines):
+        match = _REQUEST_MAPPING_RE.search(line)
+        if match is None:
+            continue
+        args = match.group(1) or ""
+        if _mapping_args_have_http_method(args):
+            continue
+        decl_idx = _next_declaration_line(lines, idx + 1)
+        if decl_idx is None or _CLASS_DECL_RE.match(lines[decl_idx]):
+            continue
+        if not _METHOD_DECL_RE.match(lines[decl_idx]):
+            continue
+        snippet = "\n".join(lines[idx : decl_idx + 1])
+        route, dynamic = _extract_rest_path(snippet, repo_root, rel_path, decl_idx + 1)
+        endpoints.append(
+            _build_endpoint(
+                repo_root,
+                rel_path,
+                decl_idx + 1,
+                decl_idx + 1,
+                "serve",
+                "rest",
+                f"ANY {route}",
+                "spring",
+                snippet,
+                topic_dynamic=dynamic,
+            )
+        )
+    return endpoints
+
+
+def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    endpoints: list[MessageEndpoint] = []
+    for idx, line in enumerate(lines):
+        match = _REPOSITORY_REST_RESOURCE_RE.search(line)
+        if match is None:
+            continue
+        rest_path = _named_string_arg(match.group(1) or "", "path")
+        if not rest_path:
+            continue
+        base_path = _normalize_rest_path(rest_path)
+        for topic in (
+            f"GET {base_path}",
+            f"POST {base_path}",
+            f"GET {base_path}/{{id}}",
+            f"PUT {base_path}/{{id}}",
+            f"PATCH {base_path}/{{id}}",
+            f"DELETE {base_path}/{{id}}",
+        ):
+            endpoints.append(
+                _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    idx + 1,
+                    idx + 1,
+                    "serve",
+                    "rest",
+                    topic,
+                    "spring-data-rest",
+                    line.strip(),
+                )
+            )
+    return endpoints
+
+
+def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for idx, line in enumerate(lines):
+        if _ENABLE_SWAGGER2_RE.search(line):
+            return [
+                _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    idx + 1,
+                    idx + 1,
+                    "serve",
+                    "rest",
+                    "GET /swagger-ui.html",
+                    "swagger-ui",
+                    line.strip(),
+                )
+            ]
+    return []
+
+
+def _infer_actuator_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    value = _load_flat_spring_properties(str(path)).get("management.endpoints.web.exposure.include")
+    if value is None or "*" not in value:
+        return []
+    start_line = 1
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if "management.endpoints.web.exposure.include" in line:
+            start_line = idx
+            break
+    return [
+        _build_endpoint(
+            repo_root,
+            rel_path,
+            start_line,
+            start_line,
+            "serve",
+            "rest",
+            "GET /actuator/**",
+            "spring-actuator",
+            "management.endpoints.web.exposure.include=*",
+        )
+    ]
+
+
+@lru_cache(maxsize=512)
+def _file_uses_resttemplate(repo_root_str: str, rel_path: str) -> bool:
+    path = Path(repo_root_str) / rel_path
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return (
+        "org.springframework.web.client.RestTemplate" in text
+        or "new RestTemplate(" in text
+        or " RestTemplate " in text
+    )
+
+
+def _extract_resttemplate_path(
+    snippet: str, repo_root: Path, source_path: str
+) -> tuple[str, bool] | None:
+    match = _REST_TEMPLATE_CALL_RE.search(snippet)
+    if match is not None:
+        return _resolve_rest_path_expression(match.group(2), repo_root, source_path)
+    exchange_match = _REST_TEMPLATE_EXCHANGE_RE.search(snippet)
+    if exchange_match is not None:
+        return _resolve_rest_path_expression(exchange_match.group(1), repo_root, source_path)
+    return None
+
+
+def _infer_resttemplate_exchange_endpoints(
+    repo_root: Path, rel_path: str
+) -> list[MessageEndpoint]:
+    if not _file_uses_resttemplate(str(repo_root), rel_path):
+        return []
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    inferred: list[MessageEndpoint] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if ".exchange(" not in line:
+            idx += 1
+            continue
+        block_lines = [line]
+        block_end = idx
+        while block_end + 1 < len(lines):
+            if ");" in lines[block_end]:
+                break
+            block_end += 1
+            block_lines.append(lines[block_end])
+            if ");" in lines[block_end]:
+                break
+        snippet = "\n".join(block_lines)
+        match = _REST_TEMPLATE_EXCHANGE_RE.search(snippet)
+        if match is not None:
+            http_method = match.group(2).split(".")[-1]
+            route, dynamic = _resolve_rest_path_expression(match.group(1), repo_root, rel_path)
+            inferred.append(
+                _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    idx + 1,
+                    block_end + 1,
+                    "call",
+                    "rest",
+                    f"{http_method} {route}",
+                    "resttemplate",
+                    snippet,
+                    topic_dynamic=dynamic,
+                )
+            )
+        idx = block_end + 1
+    return inferred
+
+
+def _resolve_topic_expression(
+    expr: str, repo_root: Path, source_path: str
+) -> tuple[str, bool]:
+    expr = expr.strip()
+    if len(expr) >= 2 and expr[0] == expr[-1] == '"':
+        literal = expr[1:-1]
+        placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
+        if placeholder is not None:
+            resolved = resolve_spring_property(repo_root, placeholder.group(1), source_path)
+            if resolved is not None:
+                return resolved, False
+            return literal, True
+        return literal, False
+    if re.fullmatch(r"[A-Za-z_]\w*", expr):
+        resolved = _resolve_value_annotated_variable(repo_root, source_path, expr)
+        if resolved is not None:
+            return resolved, False
+    return "<dynamic>", True
+
+
+def _infer_message_builder_kafka_producers(
+    repo_root: Path, rel_path: str
+) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    builders: dict[str, list[tuple[str, bool, int, str]]] = {}
+    inferred: list[MessageEndpoint] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        match = _MESSAGE_BUILDER_ASSIGNMENT_RE.match(line)
+        if match is None:
+            idx += 1
+            continue
+        var_name = match.group(1)
+        block_lines = [line]
+        block_end = idx
+        while block_end + 1 < len(lines):
+            if ".build()" in lines[block_end]:
+                break
+            block_end += 1
+            block_lines.append(lines[block_end])
+            if ".build()" in lines[block_end]:
+                break
+        block_snippet = "\n".join(block_lines)
+        topic_match = _MESSAGE_BUILDER_TOPIC_RE.search(block_snippet)
+        if topic_match is not None:
+            topic, dynamic = _resolve_topic_expression(
+                topic_match.group(1), repo_root, rel_path
+            )
+            builders.setdefault(var_name, []).append((topic, dynamic, idx + 1, block_snippet))
+        idx = block_end + 1
+
+    for line_no, line in enumerate(lines, start=1):
+        send_match = _MESSAGE_SEND_RE.search(line)
+        if send_match is None:
+            continue
+        candidates = builders.get(send_match.group(1), [])
+        built_message = None
+        for candidate in candidates:
+            if candidate[2] <= line_no:
+                built_message = candidate
+        if built_message is None:
+            continue
+        topic, dynamic, _, builder_snippet = built_message
+        inferred.append(
+            _build_endpoint(
+                repo_root,
+                rel_path,
+                line_no,
+                line_no,
+                "produce",
+                "kafka",
+                topic,
+                "spring-kafka",
+                f"{builder_snippet}\n{line.strip()}",
+                topic_dynamic=dynamic,
+            )
+        )
+    return inferred
+
+
+def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -> list[MessageEndpoint]:
+    if files is None:
+        candidate_files = [
+            path.relative_to(repo_root).as_posix() for path in repo_root.rglob("*") if path.is_file()
+        ]
+    else:
+        candidate_files = sorted(files)
+
+    inferred: dict[str, MessageEndpoint] = {}
+    for rel_path in candidate_files:
+        if rel_path.endswith(".java"):
+            for endpoint in (
+                _infer_generic_request_mapping_endpoints(repo_root, rel_path)
+                + _infer_spring_data_rest_endpoints(repo_root, rel_path)
+                + _infer_swagger_endpoint(repo_root, rel_path)
+                + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
+                + _infer_message_builder_kafka_producers(repo_root, rel_path)
+            ):
+                inferred[endpoint.id] = endpoint
+        elif rel_path.endswith((".properties", ".yml", ".yaml")):
+            for endpoint in _infer_actuator_endpoint(repo_root, rel_path):
+                inferred[endpoint.id] = endpoint
+    return list(inferred.values())
 
 
 @lru_cache(maxsize=512)
@@ -565,7 +1115,17 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 raise SemgrepError(
                     f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
                 ) from exc
-            route, dynamic = _extract_rest_path(snippet, repo_root, path, start_line)
+            framework = metadata.get("framework")
+            if framework == "resttemplate":
+                if not _file_uses_resttemplate(str(repo_root), path):
+                    continue
+                extracted = _extract_resttemplate_path(snippet, repo_root, path)
+                if extracted is not None:
+                    route, dynamic = extracted
+                else:
+                    route, dynamic = _extract_rest_path(snippet, repo_root, path, start_line)
+            else:
+                route, dynamic = _extract_rest_path(snippet, repo_root, path, start_line)
             topic = f"{http_method} {route}"
         else:
             topic, dynamic = _extract_kafka_topic(snippet, repo_root, path)
@@ -636,7 +1196,9 @@ def run_semgrep_endpoints(
     (BACKLOG-10 K11) — pas de filtre `min_severity` : ce ne sont pas des
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
     raw = invoke_semgrep_raw(repo_root, config, files)
-    return parse_semgrep_endpoints(raw, repo_root)
+    endpoints = parse_semgrep_endpoints(raw, repo_root)
+    endpoints.extend(infer_framework_endpoints(repo_root, files))
+    return endpoints
 
 
 def clear_analysis_caches() -> None:
@@ -652,5 +1214,6 @@ def clear_analysis_caches() -> None:
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()
     _class_base_path.cache_clear()
+    _file_uses_resttemplate.cache_clear()
     maven_module.clear_caches()
     gradle_module.clear_caches()

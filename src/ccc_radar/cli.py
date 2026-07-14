@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -7,7 +8,7 @@ import typer
 from ccc_radar import __version__
 from ccc_radar.code_search import search_code_with_findings
 from ccc_radar.config import ConfigError, init_config, load_config
-from ccc_radar.embedder import EmbeddingError, make_embedder
+from ccc_radar.embedder import EmbeddingError, make_embedder, resolve_embedding_model
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
 from ccc_radar.flow import (
     FlowError,
@@ -27,6 +28,7 @@ from ccc_radar.graph import (
     rank_hotspots,
 )
 from ccc_radar.indexer import index_repo
+from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.models import MessageEndpoint
 from ccc_radar.render import (
     render_code_search_text,
@@ -48,7 +50,7 @@ from ccc_radar.render import (
 from ccc_radar.scanner import SemgrepError
 from ccc_radar.search import SearchError, search_findings
 from ccc_radar.search import summary as compute_summary
-from ccc_radar.paths import db_path
+from ccc_radar.paths import config_path, db_path, state_dir
 from ccc_radar.store import Store
 from ccc_radar.workspace import discover_maven_services, load_federation
 
@@ -58,6 +60,17 @@ app = typer.Typer(
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_PACK = "p/security-audit"
+DEFAULT_RULE_PACKS = ("default", "liveness", "rest", "kafka", "kafka-security")
+_SKILL_RULES_ROOT_CANDIDATES = (
+    ("ccc-radar-skill", "skills", "cccr", "rules"),
+    ("cocoindex-ext-skill", "skills", "cccr", "rules"),
+)
+
+
+def _current_repo_endpoint_warning(store: Store) -> str | None:
+    return endpoint_inventory_warning(
+        store.get_meta("endpoint_inventory_signature"), scope="ce projet"
+    )
 
 
 @app.callback()
@@ -78,6 +91,34 @@ def _detect_semgrep_config(repo_root: Path) -> str | None:
     return None
 
 
+def _find_skill_rules_root() -> Path | None:
+    home = Path.home()
+    for parts in _SKILL_RULES_ROOT_CANDIDATES:
+        candidate = home.joinpath(*parts)
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _install_default_rule_packs(repo_root: Path, rules_root: Path) -> list[str]:
+    missing = [pack for pack in DEFAULT_RULE_PACKS if not (rules_root / pack).is_dir()]
+    if missing:
+        raise ConfigError(
+            "Packs de règles introuvables dans "
+            f"{rules_root} : {', '.join(missing)}."
+        )
+
+    destination_root = state_dir(repo_root) / "rules"
+    destination_root.mkdir(parents=True, exist_ok=True)
+    installed_paths: list[str] = []
+    for pack in DEFAULT_RULE_PACKS:
+        source_dir = rules_root / pack
+        target_dir = destination_root / pack
+        shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+        installed_paths.append(f".cccr/rules/{pack}")
+    return installed_paths
+
+
 @app.command()
 def init(
     rules: Optional[list[str]] = typer.Option(  # noqa: UP007 (Typer nécessite Optional)
@@ -86,6 +127,9 @@ def init(
 ) -> None:
     """Initialise la configuration .cccr/config.yml du projet."""
     repo_root = Path.cwd()
+    if config_path(repo_root).exists():
+        typer.echo(f"Une configuration existe déjà : {config_path(repo_root)}.", err=True)
+        raise typer.Exit(code=1)
 
     rules_paths = list(rules) if rules else None
     if not rules_paths:
@@ -93,12 +137,30 @@ def init(
         if detected is not None:
             rules_paths = [detected]
         else:
-            rules_paths = [DEFAULT_REGISTRY_PACK]
-            typer.echo(
-                f"Aucune config Semgrep détectée. Utilisation du pack par défaut "
-                f"'{DEFAULT_REGISTRY_PACK}' (relancez avec --rules "
-                "<chemin-ou-pack> pour le personnaliser)."
-            )
+            rules_root = _find_skill_rules_root()
+            if rules_root is not None:
+                try:
+                    rules_paths = _install_default_rule_packs(repo_root, rules_root)
+                except ConfigError:
+                    rules_paths = [DEFAULT_REGISTRY_PACK]
+                    typer.echo(
+                        "Aucune config Semgrep détectée et les packs du skill sont "
+                        f"incomplets sous {rules_root}. Utilisation du pack par défaut "
+                        f"'{DEFAULT_REGISTRY_PACK}' (relancez avec --rules "
+                        "<chemin-ou-pack> pour le personnaliser)."
+                    )
+                else:
+                    typer.echo(
+                        "Aucune config Semgrep détectée. Packs du skill copiés dans "
+                        f".cccr/rules/ : {', '.join(DEFAULT_RULE_PACKS)}."
+                    )
+            else:
+                rules_paths = [DEFAULT_REGISTRY_PACK]
+                typer.echo(
+                    f"Aucune config Semgrep détectée et repo skill introuvable. "
+                    f"Utilisation du pack par défaut '{DEFAULT_REGISTRY_PACK}' "
+                    "(relancez avec --rules <chemin-ou-pack> pour le personnaliser)."
+                )
 
     try:
         path = init_config(repo_root, rules_paths)
@@ -127,7 +189,10 @@ def index_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    embedder = make_embedder(config.embedding_model)
+    resolved_model, model_warning = resolve_embedding_model(config.embedding_model)
+    if model_warning is not None:
+        typer.echo(f"⚠ {model_warning}")
+    embedder = make_embedder(resolved_model)
 
     try:
         with Store(repo_root) as store:
@@ -269,11 +334,12 @@ def endpoints_cmd(
         endpoints = store.all_endpoints(
             system=system, role=role, topic=topic, path_glob=path, module=module
         )
+        warning = _current_repo_endpoint_warning(store)
 
     if json_output:
         typer.echo(json.dumps(render_endpoints_json(endpoints)))
     else:
-        typer.echo(render_endpoints_text(endpoints))
+        typer.echo(render_endpoints_text(endpoints, [warning] if warning else []))
 
 
 @app.command(name="graph")
@@ -309,6 +375,7 @@ def graph_cmd(
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
         findings = store.all_findings()
+        repo_warning = _current_repo_endpoint_warning(store)
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
@@ -316,12 +383,12 @@ def graph_cmd(
     edges: list[GraphEdge] = []
     cycles = []
     hotspots = []
-    warnings: list[str] = []
+    warnings: list[str] = [repo_warning] if repo_warning else []
     cross_module_data_available = False
     if workspace is not None:
         discovered = discover_maven_services(workspace)
         federation = load_federation(discovered)
-        warnings = federation.warnings
+        warnings.extend(federation.warnings)
         services_by_name = federation.endpoints_by_service
         edges = build_graph(services_by_name)
         cycles = find_cycles(edges)
@@ -425,8 +492,12 @@ def flow_cmd(
             endpoints = store.all_endpoints()
             endpoints_by_service = group_endpoints_by_module_for_flow(endpoints)
             findings_by_service = group_findings_by_module_for_flow(store.all_findings())
+            warnings = []
+            repo_warning = _current_repo_endpoint_warning(store)
+            if repo_warning is not None:
+                warnings.append(repo_warning)
             try:
-                result = trace_flow(query, endpoints_by_service, findings_by_service)
+                result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
             except FlowError as exc:
                 fallback_topic = None
                 try:
@@ -440,7 +511,9 @@ def flow_cmd(
                 if fallback_topic is None:
                     typer.echo(str(exc), err=True)
                     raise typer.Exit(code=2) from exc
-                result = trace_flow(fallback_topic, endpoints_by_service, findings_by_service)
+                result = trace_flow(
+                    fallback_topic, endpoints_by_service, findings_by_service, warnings
+                )
 
     rendered = render_flow_json(result)
     if json_output:

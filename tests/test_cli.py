@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ccc_radar.cli import app
+import ccc_radar.embedder as embedder_module
+from ccc_radar.cli import DEFAULT_RULE_PACKS, app
 from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
 
@@ -15,6 +16,15 @@ ENDPOINT_INDEX_REPO = FIXTURES_DIR / "endpoint_index_repo"
 MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
 
 runner = CliRunner()
+
+
+def install_fake_skill_rules(home: Path, packs: tuple[str, ...] = DEFAULT_RULE_PACKS) -> Path:
+    rules_root = home / "ccc-radar-skill" / "skills" / "cccr" / "rules"
+    for pack in packs:
+        pack_dir = rules_root / pack
+        pack_dir.mkdir(parents=True, exist_ok=True)
+        (pack_dir / "java.yaml").write_text("rules: []\n")
+    return rules_root
 
 
 @pytest.fixture
@@ -29,6 +39,38 @@ def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "p/security-audit" in result.output
+    config_content = (tmp_path / ".cccr" / "config.yml").read_text()
+    assert "p/security-audit" in config_content
+
+
+def test_init_without_semgrep_config_installs_all_skill_packs_when_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    install_fake_skill_rules(Path.home())
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "default, liveness, rest, kafka, kafka-security" in result.output
+    config_content = (tmp_path / ".cccr" / "config.yml").read_text()
+    for pack in DEFAULT_RULE_PACKS:
+        assert f".cccr/rules/{pack}" in config_content
+        assert (tmp_path / ".cccr" / "rules" / pack / "java.yaml").is_file()
+
+
+def test_init_without_semgrep_config_falls_back_when_skill_packs_are_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    install_fake_skill_rules(Path.home(), packs=("default", "liveness"))
 
     result = runner.invoke(app, ["init"])
 
@@ -554,3 +596,54 @@ def test_workspace_text_reports_no_modules_for_empty_directory(
 
     assert result.exit_code == 0
     assert "Aucun module Maven découvert" in result.output
+
+
+def test_index_falls_back_to_local_default_model_when_config_uses_remote_identifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "app.py").write_text("print('hello')\n")
+    local_model = tmp_path / "local-model"
+    local_model.mkdir()
+    monkeypatch.setattr(embedder_module, "DEFAULT_EMBEDDING_MODEL", str(local_model))
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text(
+        "rules:\n  - rules/rules.yml\nembedding_model: Snowflake/snowflake-arctic-embed-xs\n"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "rules.yml").write_text("rules: []\n")
+
+    result = runner.invoke(app, ["index"])
+
+    assert result.exit_code == 0
+    assert "Snowflake/snowflake-arctic-embed-xs" in result.output
+    with Store(tmp_path) as store:
+        assert store.get_meta("embedding_model") == str(local_model)
+
+
+def test_graph_json_reports_stale_endpoint_inventory_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    endpoint = MessageEndpoint(
+        id=compute_endpoint_id("consume", "orders.created", "app/Consumer.java", 5, 7),
+        role="consume",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Consumer.java",
+        start_line=5,
+        end_line=7,
+        snippet="",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Consumer.java"], [endpoint])
+        store.set_meta("endpoint_inventory_signature", "endpoint-inventory-v0")
+
+    result = runner.invoke(app, ["graph", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "inventaire d'endpoints potentiellement obsolète" in payload["note"]

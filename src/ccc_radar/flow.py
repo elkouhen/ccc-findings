@@ -146,10 +146,15 @@ def trace_flow(
         )
 
     sites: list[FlowSite] = []
+    seen_sites: set[tuple[str | None, str]] = set()
     for service, endpoints in endpoints_by_service.items():
         for endpoint in endpoints:
             if endpoint.topic != resolved:
                 continue
+            key = (service, endpoint.id)
+            if key in seen_sites:
+                continue
+            seen_sites.add(key)
             findings = [
                 f for f in findings_by_service.get(service, []) if _overlaps(f, endpoint)
             ]

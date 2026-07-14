@@ -224,6 +224,15 @@ def test_build_graph_creates_kafka_edges_on_matching_topic_only() -> None:
     assert edges[0].to_endpoint.path == "app/consumer.py"
 
 
+def test_build_graph_deduplicates_duplicate_edges() -> None:
+    call = make_endpoint("call", "GET /b-status", "a/Client.java", 5, 5)
+    serve = make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10)
+
+    edges = build_graph({"service-a": [call, call], "service-b": [serve, serve]})
+
+    assert len(edges) == 1
+
+
 # -- find_outbound_calls_in_consumers (CA2) --
 
 

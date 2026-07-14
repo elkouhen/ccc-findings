@@ -111,6 +111,18 @@ def test_trace_flow_reports_federation_warnings_verbatim() -> None:
     ]
 
 
+def test_trace_flow_deduplicates_duplicate_sites_for_same_service() -> None:
+    produce = make_endpoint("produce", "kafka", "orders.created", "a/Producer.java", 1, 1)
+
+    result = trace_flow(
+        "orders.created",
+        endpoints_by_service={"order-service": [produce, produce]},
+        findings_by_service={"order-service": []},
+    )
+
+    assert len(result.sites) == 1
+
+
 def test_trace_flow_single_project_uses_none_service() -> None:
     serve = make_endpoint("serve", "rest", "GET /orders/{id}", "app/Controller.java", 8, 10)
 

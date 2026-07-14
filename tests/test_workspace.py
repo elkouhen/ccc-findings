@@ -18,7 +18,9 @@ def workspace_copy(tmp_path: Path) -> Path:
     return dest
 
 
-def make_endpoint(role: str, system: str, topic: str, path: str) -> MessageEndpoint:
+def make_endpoint(
+    role: str, system: str, topic: str, path: str, module: str | None = None
+) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, 1, 1),
         role=role,
@@ -31,10 +33,11 @@ def make_endpoint(role: str, system: str, topic: str, path: str) -> MessageEndpo
         start_line=1,
         end_line=1,
         snippet="",
+        module=module,
     )
 
 
-def make_finding(path: str, severity: str) -> Finding:
+def make_finding(path: str, severity: str, module: str | None = None) -> Finding:
     return Finding(
         id=compute_finding_id("custom.rule", path, "snippet", 1, 1),
         rule_id="custom.rule",
@@ -47,6 +50,7 @@ def make_finding(path: str, severity: str) -> Finding:
         fix=None,
         cwe=[],
         owasp=[],
+        module=module,
     )
 
 
@@ -75,6 +79,109 @@ def test_discover_maven_services_detects_indexed_projects(workspace_copy: Path) 
     by_name = {s.name: s for s in services}
     assert by_name["order-service"].indexed is True
     assert by_name["payment-service"].indexed is False
+
+
+def test_discover_maven_services_skips_parent_aggregator_and_detects_main_class(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pom.xml").write_text(
+        """
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId>
+  <artifactId>root</artifactId>
+  <packaging>pom</packaging>
+</project>
+""".strip()
+    )
+    module = tmp_path / "billing-service"
+    (module / "src" / "main" / "java").mkdir(parents=True)
+    (module / "pom.xml").write_text(
+        """
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId>
+  <artifactId>billing-service</artifactId>
+</project>
+""".strip()
+    )
+    (module / "src" / "main" / "java" / "BillingApplication.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class BillingApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(BillingApplication.class, args);
+    }
+}
+""".strip()
+    )
+
+    services = discover_maven_services(tmp_path)
+
+    assert [service.name for service in services] == ["billing-service"]
+    assert services[0].kind == "microservice"
+
+
+def test_discover_maven_services_skips_parent_aggregator_even_with_spring_boot_plugin(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pom.xml").write_text(
+        """
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId>
+  <artifactId>root</artifactId>
+  <packaging>pom</packaging>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+""".strip()
+    )
+    module = tmp_path / "shipping-service"
+    (module / "src" / "main" / "java").mkdir(parents=True)
+    (module / "pom.xml").write_text(
+        """
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId>
+  <artifactId>shipping-service</artifactId>
+</project>
+""".strip()
+    )
+    (module / "src" / "main" / "java" / "ShippingApplication.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class ShippingApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(ShippingApplication.class, args);
+    }
+}
+""".strip()
+    )
+
+    services = discover_maven_services(tmp_path)
+
+    assert [service.name for service in services] == ["shipping-service"]
+
+
+def test_load_federation_reports_stale_endpoint_inventory_as_warning(workspace_copy: Path) -> None:
+    endpoint = make_endpoint("serve", "rest", "GET /orders", "app/OrderController.java")
+    with Store(workspace_copy / "service-a") as store:
+        store.replace_endpoints_for_files(["app/OrderController.java"], [endpoint])
+        store.set_meta("endpoint_inventory_signature", "endpoint-inventory-v0")
+
+    services = discover_maven_services(workspace_copy)
+    result = load_federation(services)
+
+    assert any("order-service" in warning and "obsolète" in warning for warning in result.warnings)
 
 
 def test_discover_maven_services_falls_back_to_directory_name_on_broken_pom(
@@ -121,6 +228,27 @@ def test_load_federation_includes_shared_module_findings_but_not_endpoints(
     # un module partagé n'est jamais une source d'endpoints (A2 CA5), même
     # indexé
     assert "common-lib" not in result.endpoints_by_service
+
+
+def test_load_federation_reads_child_modules_from_parent_index(workspace_copy: Path) -> None:
+    root_finding = make_finding("service-a/src/main/java/App.java", "WARNING", module="order-service")
+    root_endpoint = make_endpoint(
+        "serve",
+        "rest",
+        "GET /orders",
+        "service-a/src/main/java/OrderController.java",
+        module="order-service",
+    )
+    with Store(workspace_copy) as store:
+        store.replace_findings_for_files([root_finding.path], [root_finding])
+        store.replace_endpoints_for_files([root_endpoint.path], [root_endpoint])
+
+    services = discover_maven_services(workspace_copy)
+    result = load_federation(services)
+
+    assert [e.topic for e in result.endpoints_by_service["order-service"]] == ["GET /orders"]
+    assert len(result.findings_by_service["order-service"]) == 1
+    assert not any("order-service" in warning and "non indexé" in warning for warning in result.warnings)
 
 
 def test_load_federation_reports_incompatible_schema_as_warning_not_crash(

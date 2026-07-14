@@ -19,6 +19,7 @@ from ccc_radar.mcp_server import (
     trace_message_flow,
 )
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -335,6 +336,7 @@ def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
     with Store(tmp_path) as store:
         store.replace_endpoints_for_files(["app/Producer.java", "app/Consumer.java"], [produce, consume])
         store.replace_findings_for_files(["app/Producer.java"], [finding])
+        store.set_meta("endpoint_inventory_signature", current_endpoint_inventory_signature())
 
     result = trace_message_flow("orders.created")
 
@@ -343,6 +345,32 @@ def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
     assert by_path["app/Producer.java"]["finding_rule_ids"] == ["cccr.demo.fire-and-forget"]
     assert by_path["app/Consumer.java"]["finding_rule_ids"] == []
     assert result["warnings"] == []
+
+
+def test_trace_message_flow_tool_reports_stale_endpoint_inventory_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    produce = MessageEndpoint(
+        id=compute_endpoint_id("produce", "orders.created", "app/Producer.java", 10, 10),
+        role="produce",
+        system="kafka",
+        topic="orders.created",
+        topic_dynamic=False,
+        source="code",
+        framework="spring-kafka",
+        path="app/Producer.java",
+        start_line=10,
+        end_line=10,
+        snippet="",
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(["app/Producer.java"], [produce])
+        store.set_meta("endpoint_inventory_signature", "endpoint-inventory-v0")
+
+    result = trace_message_flow("orders.created")
+
+    assert any("inventaire d'endpoints potentiellement obsolète" in w for w in result["warnings"])
 
 
 def test_trace_message_flow_tool_falls_back_to_similarity_when_textual_resolution_fails(
