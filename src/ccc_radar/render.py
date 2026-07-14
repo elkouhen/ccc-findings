@@ -375,8 +375,9 @@ def render_graph_drawio(
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
     portent des couleurs et des formes distinctes. Le layout initial est
-    déterministe, organisé en couloirs de gauche à droite selon les
-    dépendances. Toute valeur dérivée
+    déterministe : lorsqu'un flux Kafka est présent, les microservices sont
+    placés dans une bande supérieure et les topics dans une bande inférieure ;
+    sinon les dépendances sont organisées de gauche à droite. Toute valeur dérivée
     du code source (nom de service, route, topic) est échappée XML via
     `quoteattr` — jamais interpolée brute."""
     node_width = 320
@@ -398,7 +399,7 @@ def render_graph_drawio(
     # sharing the same endpoints. This removes parallel strokes and keeps their
     # individual routes as a multi-line label on the single connector.
     visual_edges = _drawio_visual_graph_edges(edges)
-    if kafka_topics and all(kind == "kafka" for *_nodes, kind in visual_edges):
+    if kafka_topics:
         positions = _kafka_layered_drawio_positions(ordered_services, kafka_topics, visual_edges, node_dimensions)
     else:
         positions = _layered_drawio_positions(ordered_nodes, visual_edges, node_dimensions)
@@ -943,11 +944,11 @@ def _kafka_layered_drawio_positions(
     visual_edges: list[tuple[str, str, str, str, str, str]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
 ) -> dict[tuple[str, str], tuple[int, int]]:
-    """Use the conventional two-band view for a Kafka-only topology.
+    """Use the conventional two-band view whenever Kafka is present.
 
-    Services stay in the upper band even when consume/produce cycles exist;
-    topics stay below. Topic order follows their producers whenever possible,
-    which keeps each producer-to-topic segment close to vertical.
+    Services stay in the upper band even when consume/produce cycles or HTTP
+    calls exist; topics stay below. Topic order follows their producers whenever
+    possible, which keeps each producer-to-topic segment close to vertical.
     """
     left_margin = 24
     top_margin = 24

@@ -283,6 +283,28 @@ def test_render_graph_drawio_places_kafka_services_above_topics() -> None:
     )
 
 
+def test_render_graph_drawio_places_topics_below_services_in_mixed_graph() -> None:
+    endpoints_by_service = _fixture()
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+
+    service_positions = []
+    topic_positions = []
+    for cell in root.iter("mxCell"):
+        if cell.get("vertex") != "1":
+            continue
+        geometry = cell.find("mxGeometry")
+        assert geometry is not None
+        y = int(float(geometry.get("y", "0")))
+        if "rounded=1" in cell.get("style", ""):
+            service_positions.append(y)
+        elif "cylinder3" in cell.get("style", ""):
+            topic_positions.append(y)
+
+    assert service_positions
+    assert topic_positions
+    assert min(topic_positions) > max(service_positions)
+
+
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
