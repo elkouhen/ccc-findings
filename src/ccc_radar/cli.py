@@ -37,6 +37,10 @@ from ccc_radar.render import (
     render_graph_drawio,
     render_graph_json,
     render_graph_text,
+    render_module_detail_json,
+    render_module_detail_text,
+    render_modules_list_json,
+    render_modules_list_text,
     render_search_json,
     render_search_text,
     render_summary_json,
@@ -49,7 +53,7 @@ from ccc_radar.scanner import SemgrepError
 from ccc_radar.search import SearchError, search_findings
 from ccc_radar.search import summary as compute_summary
 from ccc_radar.paths import config_path, db_path, state_dir
-from ccc_radar.store import Store
+from ccc_radar.store import Store, StoreError
 from ccc_radar.workspace import discover_maven_services, load_federation
 
 app = typer.Typer(
@@ -475,6 +479,60 @@ def microservices_cmd(
         typer.echo(json.dumps(result))
     else:
         typer.echo(render_workspace_text(result))
+
+
+@app.command(name="modules")
+def modules_cmd(
+    module: Optional[str] = typer.Argument(
+        None, help="Nom d'artifact/projet d'un module. Omettre pour les lister."
+    ),
+    root: Optional[Path] = typer.Option(
+        None, "--root", help="Racine déjà indexée. Défaut : répertoire courant."
+    ),
+    properties: bool = typer.Option(
+        False, "--properties", help="Affiche uniquement l'exemple YAML du module demandé."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Liste les modules indexés ou détaille l'un d'eux.
+
+    `cccr modules` liste. `cccr modules <module>` détaille. Ajouter
+    `--properties` pour ne retourner que le modèle YAML synthétique.
+    """
+    if properties and module is None:
+        typer.echo("`--properties` requiert le nom d'un module.", err=True)
+        raise typer.Exit(code=2)
+    repo_root = (root or Path.cwd()).resolve()
+    if not db_path(repo_root).is_file():
+        typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        with Store(repo_root, readonly=True) as store:
+            modules = store.all_modules()
+    except StoreError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if module is None:
+        result = render_modules_list_json(modules)
+        typer.echo(json.dumps(result) if json_output else render_modules_list_text(result))
+        return
+    matches = [item for item in modules if item.name == module]
+    if not matches:
+        typer.echo(f"Module introuvable : {module}", err=True)
+        raise typer.Exit(code=2)
+    if len(matches) > 1:
+        paths = ", ".join(str(item.path) for item in matches)
+        typer.echo(f"Module ambigu : {module} ({paths})", err=True)
+        raise typer.Exit(code=2)
+    selected = matches[0]
+    if properties:
+        result = {"name": selected.name, "properties_example": selected.configuration_example}
+        typer.echo(
+            json.dumps(result) if json_output else selected.configuration_example.rstrip()
+        )
+        return
+    result = render_module_detail_json(selected)
+    typer.echo(json.dumps(result) if json_output else render_module_detail_text(result))
 @app.command(name="flow")
 def flow_cmd(
     query: str,

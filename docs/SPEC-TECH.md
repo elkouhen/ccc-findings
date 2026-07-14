@@ -17,12 +17,14 @@
 | `indexer.py` | `index_repo`: incremental orchestration (file diff → targeted scan → findings + endpoints (A1) → embedding ; can also index code chunks) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Experimental `--engine cocoindex` adapter: findings + code chunks as typed target states | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
-| `search.py` | `search_findings` (semantic + lexical hybrid), `summary`, `get_context` | `store`, `models` |
+| `search.py` | `search_findings` (precision-first lexical), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
 | `workspace.py` | Read-only federation of a multi-service Maven/Gradle directory (BACKLOG-11 A2, ADR-30/33): `discover_workspace_services`, `load_federation` | `models`, `store` |
-| `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
-| `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
-| `code_search.py` | `search_code_with_findings`: code (via `ccc`) + findings + ranking + degraded modes orchestration — implementation shared by CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
+| `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery (including safe YAML configuration examples) ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `configuration`, `search`, `ccc_bridge`, `graph`, `workspace` |
+| `configuration.py` | Extracts Spring property keys from production code and constructs a synthetic typed YAML template (`<secret>` for sensitive keys) | — |
+| `modules.py` | Discovers every Maven/Gradle module and creates its persisted audit snapshot for `cccr modules` | `configuration`, `maven`, `gradle` |
+| `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings` | `models`, `store` |
+| `code_search.py` | `search_code_with_findings`: code (via `ccc`) + findings annotation + degraded modes orchestration — implementation shared by CLI/MCP | `ccc_bridge`, `render`, `store` |
 | `cli.py` | Typer application (`version`, `init`, `index`, `search`, `findings`, `summary`, `endpoints`, `graph`, `workspace`, `mcp`) | all modules above |
 | `mcp_server.py` | `FastMCP` stdio server, tools | `code_search`, `config`, `embedder`, `graph`, `indexer`, `render`, `search`, `store`, `workspace` |
 
@@ -580,31 +582,19 @@ which avoids reloading the model on every MCP call. Each embedder exposes a
 `signature` stored in `meta.embedding_signature`; vector dimension is stored in
 `meta.embedding_dim`.
 
-`search.search_findings` (since ADR-17, delegates semantic similarity
-computation to `sqlite-vec` instead of NumPy brute force, then fuses it with a
-lexical ranking):
+`search.search_findings` uses a precision-first lexical ranking:
 1. First filter in SQL (`store.all_findings(severity_at_least, rule_id,
    path_glob)`) → candidate set.
-2. Check that the query vector has the same dimension as
-   `meta.embedding_dim`; mismatch raises `EmbeddingError` with a message asking
-   for reindexing.
-3. `store.knn_search(query_vec, top_k=...)` queries `vec_findings` with an
-   over-requested `k` (factor 3, minimum 20, then progressive doubling if
-   needed) instead of asking for the whole vec0 table up front. Since `vec0`
-   does not expose arbitrary metadata filtering in `WHERE`, severity/rule/path
-   filtering remains applied in Python after KNN, but the query only escalates
-   to more neighbors if the requested hybrid result window has not yet been
-   found.
-4. Independently, every candidate finding gets a lexical score from exact or
-   partial matches on `rule_id`, `message`, `path`, `CWE`/`OWASP`, `snippet`,
-   and `severity`.
-5. The semantic and lexical rankings are combined with reciprocal-rank fusion
-   (RRF, constant 60), so exact identifiers (`custom.sql-fstring`, `CWE-89`,
-   path fragments) can win even when the embedding is weak, while broad natural
-   language queries still benefit from semantic recall.
-6. The returned `SearchHit.score` is the fused hybrid relevance, no longer the
-   raw `1 - cosine_distance` score.
-7. Paginate (`offset`, `limit`) on already fused/sorted results.
+2. Tokenize the query and each candidate's `rule_id`, message, path,
+   `CWE`/`OWASP`, snippet and severity.
+3. Keep a candidate only when it contains **every** query token; this prevents
+   generic words from returning loosely related findings.
+4. Score exact/full-field and token matches, sort deterministically by score
+   then severity/path/line, and paginate (`offset`, `limit`).
+
+The `embedder` parameter is retained for CLI/MCP compatibility but this query
+does not read `vec_findings` or embedding metadata; a model mismatch cannot
+make findings search fail.
 
 `search.summary`: `by_severity`/`top_rules` via `Store.counts_by` (SQL
 `GROUP BY`), `by_top_level_dir` computed in Python from
@@ -619,21 +609,9 @@ rendering displays an unavailable context note.
 ## 6. Code search + findings join
 
 `code_search.search_code_with_findings(repo_root, query, limit, offset, lang,
-path, refresh)` — same parameters as `ccc search` — starts by opening the local
-index when it exists. If `meta.index_engine = "cocoindex-prototype"` and
-`vec_code_chunks` contains embeddings, `refresh=True` first triggers a local
-incremental reindex (`coco_indexer.index_repo_with_cocoindex`), then the query
-is embedded with the same embedder as findings and
-`Store.knn_search_code_chunks(query_vec, top_k, offset, language, path_glob)`
-returns the nearest chunks as `CodeHit`. `vec0` has no native metadata filter:
-the method over-requests (`(offset + top_k) × 3`, capped at 200) then filters
-`language`/`path_glob` in Python before slicing `[offset:offset+top_k]` — same
-over-request pattern as `ccc_bridge`. Those hits are annotated through
-`annotate_with_findings` (strict path equality + inclusive line overlap) then
-re-ranked through `rank_by_severity`.
-
-If that experimental code index is absent, `cccr` falls back to the `ccc`
-bridge.
+path, refresh)` delegates code search exclusively to `ccc`. It forwards all
+parameters unchanged and then annotates those exact `CodeHit` values. It never
+over-fetches, substitutes a local code index, truncates again or re-ranks.
 
 ### Bridge with `ccc` (`ccc_bridge.py`)
 
@@ -661,11 +639,9 @@ all surface as `CccUnavailable`, which the CLI/MCP layer turns into a blocking
 error instead of letting the caller hang until its own timeout.
 
 `annotate_with_findings(code_hits, store)`: load only findings for the paths
-present in `code_hits`, then join by strict path equality and inclusive range
-overlap (`finding.start_line <= hit.end_line and finding.end_line >= hit.start_line`
-— one common line is enough). Each joined finding is serialized without the
-`score` field (absent from the F4.2 contract in this context, since there is no
-semantic query on findings here).
+present in `code_hits`, then join by strict path equality. This represents the
+source file/class returned by `ccc`, even when its excerpt only covers one
+method. Each joined finding is serialized without the `score` field.
 
 ### 6bis. Interaction graph (`graph.py`, BACKLOG-10 K12)
 

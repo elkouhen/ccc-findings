@@ -7,6 +7,8 @@ def test_gradle_service_for_path_groups_all_submodules_under_the_top_level_dir(
     tmp_path: Path,
 ) -> None:
     service = tmp_path / "customer-service"
+    (service / "build.gradle").parent.mkdir(parents=True)
+    (service / "build.gradle").write_text("plugins { id 'org.springframework.boot' }\n")
     main_dir = service / "customer-service-main" / "src" / "main" / "java"
     main_dir.mkdir(parents=True)
     (main_dir / "CustomerServiceMain.java").write_text(
@@ -66,6 +68,7 @@ def test_gradle_service_for_path_uses_the_repo_name_for_a_standard_single_projec
 ) -> None:
     main_dir = tmp_path / "src" / "main" / "java"
     main_dir.mkdir(parents=True)
+    (tmp_path / "build.gradle").write_text("plugins { id 'org.springframework.boot' }\n")
     (main_dir / "Application.java").write_text(
         "public class Application {\n"
         "    public static void main(String[] args) {\n"

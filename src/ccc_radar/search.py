@@ -1,19 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 import re
 
-import numpy as np
-
 from ccc_radar.config import VALID_SEVERITIES
-from ccc_radar.embedder import EmbeddingError
 from ccc_radar.models import Finding
 from ccc_radar.store import Store
 
-_KNN_OVERFETCH_FACTOR = 3
-_KNN_MIN_FETCH = 20
-_HYBRID_RESULT_WINDOW_FACTOR = 5
-_RRF_K = 60
 _WORD_RE = re.compile(r"\w+")
 
 
@@ -21,10 +13,6 @@ class SearchError(Exception):
     """Paramètre de recherche invalide (BACKLOG-16 P4) — distinct
     d'`EmbeddingError` (incompatibilité de modèle/dimension) : ici la
     requête elle-même est mal formée, indépendamment de l'index."""
-
-
-class EmbedderLike(Protocol):
-    def embed_query(self, text: str) -> np.ndarray: ...
 
 
 @dataclass
@@ -75,8 +63,17 @@ def _keyword_score(finding: Finding, query: str) -> float:
     if not query_casefold and not query_tokens:
         return 0.0
 
+    fields = _keyword_fields(finding)
+    searchable = " ".join(value for value, _ in fields).casefold()
+    searchable_tokens = set(_tokenize(searchable))
+    # A findings result must cover every query token. This deliberately avoids
+    # returning a result merely because it shares one generic word such as
+    # "security" or "injection" with the query.
+    if query_tokens and not query_tokens.issubset(searchable_tokens):
+        return 0.0
+
     score = 0.0
-    for value, weight in _keyword_fields(finding):
+    for value, weight in fields:
         if not value:
             continue
         raw_value = value.casefold()
@@ -107,91 +104,9 @@ def _keyword_hits(candidates: list[Finding], query: str) -> list[SearchHit]:
     return hits
 
 
-def _semantic_hits(
-    store: Store,
-    embedder: EmbedderLike,
-    candidates: list[Finding],
-    query: str,
-    requested: int,
-) -> list[SearchHit]:
-    total_vectors = store.embedding_count()
-    if total_vectors == 0:
-        return []
-
-    query_vec = embedder.embed_query(query)
-    stored_dim = store.get_embedding_dim()
-    if stored_dim is not None and query_vec.shape[0] != stored_dim:
-        raise EmbeddingError(
-            f"Dimension d'embedding incompatible : index={stored_dim}, "
-            f"requête={query_vec.shape[0]}. Relancez: cccr index --full"
-        )
-
-    by_id = {finding.id: finding for finding in candidates}
-    semantic_needed = min(
-        len(by_id),
-        max(requested * _HYBRID_RESULT_WINDOW_FACTOR, _KNN_MIN_FETCH),
-    )
-    fetch_k = min(total_vectors, max(requested * _KNN_OVERFETCH_FACTOR, _KNN_MIN_FETCH))
-
-    while True:
-        hits: list[SearchHit] = []
-        for finding_id, score in store.knn_search(query_vec, top_k=fetch_k):
-            finding = by_id.get(finding_id)
-            if finding is None:
-                continue
-            hits.append(SearchHit(finding=finding, score=score))
-            if len(hits) >= semantic_needed:
-                return hits
-        if fetch_k >= total_vectors:
-            return hits
-        next_fetch_k = min(total_vectors, max(fetch_k * 2, requested))
-        if next_fetch_k == fetch_k:
-            return hits
-        fetch_k = next_fetch_k
-
-
-def _hybrid_hits(
-    candidates: list[Finding],
-    semantic_hits: list[SearchHit],
-    keyword_hits: list[SearchHit],
-    limit: int,
-    offset: int,
-) -> list[SearchHit]:
-    semantic_rank = {hit.finding.id: index for index, hit in enumerate(semantic_hits, start=1)}
-    semantic_score = {hit.finding.id: hit.score for hit in semantic_hits}
-    keyword_rank = {hit.finding.id: index for index, hit in enumerate(keyword_hits, start=1)}
-    keyword_score = {hit.finding.id: hit.score for hit in keyword_hits}
-    by_id = {finding.id: finding for finding in candidates}
-
-    ranked_ids = set(semantic_rank) | set(keyword_rank)
-    ranked = []
-    for finding_id in ranked_ids:
-        fused_score = 0.0
-        if finding_id in semantic_rank:
-            fused_score += 1.0 / (_RRF_K + semantic_rank[finding_id])
-        if finding_id in keyword_rank:
-            fused_score += 1.0 / (_RRF_K + keyword_rank[finding_id])
-        ranked.append(
-            (
-                fused_score,
-                semantic_score.get(finding_id, 0.0),
-                keyword_score.get(finding_id, 0.0),
-                by_id[finding_id],
-            )
-        )
-
-    ranked.sort(
-        key=lambda item: (-item[0], -item[1], -item[2], *_finding_sort_key(item[3]))
-    )
-    return [
-        SearchHit(finding=finding, score=fused_score)
-        for fused_score, _, _, finding in ranked[offset : offset + limit]
-    ]
-
-
 def search_findings(
     store: Store,
-    embedder: EmbedderLike,
+    embedder: object,
     query: str,
     severity: str | None = None,
     rule: str | None = None,
@@ -199,6 +114,12 @@ def search_findings(
     limit: int = 5,
     offset: int = 0,
 ) -> list[SearchHit]:
+    """Precision-first lexical findings search.
+
+    `embedder` is retained in the public signature for compatibility with the
+    CLI/MCP callers, but findings search no longer consults vector embeddings.
+    """
+    _ = embedder
     if severity is not None and severity not in VALID_SEVERITIES:
         raise SearchError(
             f"Sévérité invalide : {severity!r}. Valeurs autorisées : {VALID_SEVERITIES}."
@@ -210,18 +131,8 @@ def search_findings(
     if not candidates:
         return []
 
-    stored_signature = store.get_meta("embedding_signature")
-    query_signature = getattr(embedder, "signature", None)
-    if stored_signature and query_signature and stored_signature != query_signature:
-        raise EmbeddingError(
-            f"Signature d'embedding incompatible : index={stored_signature}, "
-            f"requête={query_signature}. Relancez: cccr index --full"
-        )
-
-    requested = offset + limit
-    semantic_hits = _semantic_hits(store, embedder, candidates, query, requested)
     keyword_hits = _keyword_hits(candidates, query)
-    return _hybrid_hits(candidates, semantic_hits, keyword_hits, limit=limit, offset=offset)
+    return keyword_hits[offset : offset + limit]
 
 
 def summary(store: Store) -> Summary:

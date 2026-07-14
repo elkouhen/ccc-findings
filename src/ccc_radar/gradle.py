@@ -13,10 +13,24 @@ _GRADLE_ARTIFACT_SET_RE = re.compile(
     r"(?:archiveBaseName|archivesBaseName|archivesName)\s*\.set\s*\(\s*['\"]([^'\"]+)['\"]\s*\)"
 )
 _ROOT_PROJECT_NAME_RE = re.compile(r"rootProject\.name\s*=\s*['\"]([^'\"]+)['\"]")
+_GRADLE_VERSION_RE = re.compile(r"\bversion\s*(?:=|\.set\()\s*['\"]([^'\"]+)['\"]")
+_GRADLE_BUILD_FILENAMES = ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
 
 
 def _is_spring_boot_main_class(text: str) -> bool:
     return bool(_MAIN_METHOD_RE.search(text)) and bool(_SPRING_APPLICATION_RUN_RE.search(text))
+
+
+def _nearest_gradle_project(repo_root: Path, java_file: Path) -> Path | None:
+    """Return the owning Gradle project, never a source-directory surrogate."""
+    for candidate in [java_file.parent, *java_file.parent.parents]:
+        if candidate != repo_root and repo_root not in candidate.parents:
+            break
+        if any((candidate / filename).is_file() for filename in _GRADLE_BUILD_FILENAMES):
+            return candidate
+        if candidate == repo_root:
+            break
+    return None
 
 
 def _first_gradle_match(paths: list[Path], patterns: tuple[re.Pattern[str], ...]) -> str | None:
@@ -54,9 +68,6 @@ def _service_root_artifacts(repo_root_str: str) -> tuple[tuple[str, str], ...]:
     repo_root = Path(repo_root_str)
     roots: dict[str, str] = {}
     for java_file in repo_root.rglob("*.java"):
-        rel_parts = java_file.relative_to(repo_root).parts
-        if len(rel_parts) < 2:
-            continue
         try:
             text = java_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -64,9 +75,11 @@ def _service_root_artifacts(repo_root_str: str) -> tuple[tuple[str, str], ...]:
         if not _is_spring_boot_main_class(text):
             continue
 
-        relative_root = "" if rel_parts[:3] == ("src", "main", "java") else rel_parts[0]
-        service_dir = repo_root if not relative_root else repo_root / relative_root
-        fallback = repo_root.name if not relative_root else relative_root
+        service_dir = _nearest_gradle_project(repo_root, java_file)
+        if service_dir is None:
+            continue
+        relative_root = "" if service_dir == repo_root else service_dir.relative_to(repo_root).as_posix()
+        fallback = service_dir.name
         roots[relative_root] = _gradle_artifact_name(str(service_dir), fallback)
     return tuple(sorted(roots.items()))
 
@@ -91,6 +104,26 @@ def discover_gradle_service_roots(repo_root: Path) -> list[str]:
     return sorted(artifact for artifact, _ in discover_gradle_services(repo_root))
 
 
+def discover_gradle_modules(repo_root: Path) -> list[tuple[str, Path, str | None]]:
+    """Return every Gradle project, including settings-only aggregators."""
+    root = repo_root.resolve()
+    module_dirs = {
+        path.parent
+        for filename in ("build.gradle", "build.gradle.kts")
+        for path in root.rglob(filename)
+    }
+    if any((root / filename).is_file() for filename in ("settings.gradle", "settings.gradle.kts")):
+        module_dirs.add(root)
+    modules = []
+    for module_dir in sorted(module_dirs):
+        name = _gradle_artifact_name(str(module_dir), module_dir.name)
+        version = _first_gradle_match(
+            [module_dir / "build.gradle", module_dir / "build.gradle.kts"], (_GRADLE_VERSION_RE,)
+        )
+        modules.append((name, module_dir, version))
+    return modules
+
+
 def gradle_service_for_path(repo_root: Path, rel_path: str) -> str | None:
     """Nom d'artefact du service Gradle auquel appartient ``rel_path``.
 
@@ -102,8 +135,7 @@ def gradle_service_for_path(repo_root: Path, rel_path: str) -> str | None:
     parts = Path(rel_path).parts
     if not parts:
         return None
-    relative_root = "" if parts[:3] == ("src", "main", "java") else parts[0]
     for root, artifact in _service_root_artifacts(str(repo_root.resolve())):
-        if root == relative_root:
+        if not root or rel_path == root or rel_path.startswith(f"{root}/"):
             return artifact
     return None

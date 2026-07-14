@@ -10,24 +10,6 @@ from ccc_radar.models import Finding
 from ccc_radar.store import Store
 
 _SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
-
-# Additive ranking boost for search_code_with_findings: small relative to the
-# typical spread of ccc's semantic scores, so it reorders close calls (a
-# borderline-relevant chunk with a critical finding overtakes a
-# slightly-more-relevant, finding-free one) without burying clearly more
-# relevant results under a distant one that merely shares a risky line.
-_SEVERITY_BOOST: dict[str | None, float] = {
-    None: 0.0,
-    "INFO": 0.0,
-    "WARNING": 0.05,
-    "ERROR": 0.15,
-}
-
-# ccc truncates to --limit before cccr ever sees the results, so a relevant
-# hit just outside the top N would never be considered for the severity
-# boost. Over-fetch, boost, re-sort, then truncate to the caller's limit.
-_OVERFETCH_FACTOR = 3
-_OVERFETCH_CAP = 50
 _CCC_INDEX_PATH = Path(".cocoindex_code") / "target_sqlite.db"
 _DEFAULT_CCC_SEARCH_TIMEOUT_S = 20
 
@@ -121,10 +103,6 @@ def _parse_ccc_search_output(raw: str) -> list[CodeHit]:
     return hits
 
 
-def overfetch_limit(limit: int) -> int:
-    return min(limit * _OVERFETCH_FACTOR, _OVERFETCH_CAP)
-
-
 def search_code(
     repo_root: Path,
     query: str,
@@ -190,6 +168,13 @@ def _finding_to_ref(finding: Finding) -> FindingRef:
 
 
 def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeHitWithFindings]:
+    """Attach the findings belonging to each returned source file/class.
+
+    `ccc search` may return only a small method or chunk from a source class.
+    The useful complement is therefore every finding indexed for that source
+    file, not only findings whose line range happens to overlap the chunk.
+    This function deliberately preserves the input order and scores.
+    """
     if not code_hits:
         return []
     findings_by_path: dict[str, list[Finding]] = {}
@@ -198,11 +183,7 @@ def annotate_with_findings(code_hits: list[CodeHit], store: Store) -> list[CodeH
 
     results: list[CodeHitWithFindings] = []
     for hit in code_hits:
-        matched = [
-            f
-            for f in findings_by_path.get(hit.path, [])
-            if f.start_line <= hit.end_line and f.end_line >= hit.start_line
-        ]
+        matched = findings_by_path.get(hit.path, [])
         max_severity = (
             max(matched, key=lambda f: _SEVERITY_RANK[f.severity]).severity
             if matched
@@ -238,20 +219,3 @@ def without_findings(code_hits: list[CodeHit]) -> list[CodeHitWithFindings]:
         )
         for hit in code_hits
     ]
-
-
-def rank_by_severity(
-    hits: list[CodeHitWithFindings], limit: int
-) -> list[CodeHitWithFindings]:
-    """Re-rank ccc's semantic order, boosting hits that carry a known finding.
-
-    `score` is left untouched — it still reports ccc's raw semantic
-    similarity. Only the ordering (and truncation to `limit`) accounts for
-    severity; ties keep ccc's original relative order (stable sort).
-    """
-    ranked = sorted(
-        hits,
-        key=lambda hit: hit["score"] + _SEVERITY_BOOST[hit["max_severity"]],
-        reverse=True,
-    )
-    return ranked[:limit]

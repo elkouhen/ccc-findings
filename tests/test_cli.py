@@ -259,8 +259,7 @@ def test_search_renders_ccc_format_with_findings_blocks(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`cccr search` répond « de la même manière » que ccc : même format de
-    résultats, enrichi d'un bloc findings sous les résultats concernés, le
-    finding ERROR faisant remonter app/db.py devant app/other.py."""
+    résultats, enrichi d'un bloc findings sous les résultats concernés."""
     monkeypatch.chdir(tmp_path)
     from ccc_radar.models import Finding
     from ccc_radar.store import Store
@@ -284,14 +283,12 @@ def test_search_renders_ccc_format_with_findings_blocks(
     result = runner.invoke(app, ["search", "user authentication flow"])
 
     assert result.exit_code == 0
-    # score affiché = score sémantique brut de ccc (0.850) ; le boost ERROR
-    # n'affecte que l'ordre, pas la valeur rapportée
-    assert "--- Result 1 (score: 0.850) ---" in result.output
+    assert "--- Result 1 (score: 0.900) ---" in result.output
     assert "File: app/db.py:6-6 [python]" in result.output
     assert "findings (max: ERROR)" in result.output
     assert "custom.sql-fstring" in result.output
-    # le résultat sans finding est rendu sans bloc findings, après le boosté
-    assert result.output.index("app/db.py:6-6") < result.output.index("app/other.py:1-1")
+    # L'ordre reste celui de ccc : le résultat sans finding n'est pas déplacé.
+    assert result.output.index("app/other.py:1-1") < result.output.index("app/db.py:6-6")
 
 
 def test_search_json_returns_stable_code_search_result_schema(
@@ -314,7 +311,7 @@ def test_search_json_returns_stable_code_search_result_schema(
 
 
 @pytest.mark.integration
-def test_search_prefers_experimental_indexed_code_when_available(
+def test_search_uses_ccc_even_when_experimental_code_index_is_available(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
@@ -381,9 +378,8 @@ def test_search_forwards_offset_lang_path_refresh_flags_to_ccc(
     )
 
     assert result.exit_code == 0
-    # search_code_with_findings sur-demande à ccc (overfetch_limit(3) == 9) pour
-    # le classement par sévérité ; les autres flags sont transmis tels quels.
-    assert "ARGS:search auth --limit 9 --offset 2 --lang python --path app/* --refresh" in result.output
+    # cccr transmet la requête telle quelle et ne modifie pas son jeu de résultats.
+    assert "ARGS:search auth --limit 3 --offset 2 --lang python --path app/* --refresh" in result.output
 
 
 def test_search_returns_error_when_ccc_returns_error(

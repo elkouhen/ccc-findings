@@ -1,3 +1,4 @@
+import re
 import subprocess
 from html import escape as html_escape
 from pathlib import Path
@@ -5,9 +6,11 @@ from typing import TypedDict
 from xml.sax.saxutils import quoteattr
 
 from ccc_radar.ccc_bridge import CodeHitWithFindings
+from ccc_radar.configuration import service_configuration_example
 from ccc_radar.flow import FlowResult
 from ccc_radar.graph import GraphEdge, OutboundCallInConsumer
 from ccc_radar.models import MessageEndpoint
+from ccc_radar.modules import DiscoveredModule
 from ccc_radar.search import SearchHit, Summary, get_context
 from ccc_radar.workspace import DiscoveredService, FederationResult
 
@@ -710,8 +713,13 @@ def _visual_graph_edges(
     for edge in edges:
         visual_edges: list[tuple[str, str, str, str, str]] = []
         if edge.kind == "rest":
+            label = edge.from_endpoint.topic
+            if edge.from_endpoint.framework == "spring-cloud-gateway":
+                match = re.search(r"Path=([^;]+)", edge.from_endpoint.snippet)
+                if match is not None:
+                    label = f"ANY {match.group(1)}"
             visual_edges.append(
-                ("microservice", edge.from_service, "microservice", edge.to_service, edge.from_endpoint.topic)
+                ("microservice", edge.from_service, "microservice", edge.to_service, label)
             )
         else:
             topic = edge.from_endpoint.topic
@@ -1055,11 +1063,24 @@ class WorkspaceServiceInfo(TypedDict):
     finding_count: int
 
 
+class ModuleSummary(TypedDict):
+    name: str
+    path: str
+    build_system: str
+    version: str | None
+    kind: str
+
+
+class ModuleDetail(ModuleSummary):
+    configuration_example: str
+
+
 class WorkspaceResult(TypedDict):
     """Shape returned by `cccr microservices [root] --json` and the
     `list_workspace_services` MCP tool (BACKLOG-11 A2)."""
 
     services: list[WorkspaceServiceInfo]
+    configuration_examples: dict[str, str]
     warnings: list[str]
 
 
@@ -1078,6 +1099,11 @@ def render_workspace_json(
             )
             for s in services
         ],
+        configuration_examples={
+            service.name: service_configuration_example(service.path)
+            for service in services
+            if service.kind == "microservice"
+        },
         warnings=federation.warnings,
     )
 
@@ -1093,9 +1119,58 @@ def render_workspace_text(result: WorkspaceResult) -> str:
             f"endpoints={info['endpoint_count']} findings={info['finding_count']}  "
             f"{info['path']}"
         )
+        example = result["configuration_examples"].get(info["name"])
+        if example is not None:
+            lines.append("  Configuration Spring (exemple YAML) :")
+            lines.extend(f"    {line}" if line else "" for line in example.rstrip().splitlines())
     for warning in result["warnings"]:
         lines.append(f"⚠ {warning}")
     return "\n".join(lines)
+
+
+def render_modules_list_json(modules: list[DiscoveredModule]) -> list[ModuleSummary]:
+    return [
+        ModuleSummary(
+            name=module.name,
+            path=str(module.path),
+            build_system=module.build_system,
+            version=module.version,
+            kind=module.kind,
+        )
+        for module in modules
+    ]
+
+
+def render_modules_list_text(modules: list[ModuleSummary]) -> str:
+    if not modules:
+        return "Aucun module Maven ou Gradle découvert."
+    lines: list[str] = []
+    for module in modules:
+        version = module["version"] or "inconnue"
+        lines.append(
+            f"[{module['build_system']}/{module['kind']}] {module['name']} "
+            f"version={version}  {module['path']}"
+        )
+    return "\n".join(lines)
+
+
+def render_module_detail_json(module: DiscoveredModule) -> ModuleDetail:
+    return ModuleDetail(
+        name=module.name,
+        path=str(module.path),
+        build_system=module.build_system,
+        version=module.version,
+        kind=module.kind,
+        configuration_example=module.configuration_example,
+    )
+
+
+def render_module_detail_text(module: ModuleDetail) -> str:
+    version = module["version"] or "inconnue"
+    return (
+        f"[{module['build_system']}/{module['kind']}] {module['name']}\n"
+        f"version={version}\nchemin={module['path']}"
+    )
 
 
 class FlowSiteInfo(TypedDict):

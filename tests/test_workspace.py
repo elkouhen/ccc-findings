@@ -15,6 +15,17 @@ MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
 def workspace_copy(tmp_path: Path) -> Path:
     dest = tmp_path / "maven_workspace"
     shutil.copytree(MAVEN_WORKSPACE, dest)
+    for service, class_name in (("service-a", "OrderApplication"), ("service-b", "PaymentApplication")):
+        source = dest / service / "src" / "main" / "java" / f"{class_name}.java"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "import org.springframework.boot.SpringApplication;\n"
+            f"class {class_name} {{\n"
+            "  public static void main(String[] args) {\n"
+            f"    SpringApplication.run({class_name}.class, args);\n"
+            "  }\n"
+            "}\n"
+        )
     return dest
 
 
@@ -173,8 +184,10 @@ public class ShippingApplication {
 
 
 def test_discover_workspace_services_detects_gradle_microservices(tmp_path: Path) -> None:
-    service = tmp_path / "billing-service" / "billing-service-main" / "src" / "main" / "java"
+    service_dir = tmp_path / "billing-service"
+    service = service_dir / "billing-service-main" / "src" / "main" / "java"
     service.mkdir(parents=True)
+    (service_dir / "build.gradle").write_text("plugins { id 'org.springframework.boot' }\n")
     (service / "BillingServiceMain.java").write_text(
         """
 import org.springframework.boot.SpringApplication;
@@ -198,6 +211,7 @@ public class BillingServiceMain {
 def test_discover_workspace_services_detects_a_single_root_gradle_project(tmp_path: Path) -> None:
     main_dir = tmp_path / "src" / "main" / "java"
     main_dir.mkdir(parents=True)
+    (tmp_path / "build.gradle").write_text("plugins { id 'org.springframework.boot' }\n")
     (main_dir / "Application.java").write_text(
         "public class Application {\n"
         "    public static void main(String[] args) {\n"

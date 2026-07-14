@@ -134,9 +134,9 @@ uv tool upgrade --all       # upgrades all tools installed via uv (including coc
 ```bash
 cccr init                       # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
 cccr index                      # incremental scan + progress + embeddings
-ccc index                       # required for cccr search fallback unless you use --engine cocoindex
-cccr search "user auth flow"    # code search (via ccc) + findings that overlap it
-cccr findings "sql injection"   # natural-language lookup in findings (hybrid semantic + exact keyword/rule/CWE matches)
+ccc index                       # required for cccr search
+cccr search "user auth flow"    # exact ccc result set + findings from its source file/class
+cccr findings "sql injection"   # precision-first lookup (all query terms must match)
 cccr summary                    # aggregated view (severities, top rules, top directories)
 ```
 
@@ -155,6 +155,7 @@ cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr endpoints                  # indexed REST/Kafka inventory
 cccr graph                      # inter-service REST/Kafka topology
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
+cccr modules                    # all Maven/Gradle modules, versions and synthetic config templates
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
 ```
 

@@ -7,10 +7,7 @@ from typer.testing import CliRunner
 from ccc_radar.ccc_bridge import (
     CccUnavailable,
     CodeHit,
-    CodeHitWithFindings,
     annotate_with_findings,
-    overfetch_limit,
-    rank_by_severity,
     search_code,
 )
 from ccc_radar.cli import app
@@ -41,7 +38,7 @@ def make_finding(
     )
 
 
-def test_annotate_with_findings_inclusive_overlap(tmp_path: Path) -> None:
+def test_annotate_with_findings_attaches_all_findings_from_returned_file(tmp_path: Path) -> None:
     overlapping_finding = make_finding("app/db.py", 20, 22, suffix="-overlap")
     non_overlapping_finding = make_finding("app/other.py", 20, 22, suffix="-other")
 
@@ -62,13 +59,13 @@ def test_annotate_with_findings_inclusive_overlap(tmp_path: Path) -> None:
         ]
         annotated = annotate_with_findings(hits, store)
 
-    # hit 10-20 chevauche le finding 20-22 (ligne 20 commune)
+    # Les deux extraits représentent le même fichier/classe : tous les
+    # findings du fichier sont donc ajoutés, indépendamment des lignes du
+    # chunk retourné par ccc.
     assert [f["id"] for f in annotated[0]["findings"]] == [overlapping_finding.id]
     assert annotated[0]["max_severity"] == "ERROR"
-
-    # hit 10-19 ne chevauche pas le finding 20-22
-    assert annotated[1]["findings"] == []
-    assert annotated[1]["max_severity"] is None
+    assert [f["id"] for f in annotated[1]["findings"]] == [overlapping_finding.id]
+    assert annotated[1]["max_severity"] == "ERROR"
 
 
 def test_annotate_with_findings_only_loads_findings_for_hit_paths() -> None:
@@ -103,72 +100,6 @@ def test_annotate_with_findings_only_loads_findings_for_hit_paths() -> None:
     assert [f["id"] for f in annotated[0]["findings"]] == [overlapping_finding.id]
 
 
-def make_hit(
-    path: str, score: float, max_severity: str | None = None
-) -> CodeHitWithFindings:
-    return CodeHitWithFindings(
-        path=path,
-        start_line=1,
-        end_line=1,
-        language="python",
-        score=score,
-        content="c",
-        findings=[],
-        max_severity=max_severity,
-    )
-
-
-def test_overfetch_limit_multiplies_then_caps() -> None:
-    assert overfetch_limit(5) == 15
-    assert overfetch_limit(30) == 50  # capped, 30 * 3 = 90
-
-
-def test_rank_by_severity_promotes_error_over_higher_score_no_finding() -> None:
-    # error.py est légèrement moins pertinent sémantiquement (0.80 vs 0.82)
-    # mais porte un finding ERROR : le boost (+0.15) doit le faire remonter.
-    hits = [
-        make_hit("clean.py", score=0.82, max_severity=None),
-        make_hit("error.py", score=0.80, max_severity="ERROR"),
-    ]
-
-    ranked = rank_by_severity(hits, limit=5)
-
-    assert [h["path"] for h in ranked] == ["error.py", "clean.py"]
-
-
-def test_rank_by_severity_does_not_override_a_clearly_more_relevant_result() -> None:
-    # un finding lointain ne doit pas faire remonter un résultat très peu
-    # pertinent devant un résultat nettement plus pertinent mais sans finding.
-    hits = [
-        make_hit("clean.py", score=0.90, max_severity=None),
-        make_hit("error.py", score=0.40, max_severity="ERROR"),
-    ]
-
-    ranked = rank_by_severity(hits, limit=5)
-
-    assert [h["path"] for h in ranked] == ["clean.py", "error.py"]
-
-
-def test_rank_by_severity_keeps_ccc_order_on_ties() -> None:
-    hits = [
-        make_hit("first.py", score=0.5, max_severity=None),
-        make_hit("second.py", score=0.5, max_severity=None),
-    ]
-
-    ranked = rank_by_severity(hits, limit=5)
-
-    assert [h["path"] for h in ranked] == ["first.py", "second.py"]
-
-
-def test_rank_by_severity_truncates_to_limit() -> None:
-    hits = [make_hit(f"f{i}.py", score=1.0 - i * 0.01) for i in range(10)]
-
-    ranked = rank_by_severity(hits, limit=3)
-
-    assert len(ranked) == 3
-    assert [h["path"] for h in ranked] == ["f0.py", "f1.py", "f2.py"]
-
-
 def test_search_code_with_fake_ccc_then_annotate(
     fake_ccc_on_path: Path, tmp_path: Path
 ) -> None:
@@ -193,12 +124,10 @@ def test_search_code_with_fake_ccc_then_annotate(
     assert annotated[0]["max_severity"] == "ERROR"
 
 
-def test_search_code_with_findings_tool_promotes_finding_despite_lower_score(
+def test_search_code_with_findings_tool_preserves_ccc_order_despite_findings(
     fake_ccc_two_results_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End-to-end through the actual MCP tool: ccc ranks app/other.py (0.90,
-    no finding) above app/db.py (0.85, ERROR finding) — the ERROR boost
-    (+0.15) should flip that order in the tool's final result."""
+    """Findings enrich the raw ccc result; they must never re-rank it."""
     monkeypatch.chdir(tmp_path)
     finding = make_finding("app/db.py", 6, 6)
 
@@ -209,8 +138,8 @@ def test_search_code_with_findings_tool_promotes_finding_despite_lower_score(
 
     result = search("injection sql", limit=2)
 
-    assert [hit["path"] for hit in result["results"]] == ["app/db.py", "app/other.py"]
-    assert result["results"][0]["max_severity"] == "ERROR"
+    assert [hit["path"] for hit in result["results"]] == ["app/other.py", "app/db.py"]
+    assert result["results"][1]["max_severity"] == "ERROR"
 
 
 def test_search_code_passes_offset_lang_path_refresh_to_ccc(

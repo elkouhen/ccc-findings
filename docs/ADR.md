@@ -419,7 +419,7 @@ The companion skill in `ccc-radar-skill` depended on no strict parsing of an
 
 ## ADR-19 — `search_code_with_findings`: severity-weighted ranking, not just annotation
 
-**Status**: Accepted.
+**Status**: Superseded by the strict `ccc`-order contract.
 
 **Context**: `search_code_with_findings` composed `ccc` semantic search with
 `cccr` findings purely as post-processing — findings were attached to each
@@ -433,7 +433,7 @@ patterns (2 of 4) translate correctly — rules mixing ellipsis with a literal
 kwarg (`subprocess.run(..., shell=True, ...)`) lose their security constraint
 once translated (`ccc grep` then matches *all* calls to the function).
 
-**Decision**: `ccc_bridge.rank_by_severity` re-orders already annotated results
+**Historical decision**: `ccc_bridge.rank_by_severity` re-ordered annotated results
 by adding an additive boost to `score` depending on `max_severity` (`ERROR`
 +0.15, `WARNING` +0.05, `INFO`/none +0.0), without modifying `score` itself
 (which still reflects `ccc`'s raw semantic relevance). Because `ccc search`
@@ -442,7 +442,12 @@ outside the top `N` could never benefit from the boost —
 `ccc_bridge.overfetch_limit` therefore over-requests `limit × 3` (capped at 50)
 before annotation, ranking, and final truncation.
 
-**Consequences**: boost weights are an initial heuristic choice
+**Supersession**: findings are now annotations only. `cccr search` delegates to
+`ccc` with the requested limit and preserves its result set, order and scores;
+the severity boost and over-fetching were removed because they changed the
+meaning of a `ccc search` response.
+
+**Historical consequences**: boost weights were an initial heuristic choice
 (deliberately small relative to the typical spread of `ccc` scores, so only near
 cases are re-ordered and a clearly irrelevant result never rises). They may be
 adjusted if real usage shows a different need. Over-fetch adds cost (up to 3×

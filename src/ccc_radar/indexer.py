@@ -10,6 +10,7 @@ from ccc_radar.config import Config
 from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.modules import discover_modules
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
@@ -232,6 +233,11 @@ def index_repo(
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
+
+    # The module inventory is intentionally materialized with the index rather
+    # than reconstructed by `cccr modules`: its configuration examples describe
+    # the exact repository state that was audited.
+    store.replace_modules(discover_modules(repo_root))
 
     current_paths = set(current_hashes)
     previous_paths = set(previous_hashes)

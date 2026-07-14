@@ -119,9 +119,8 @@ Indexes the project (Semgrep findings **and** REST/Kafka endpoints).
 - Missing or invalid `.cccr/config.yml`: error message on stderr, exit code 1.
 
 ### `cccr search "<query>" [--limit N] [--offset N] [--lang L] [--path GLOB] [--refresh] [--json]`
-Semantic code search enriched with Semgrep findings that overlap each result,
-then ranked while taking their severity into account (see §3,
-`rank_by_severity`). Same options, same names, as `ccc search`:
+`ccc search` enriched with Semgrep findings from the source file/class of each
+result. Same options, same names, as `ccc search`:
 
 | Option | Effect |
 |---|---|
@@ -131,15 +130,10 @@ then ranked while taking their severity into account (see §3,
 | `--path GLOB` | keeps only results whose path matches the glob (style `fnmatch`) |
 | `--refresh` | reindexes (incrementally) before searching |
 
-Two code sources are possible:
-- if the repo was indexed with `cccr index --engine cocoindex`, `cccr search`
-  first queries the local code chunk index (`vec_code_chunks`) and does not
-  depend on the text format of `ccc search` — `--lang`/`--path`/`--offset`
-  filter and paginate locally, `--refresh` triggers a local incremental reindex
-  (`cccr index --engine cocoindex`) before the search;
-- otherwise, `cccr search` remains a **superset of `ccc search`**: same results
-  (same snippets, same display format), enriched with findings, and every
-  option is forwarded unchanged to the `ccc` binary.
+`cccr search` is a **strict presentation superset of `ccc search`**: it invokes
+`ccc` with exactly the requested parameters and preserves its result set,
+order, scores and excerpts. It only adds the `findings` and `max_severity`
+fields; findings never alter ranking, pagination or result selection.
 
 Text rendering — identical format to `ccc search`, plus a findings block under
 each relevant result:
@@ -177,17 +171,13 @@ Degraded modes:
   exit code 0.
 
 ### `cccr findings "<query>" [options]`
-Hybrid natural-language search in indexed findings **only** (no code search) —
+Precision-first lexical search in indexed findings **only** (no code search) —
 the old `cccr search`, renamed when `search` became the superset of `ccc search`.
-The ranking now combines:
-- semantic similarity on stored embeddings (`sqlite-vec`);
-- lexical/exact matches on `rule_id`, `message`, `path`, `CWE`/`OWASP`, and
-  snippet text;
-- reciprocal-rank fusion of both rankings.
-
-Practical effect: requests like `sql injection` still work semantically, but
-`custom.subprocess-shell-true`, `CWE-89`, or a path fragment can surface the
-right finding even when the embedding alone would be weak.
+Every query token must match a finding's `rule_id`, message, path,
+`CWE`/`OWASP`, snippet or severity. Exact and full-field matches rank first.
+This intentionally favours a short, verifiable result set over broad
+natural-language recall; `custom.subprocess-shell-true`, `CWE-89`, a path
+fragment, or `sql injection` surface only findings that contain all terms.
 
 | Option | Effect |
 |---|---|
@@ -430,9 +420,19 @@ another project's database) to count its endpoints and findings.
     {"name": "common-lib", "path": "/repo/common-lib", "kind": "shared-module",
      "indexed": true, "endpoint_count": 0, "finding_count": 1}
   ],
+  "configuration_examples": {
+    "order-service": "server:\\n  port: 0\\n"
+  },
   "warnings": ["payment-service (/repo/payment-service): not indexed, ignored (run cccr index in this project)."]
 }
 ```
+
+`configuration_examples` contains one safe YAML template per runtime
+microservice. It is constructed from Spring property keys referenced by
+production code (`${...}`, `@Value`, `Environment.getProperty`,
+`@ConditionalOnProperty`), never from existing `application*` files. **No
+value from the repository is rendered**: key-name heuristics produce generic
+values such as `<string>`, `0`, `false` or `<secret>`; test code is excluded.
 
 `endpoint_count` of a Maven `shared-module` is always `0`: a shared module is never
 handled as a runtime producer/consumer, even if endpoints were detected there by
@@ -442,6 +442,31 @@ absent from the counts. An indexed module whose
 `meta.endpoint_inventory_signature` is missing/old also adds an explicit
 warning. No Maven module found → informational message, exit code 0 (not an
 error — `root` may legitimately not be a Maven directory).
+
+### `cccr modules [<module>] [--root ROOT] [--properties] [--json]`
+
+Reads the **module inventory materialized by `cccr index`** at `--root` (current
+directory by default), including libraries and aggregators, unlike
+`microservices` which is focused on runtime services. It never re-reads the
+workspace to reconstruct this view; a missing/incompatible index is a blocking
+error.
+
+- `cccr modules` lists compact module summaries: Maven artifact or Gradle
+  project/archive name, declared version (or `null`), build system,
+  classification (`microservice`, `library`, `aggregator`) and absolute path.
+- `cccr modules <module>` returns the detailed record for one exact module name.
+- `cccr modules <module> --properties` returns only its synthetic YAML
+  configuration example. `--properties` without a module is an error.
+
+The configuration example is generated during that indexation and follows
+the same no-real-values policy as `microservices.configuration_examples`.
+
+```json
+[
+  {"name": "orders-api", "build_system": "maven", "version": "3.1.0",
+   "kind": "microservice", "path": "/repo/orders"}
+]
+```
 
 ### `cccr flow <query> [--workspace ROOT] [--json]`
 *Java/Spring microservices extension — beta.*
@@ -526,29 +551,25 @@ the **Java/Spring microservices extension**.
 
 | Tool | Return type | Role | Notes |
 |---|---|---|---|
-| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Hybrid findings search — same contract as `cccr findings --json` | No pagination (`offset`) on the MCP side |
+| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Precision-first lexical findings search — same contract as `cccr findings --json` | No pagination (`offset`) on the MCP side |
 | `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
-| `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |
+| `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
-| `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
+| `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts and safe YAML configuration examples per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30); secrets are redacted |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` |
 
 `search` adds to each code result:
-- `findings`: list of findings whose `path` is identical and whose
-  `[start_line, end_line]` range overlaps the code result's one (inclusive
-  overlap — a single common line is enough) — same contract as `findings`,
-  without the `context` field.
+- `findings`: list of findings whose `path` is identical to the returned source
+  file/class — same contract as `findings`, without the `context` field.
 - `max_severity`: highest severity among attached findings, or `null` if none.
 
-**Severity-weighted ranking** (`ccc_bridge.rank_by_severity`): the order from
-`ccc search` (pure semantic relevance) is re-ordered by adding an additive boost
-to `score` depending on `max_severity` (`ERROR` +0.15, `WARNING` +0.05,
-`INFO`/none +0.0), then truncated to `limit`. `score` itself is not modified —
-only the order takes it into account. So that this boost can promote a result
-just outside `ccc`'s top `limit`, the underlying call over-fetches
-(`overfetch_limit`: `limit × 3`, capped at 50) before sorting and truncating.
+`findings` uses a precision-first lexical match. Every query token must be
+present in the indexed rule, message, path, taxonomy, snippet or severity;
+filters (`severity`, `rule`, `path`) remain exact store filters. Vector
+embeddings are not used for this command, so an embedding-model mismatch does
+not affect findings lookup.
 
 `CodeSearchResult` has a **single stable schema** for successful responses
 (nominal or missing findings index) — not an alternate shape depending on the

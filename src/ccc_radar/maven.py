@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 
 _MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
-_SPRING_BOOT_PLUGIN_MARKER = "spring-boot-maven-plugin"
 _MAIN_METHOD_RE = re.compile(r"\bstatic\s+void\s+main\s*\(")
 _SPRING_APPLICATION_RUN_RE = re.compile(r"SpringApplication\.run\(")
 
@@ -51,10 +50,24 @@ def parse_pom(pom_path: Path) -> tuple[str | None, bool, str | None]:
         return None, False, None
     artifact_id = _pom_child_text(root, "artifactId")
     packaging = _pom_child_text(root, "packaging")
-    is_spring_boot_app = _SPRING_BOOT_PLUGIN_MARKER in text or _module_has_spring_boot_main_class(
-        str(pom_path.parent)
-    )
+    # A Spring Boot plugin can be inherited by a shared library. A deployable
+    # microservice must have an actual Spring Boot entry point; otherwise a
+    # `buildingblocks`-style module pollutes the architecture graph.
+    is_spring_boot_app = _module_has_spring_boot_main_class(str(pom_path.parent))
     return artifact_id, is_spring_boot_app, packaging
+
+
+def pom_version(pom_path: Path) -> str | None:
+    """Return the locally declared Maven version or its parent declaration."""
+    try:
+        root = ET.fromstring(pom_path.read_text(encoding="utf-8", errors="replace"))
+    except (ET.ParseError, OSError):
+        return None
+    version = _pom_child_text(root, "version")
+    if version is not None:
+        return version
+    parent = root.find(f"{_MAVEN_NS}parent") or root.find("parent")
+    return _pom_child_text(parent, "version") if parent is not None else None
 
 
 def is_runtime_service(packaging: str | None, is_spring_boot_app: bool) -> bool:

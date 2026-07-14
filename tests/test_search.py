@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ccc_radar.embedder import EmbeddingError, finding_to_text
+from ccc_radar.embedder import finding_to_text
 from ccc_radar.models import Finding
 from ccc_radar.render import render_search_json, render_search_text
 from ccc_radar.search import SearchError, SearchHit, get_context, search_findings, summary
@@ -75,10 +75,10 @@ def test_search_findings_ranks_matching_finding_first(tmp_path: Path) -> None:
 
     with Store(tmp_path) as store:
         seed_store(store, embedder)
-        hits = search_findings(store, embedder, "injection sql")
+        hits = search_findings(store, embedder, "injection")
 
     assert hits[0].finding.id == SQL_FINDING.id
-    assert hits[0].score > hits[1].score
+    assert [hit.finding.id for hit in hits] == [SQL_FINDING.id, SHELL_FINDING.id]
 
 
 def test_search_findings_filters_by_severity_and_path_glob(tmp_path: Path) -> None:
@@ -87,14 +87,14 @@ def test_search_findings_filters_by_severity_and_path_glob(tmp_path: Path) -> No
     with Store(tmp_path) as store:
         seed_store(store, embedder)
 
-        error_only = search_findings(store, embedder, "sécurité", severity="ERROR")
-        shell_only = search_findings(store, embedder, "sécurité", path_glob="app/shell*")
+        error_only = search_findings(store, embedder, "injection", severity="ERROR")
+        shell_only = search_findings(store, embedder, "injection", path_glob="app/shell*")
 
     assert [hit.finding.id for hit in error_only] == [SQL_FINDING.id]
     assert [hit.finding.id for hit in shell_only] == [SHELL_FINDING.id]
 
 
-def test_search_findings_hybrid_matches_exact_rule_id_and_cwe(tmp_path: Path) -> None:
+def test_search_findings_matches_exact_rule_id_and_cwe(tmp_path: Path) -> None:
     embedder = BagOfWordsFakeEmbedder()
 
     with Store(tmp_path) as store:
@@ -186,15 +186,16 @@ def test_get_context_narrow_window(tmp_path: Path) -> None:
     assert context_lines == ["    9| line 9", "   10| line 10", "   11| line 11"]
 
 
-def test_search_findings_rejects_incompatible_embedding_dimensions(tmp_path: Path) -> None:
+def test_search_findings_does_not_depend_on_embedding_dimensions(tmp_path: Path) -> None:
     indexed_embedder = BagOfWordsFakeEmbedder(dim=8)
     query_embedder = BagOfWordsFakeEmbedder(dim=16)
 
     with Store(tmp_path) as store:
         seed_store(store, indexed_embedder)
 
-        with pytest.raises(EmbeddingError, match="Dimension d'embedding incompatible"):
-            search_findings(store, query_embedder, "injection sql")
+        hits = search_findings(store, query_embedder, "injection sql")
+
+    assert [hit.finding.id for hit in hits] == [SQL_FINDING.id]
 
 
 def test_search_findings_rejects_invalid_severity(tmp_path: Path) -> None:
@@ -209,7 +210,7 @@ def test_search_findings_rejects_invalid_severity(tmp_path: Path) -> None:
             search_findings(store, embedder, "injection sql", severity="HIGH")
 
 
-def test_search_findings_does_not_fetch_all_vectors_upfront_when_unnecessary() -> None:
+def test_search_findings_does_not_query_vector_index() -> None:
     class RecordingStore:
         def __init__(self) -> None:
             self.top_ks: list[int] = []
@@ -222,24 +223,11 @@ def test_search_findings_does_not_fetch_all_vectors_upfront_when_unnecessary() -
         ) -> list[Finding]:
             return [SQL_FINDING]
 
-        def get_meta(self, key: str) -> str | None:
-            return None
-
-        def get_embedding_dim(self) -> int:
-            return 256
-
-        def embedding_count(self) -> int:
-            return 1000
-
-        def knn_search(self, query_vec: np.ndarray, top_k: int) -> list[tuple[str, float]]:
-            self.top_ks.append(top_k)
-            return [(SQL_FINDING.id, 0.99)]
-
     store = RecordingStore()
     hits = search_findings(store, BagOfWordsFakeEmbedder(), "injection sql")
 
     assert [hit.finding.id for hit in hits] == [SQL_FINDING.id]
-    assert store.top_ks == [20]
+    assert store.top_ks == []
 
 
 def test_render_search_json_degrades_when_context_file_is_missing(tmp_path: Path) -> None:

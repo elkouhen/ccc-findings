@@ -10,9 +10,10 @@ import numpy as np
 import sqlite_vec
 
 from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.modules import DiscoveredModule
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -45,7 +46,8 @@ class CodeChunk:
 
 class Store:
     def __init__(self, repo_root: Path, readonly: bool = False) -> None:
-        self._db_path = db_path(repo_root)
+        self._repo_root = Path(repo_root).resolve()
+        self._db_path = db_path(self._repo_root)
         self._conn: sqlite3.Connection | None = None
         self._readonly = readonly
 
@@ -161,6 +163,14 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS idx_endpoints_path ON endpoints(path);
             CREATE INDEX IF NOT EXISTS idx_endpoints_topic ON endpoints(topic);
+            CREATE TABLE IF NOT EXISTS modules (
+                path TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                build_system TEXT NOT NULL,
+                version TEXT,
+                kind TEXT NOT NULL,
+                configuration_example TEXT NOT NULL
+            );
             """
         )
         self._migrate_legacy_embeddings()
@@ -213,6 +223,45 @@ class Store:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+    # -- modules --
+
+    def replace_modules(self, modules: list[DiscoveredModule]) -> None:
+        """Persist the build inventory produced during `cccr index`."""
+        self.conn.execute("DELETE FROM modules")
+        for module in modules:
+            relative_path = module.path.resolve().relative_to(self._repo_root).as_posix()
+            self.conn.execute(
+                """
+                INSERT INTO modules (path, name, build_system, version, kind, configuration_example)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    relative_path,
+                    module.name,
+                    module.build_system,
+                    module.version,
+                    module.kind,
+                    module.configuration_example,
+                ),
+            )
+
+    def all_modules(self) -> list[DiscoveredModule]:
+        rows = self.conn.execute(
+            "SELECT path, name, build_system, version, kind, configuration_example "
+            "FROM modules ORDER BY path"
+        ).fetchall()
+        return [
+            DiscoveredModule(
+                name=row["name"],
+                path=self._repo_root / row["path"],
+                build_system=row["build_system"],
+                version=row["version"],
+                kind=row["kind"],
+                configuration_example=row["configuration_example"],
+            )
+            for row in rows
+        ]
 
     def get_embedding_dim(self) -> int | None:
         raw = self.get_meta("embedding_dim")
