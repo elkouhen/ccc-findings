@@ -6,7 +6,7 @@ mesurer la qualité de la détection d'endpoints et de construction de graphe
 de `cccr` en la confrontant à une lecture directe du code, sur un repo
 d'exemple représentatif d'une architecture microservices HTTP + Kafka.
 
-Repo cible à analyser : `~/examples/booking-microservices-java-spring-boot`
+Repo cible à analyser : `~/examples/<nom du repo>`
 
 ## Étape 1 — Analyse outillée (cccr)
 1. Vérifie si le repo cible est déjà indexé (présence de `.cccr/`) ;
@@ -50,23 +50,12 @@ Produit un tableau de diff structuré :
 - Arêtes du graphe : relations manquantes ou en trop d'un côté par rapport
   à l'autre.
 
-## Étape 4 — Restitution
-1. Affiche/rends les deux diagrammes drawio (côte à côte si possible, ou
-   liens vers les deux fichiers générés).
-2. Présente le tableau de diff de l'étape 3.
-3. Propose des axes d'amélioration concrets pour `cccr`, priorisés par
-   impact (nombre de faux négatifs/positifs qu'ils corrigeraient) — sous
-   forme d'entrées candidates pour `archive/BACKLOG-<n>.md` (titre,
-   fichiers concernés, description, CA), conformément à la convention
-   décrite dans `AGENT.md`.
-
 ## Sorties attendues
 - 1 rapport d'execution dans le répertoire reports
 - Le rapport porte nom du dépot analysé 
 - Le rapport contient le tableau de diff
 - La rapport contient liste d'axes d'amélioration priorisée.
-- Deux fichiers `.drawio` (un par méthode d'analyse), nommés explicitement
-  (ex. `microservices-kafka-mq.cccr.drawio` / `microservices-kafka-mq.direct.drawio`).
+- une copie d'écran du graph généré en drawio (obtenu par export drawio).
 
 ## Remarque 
 

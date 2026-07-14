@@ -19,7 +19,7 @@
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (semantic + lexical hybrid), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
-| `workspace.py` | Read-only federation of a multi-service Maven directory (BACKLOG-11 A2, ADR-30): `discover_maven_services`, `load_federation` | `models`, `store` |
+| `workspace.py` | Read-only federation of a multi-service Maven/Gradle directory (BACKLOG-11 A2, ADR-30/33): `discover_workspace_services`, `load_federation` | `models`, `store` |
 | `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings`: code (via `ccc`) + findings + ranking + degraded modes orchestration — implementation shared by CLI/MCP | `ccc_bridge`, `config`, `embedder`, `render`, `search`, `store` |
@@ -47,7 +47,7 @@ class Finding:
     fix: str | None
     cwe: list[str]
     owasp: list[str]
-    module: str | None = None          # Maven artifactId (BACKLOG-13 M1)
+    module: str | None = None          # Maven or Gradle artifact name (BACKLOG-13/15)
     qualified_name: str | None = None  # Java package + class (BACKLOG-13 M1)
 ```
 
@@ -75,7 +75,7 @@ class MessageEndpoint:
     start_line: int
     end_line: int
     snippet: str
-    module: str | None = None          # Maven artifactId (BACKLOG-13 M1)
+    module: str | None = None          # Maven or Gradle artifact name (BACKLOG-13/15)
     qualified_name: str | None = None  # Java package + class (BACKLOG-13 M1)
 ```
 
@@ -112,14 +112,13 @@ constructing each `Finding`/`MessageEndpoint` (`parse_semgrep_json` /
 - `gradle.gradle_service_for_path(repo_root, rel_path) -> str | None`
   (BACKLOG-15 H1, ADR-33) — a `build.gradle` has no universal marker equivalent
   to `spring-boot-maven-plugin` (custom convention plugins through `buildSrc`).
-  Signal used instead: `gradle._service_roots(repo_root)` walks the whole repo
+  Signal used instead: `gradle._service_root_artifacts(repo_root)` walks the whole repo
   (`rglob("*.java")`, cached by `repo_root`) to find classes bearing a `main()`
-  that calls `SpringApplication.run(...)` (regex, no AST); the first path
-  segment (first-level directory) of each class found that way becomes a
-  service name, and every file under that same first segment is attached to it
-  — a Gradle microservice split across several subprojects (`<service>/<service>-domain`,
-  `-restapi`, ... `-main`) is thus grouped under a single name. `None` if the
-  first segment matches no detected service.
+  that calls `SpringApplication.run(...)` (regex, no AST). The service name is
+  the declared archive name, then `rootProject.name`, or Gradle's default
+  project name. Its first path segment is used solely to attach all subprojects
+  of the same service (`<service>/<service>-domain`, `-restapi`, ... `-main`).
+  `None` if the path matches no detected service.
 - `scanner._java_qualified_name(repo_root_str, rel_path) -> str | None` —
   `None` for a non-`.java` file; otherwise `package + "." + file_name` if a
   `package ...;` declaration is found by regex (no AST), otherwise just the file
@@ -390,7 +389,7 @@ any other system is ignored. Common to both systems:
 **REST** (`system: rest`, or missing) — `_extract_rest_path(snippet, repo_root,
 source_path, start_line)`: first quoted literal from the snippet (re-read from
 the source file, like `parse_semgrep_json`), searched line by line in order —
-not only on the first line (BACKLOG-10 K13: a fluent `WebClient` chain can
+not only on the first line (BACKLOG-10 K13: a fluent `WebClient` or `RestClient` chain can
 split `.get()` and `.uri(...)` across two lines; the snippet still remains
 exactly bounded by the match's `start_line`/`end_line`, never reading code
 outside the call). Missing, or followed by a concatenation (`+`) on the same
@@ -462,15 +461,18 @@ concerned files. Covered cases:
 - `@EnableSwagger2`: endpoint `GET /swagger-ui.html`;
 - `RestTemplate.exchange(urlExpr, HttpMethod.X, ...)`: `call/rest` endpoint
   inferred directly from Java source when no Semgrep rule matches it;
-- Spring Cloud Gateway `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`:
+- Spring Cloud Gateway Java `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`
+  and YAML `spring.cloud.gateway.routes` / `spring.cloud.gateway.server.webflux.routes`:
   infer both the exposed `serve/rest` route and the proxy `call/rest` route;
+  YAML `StripPrefix` filters are applied to the outbound path and `lb://` URI
+  targets constrain the graph edge to the intended service;
 - WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)`:
   infer exposed `serve/rest` routes;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/
   `.yaml`: endpoint `GET /actuator/**`.
 These endpoints reuse the same `MessageEndpoint` model as Semgrep matches, but
-with dedicated `framework` values (`spring-data-rest`, `spring-cloud-gateway`,
-`spring-webflux`, `swagger-ui`, `spring-actuator`) so they remain
+with dedicated `framework` values (`restclient`, `spring-data-rest`,
+`spring-cloud-gateway`, `spring-webflux`, `swagger-ui`, `spring-actuator`) so they remain
 distinguishable in rendering and graph logic.
 
 **Kafka** (`system: kafka`) — `_extract_kafka_topic(snippet, repo_root,
@@ -694,8 +696,8 @@ where it came from:
 - `workspace.load_federation` (§6ter) — several services indexed
   **separately**, federated at query time (BACKLOG-11 A2).
 - `group_endpoints_by_module(endpoints) -> dict[str, list[MessageEndpoint]]`
-  (BACKLOG-13 M2) — a **single** index covering several Maven modules
-  (`endpoint.module`, M1), without federation. An endpoint without a module
+  (BACKLOG-13 M2) — a **single** index covering several Maven modules or
+  Gradle services (`endpoint.module`, M1/H1), without federation. An endpoint without a module
   (`None`) is excluded from grouping: without a stable
   name, it can never form a reliable inter-service edge — deliberately
   conservative choice (fewer detected edges rather than an invented edge
@@ -705,7 +707,7 @@ where it came from:
 CLI `cccr graph` / MCP tool `graph` (§2/§3): without `--workspace`/
 `workspace_root`, they first try `group_endpoints_by_module` on endpoints from
 the current project; if the result is non-empty, they build the graph directly
-(no federation). Otherwise (no Maven module detected), `services`/`nodes`/
+(no federation). Otherwise (no Maven module or Gradle service detected), `services`/`nodes`/
 `edges` remain empty with an explicit note — same behavior as before
 BACKLOG-13.
 Providing `--workspace`/`workspace_root` always triggers full federation,
@@ -723,18 +725,28 @@ edges: list[GraphEdge]) -> str` — pure function, no
 dependency on SQLite nor the CLI. Renders the **complete** graph (all
 `build_graph` edges) as
 mxGraph XML (native diagrams.net/drawio format):
-- one node (`mxCell vertex="1"`) per service name in `endpoints_by_service`,
-  including a service with no edge at all; each node label is HTML and lists
-  the service name only;
-  initial grid layout (`ceil(sqrt(n))` columns), purely indicative:
-  diagrams.net may freely reorganize on open;
-- one edge (`mxCell edge="1"`) per `GraphEdge`, connected through `source` /
-  `target` to the corresponding nodes (an edge whose service is not in
-  `services` is silently ignored — should not happen in normal use, `edges` and
-  `services` come from the same source) ; dashed style (`dashed=1`) for
-  `kind="kafka"`, solid line for `"rest"` ; label = `edge.to_endpoint.topic`
-  (route or topic name);
-- no special highlighting is applied to a subset of edges.
+- one rounded blue node (`mxCell vertex="1"`) per service name in
+  `endpoints_by_service`, including a service with no edge at all, plus one
+  orange cylinder node per Kafka topic used by an inter-service edge. A service
+  label contains a sorted, distinct exposed REST resource table: count,
+  verb-colored badge, and aligned route (or an explicit empty-state message).
+  Card height reserves enough rows for the longest list;
+- a built-in deterministic left-to-right dependency layout: longest-path ranks
+  put callers before their downstream services and services without edges below
+  the main flow. A Kafka-only topology uses a dedicated two-band layout instead:
+  microservices occupy the upper band, Kafka topics the lower band, and topics
+  follow their producers where possible. The geometries are stored in the
+  document, so it is immediately readable without running an automatic layout
+  in diagrams.net;
+- one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
+  Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
+  Kafka segments are orange and dashed. All edges use orthogonal routing,
+  arrowheads, and a white label background to keep route/topic labels legible.
+  Attachment ports are allocated deterministically across each card side, and
+  visual edges sharing both endpoints are bundled into one connector with a
+  stable multi-line label. This projection is Draw.io-only: `render_graph_json`
+  and `render_graph_d2` retain one relation per route;
+- duplicate visual edges with the same source, target, and label are removed.
 
 Any value derived from source code (service name, route/topic) is escaped via
 `xml.sax.saxutils.quoteattr` before interpolation into an XML attribute — never

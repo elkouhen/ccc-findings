@@ -10,7 +10,7 @@ déjà indexés pour construire une vue fédérée
 from dataclasses import dataclass
 from pathlib import Path
 
-from ccc_radar.gradle import discover_gradle_service_roots
+from ccc_radar.gradle import discover_gradle_services
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.maven import is_runtime_service, parse_pom
 from ccc_radar.models import Finding, MessageEndpoint
@@ -86,8 +86,7 @@ def _discover_gradle_services(root: Path, seen_paths: set[Path]) -> list[Discove
     visibles via `cccr microservices`.
     """
     services: list[DiscoveredService] = []
-    for service_name in discover_gradle_service_roots(root):
-        service_dir = (root / service_name).resolve()
+    for service_name, service_dir in discover_gradle_services(root):
         if service_dir in seen_paths or not service_dir.is_dir():
             continue
         indexed, index_root = _service_index_state(root, service_dir)

@@ -257,7 +257,7 @@ Optional combinable filters:
 | `--role` | `serve`/`call` (rest) or `produce`/`consume` (kafka) |
 | `--topic` | exact equality on `topic` (e.g. `"GET /orders/{id}"`, `"orders.created"`) |
 | `--path` | path pattern (`fnmatch`), same style as `cccr search --path` |
-| `--module` | Maven module name (artifactId) or detected Gradle service — `None` if neither applies |
+| `--module` | Maven or Gradle artifact name — `None` if neither applies |
 
 Text rendering, one line per endpoint:
 `[<system>/<role>] <topic>[ (dynamic)][ [<module>]]  <path>:<start>-<end>`
@@ -277,30 +277,33 @@ them without an explicit handler that a rule can use:
 - `@RequestMapping(...)` without `method=` on a Java method → `ANY /path`;
 - `@RepositoryRestResource(path = "...")` → `GET/POST /path` and
   `GET/PUT/PATCH/DELETE /path/{id}` endpoints;
-- Spring Cloud Gateway `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`
+- Spring Cloud Gateway configured either with Java
+  `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)` or with YAML
+  `spring.cloud.gateway.routes` / `spring.cloud.gateway.server.webflux.routes`
   → one exposed `serve` route and one outbound `call` route per proxy route;
 - WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)` →
   exposed `serve` routes;
 - `@EnableSwagger2` → `GET /swagger-ui.html`;
 - `management.endpoints.web.exposure.include=*` → `GET /actuator/**`.
-These endpoints stay tagged by `framework` (`spring`, `spring-data-rest`,
-`spring-cloud-gateway`, `spring-webflux`, `swagger-ui`, `spring-actuator`) so
+These endpoints stay tagged by `framework` (`spring`, `restclient`,
+`spring-data-rest`, `spring-cloud-gateway`, `spring-webflux`, `swagger-ui`,
+`spring-actuator`) so
 they remain distinguishable from explicit application routes.
 
 `--json` rendering: list of `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
 `module`, `qualified_name`). `module` first comes from the nearest Maven
 `pom.xml` (artifactId); if the repo has no `pom.xml`, it falls back on Gradle
-detection (ADR-33) — the first-level directory that contains, somewhere in its
-tree, a Java class with a `main()` starting Spring Boot
-(`SpringApplication.run(...)`), thereby grouping all Gradle subprojects of the
-same microservice together. `qualified_name` (package + Java class) is `None`
+detection (ADR-33). The Gradle name is its declared archive name, then
+`rootProject.name`, or Gradle's default project name; the directory containing
+the Spring Boot `main()` is used only to group the subprojects of that service.
+`qualified_name` (package + Java class) is `None`
 for a non-Java file.
 
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json] [--drawio FILE]`
+### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--d2 FILE]`
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
@@ -368,32 +371,52 @@ Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `--workspace` never makes the command fail: a missing or incompatible federated
 service is reported in `note`, not as an error.
 
-`--drawio FILE`: instead of JSON/text rendering, writes the
-complete service ↔ service graph (not only cycle edges) in `.drawio`
-(mxGraph XML, directly openable in diagrams.net) to `FILE`, and displays a
-short confirmation (number of services/edges). One node per service known from
-the same data source as `--json` (grouped Maven modules, or `--workspace`
-federation) — including a service with no edge at all. One edge per matched
-REST call (call → serve) or matched Kafka event (produce → consume): solid line
-for REST, dashed for Kafka, label = route/topic. Edges that belong to a
-synchronous cycle (`has_synchronous_rest: true`, meaning at least one non-
-`WebClient` REST edge) are highlighted in red — same signal as the
-`[synchronous]` marker in text rendering. Without inter-module data, it writes a
-valid document but with no node/edge and displays the same explanatory `note`
-as `--json` (never a silent failure). Incompatible with `--json`: `--drawio`
-takes precedence if provided. No equivalent MCP tool — a `.drawio` file is not
-an agent-consumable result, unlike the JSON already returned by `graph`.
+`--drawio FILE`: instead of JSON/text rendering, writes the complete graph in
+`.drawio` (mxGraph XML, directly openable in diagrams.net) to `FILE`, then
+displays a short confirmation (number of services/graph edges). It renders one
+node per known service — including services without interactions — and one
+distinct node per inter-service Kafka topic. REST calls are solid blue arrows;
+Kafka flows are orange dashed arrows split into `producer → topic` and
+`topic → consumer` segments. The initial layout is deterministic and uses
+left-to-right dependency lanes: callers are placed before their downstream
+services, while services without relations are below the main flow. Each
+Kafka-only topology instead uses the conventional two-band view: all
+microservices in an upper horizontal layer and all Kafka topics in a lower
+horizontal layer; producer and consumer arrows then connect these bands.
+Each
+microservice card shows its exposed HTTP resources as an aligned method/path
+list with verb-colored badges and a resource count (or an explicit empty
+state). Connection points are distributed over the card sides, and parallel
+calls between the same two services are bundled to prevent overlap. To limit
+visual noise, several relations HTTP with the same source
+and destination are rendered as one connector whose multi-line label lists
+all methods/routes; the JSON graph remains detailed with one relation per
+route. Node and edge labels contain the service name and route/topic
+respectively. Without
+inter-module data, it writes a valid document but with no node/edge and
+displays the same explanatory `note` as `--json` (never a silent failure).
+
+`--d2 FILE`: also replaces JSON/text rendering. With a `.d2` extension it
+writes D2 source; for another extension (for example `.svg` or `.png`) it
+renders through the D2 CLI. `--d2-layout` selects `elk` (default) or `dagre`.
+`--drawio` and `--d2` cannot be combined. No equivalent MCP tool — visual files
+are not agent-consumable results, unlike the JSON returned by `graph`.
 
 ### `cccr microservices [root] [--json]`
 *Java/Spring microservices extension — beta.*
 
-Discovers Maven modules under `root` (default: current directory, ADR-30): one
-module per found `pom.xml`, named after its `artifactId`, classified as
+Discovers Maven modules and Gradle Spring Boot services under `root` (default:
+current directory, ADR-30/ADR-33). A Maven module is created for each found
+`pom.xml`, named after its `artifactId`, and classified as
 `microservice`
 (the module carries a `main()` class that runs `SpringApplication.run(...)`, or
 its `pom.xml` declares Spring Boot on a runtime packaging) or `shared-module`
-otherwise. Aggregator poms with `packaging=pom` are always ignored, even if
-they centralize the Spring Boot plugin for their children. For each module
+otherwise. Aggregator poms with `packaging=pom` are ignored unless they are a
+runtime Spring Boot service. A Gradle service is detected from a Java `main()`
+calling `SpringApplication.run(...)`, directly or in a subproject; its name is
+the configured Gradle archive name, then `rootProject.name`, or the default
+Gradle project name if neither is explicit. It is always classified as
+`microservice`. For each discovered service
 already indexed (`cccr index` run either inside the module itself or once at the
 multi-module parent), it reads its database **read-only** (never writes into
 another project's database) to count its endpoints and findings.
@@ -411,7 +434,7 @@ another project's database) to count its endpoints and findings.
 }
 ```
 
-`endpoint_count` of a `shared-module` is always `0`: a shared module is never
+`endpoint_count` of a Maven `shared-module` is always `0`: a shared module is never
 handled as a runtime producer/consumer, even if endpoints were detected there by
 mistake. A module not indexed, with a missing database, or with an
 incompatible schema does not make the command fail: it appears in `warnings`,
@@ -588,7 +611,7 @@ declared in `rules:`. This repo keeps a test copy in
 `tests/fixtures/liveness_repo/rules/` (`tests/test_liveness_rules.py`), kept
 manually in sync with the skill copy.
 
-Analysis target: **Java + Spring + Maven only** — scope decision, not a
+Analysis target: **Java + Spring** (Maven or Gradle) — scope decision, not a
 temporary gap (see “Scope” below).
 
 | Rule | Language | Severity | Detects |
@@ -613,7 +636,7 @@ rules:
 Scope: Java (`RestTemplate`, Spring Kafka `@KafkaListener`, `synchronized`,
 `Future`/`CompletableFuture`, MongoDB pessimistic locks
 `findAndModify`/`findOneAndUpdate`) — the target stack is Java + Spring +
-Maven; Python/JS/TS are not targets. The
+Maven or Gradle; Python/JS/TS are not targets. The
 security part (cleartext SASL, `PLAINTEXT`, unsafe deserialization) is now
 covered separately in the Kafka security pack.
 
@@ -647,7 +670,7 @@ in `rules:` (microservices audit workflow of the skill), and feeds
 | `cccr.rest.java.serve-{get,post,put,delete,patch}` | Java | `serve` | Exposed Spring route (`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, or `@RequestMapping(method=...)` for any verb) |
 | `cccr.rest.java.call-{get,post,put,delete}` | Java | `call` | `RestTemplate` call (`getForObject`/`getForEntity`, `postForObject`/`postForEntity`, `put`, `delete`) |
 | `cccr.rest.java.feign-{get,post,put,delete,patch}` | Java | `call` | Method of a `@FeignClient` interface annotated with `@GetMapping`/.../`@RequestMapping(method=...)` (signature with no body — declarative client, not exposed route) |
-| `cccr.rest.java.webclient-{get,post,put,delete,patch}` | Java | `call` | Fluent `WebClient` call (`.get().uri(...)`, `.post().uri(...)`, ...) |
+| `cccr.rest.java.webclient-{get,post,put,delete,patch}` | Java | `call` | Fluent `WebClient` or Spring `RestClient` call (`.get().uri(...)`, `.post().uri(...)`, ...); `RestClient` is reported as framework `restclient` |
 
 Each result carries `metadata.category: endpoint-inventory`,
 `metadata.role`, `metadata.http_method`, `metadata.framework` — the contract
@@ -667,13 +690,15 @@ best-effort scanner logic now:
    without a dedicated Semgrep rule, with best-effort resolution of local
    `@Value` fields, concatenated literal suffixes, and Spring Cloud Config
    Server files such as `configurations/order-service.yml`;
-3. infers Spring Cloud Gateway proxy routes as both exposed `serve` endpoints
-   and outbound `call` endpoints, and WebFlux `RouterFunctions.route(...)`
-   declarations as exposed `serve` routes;
+3. infers Spring Cloud Gateway proxy routes from Java builders and the standard
+   YAML route lists as both exposed `serve` endpoints and outbound `call`
+   endpoints (applying `StripPrefix` when present); YAML `lb://service` targets
+   are used to disambiguate the graph edge. It also infers WebFlux
+   `RouterFunctions.route(...)` declarations as exposed `serve` routes;
 4. keeps a `.put(...)` match as a REST call only when the file actually shows a
    `RestTemplate` footprint, which removes `Map.put(...)` false positives.
-Scope: Java only — target stack is Java + Spring + Maven. Remaining gap:
-`WebClient` chain split across several
+Scope: Java only — target stack is Java + Spring (Maven or Gradle). A fluent
+`WebClient` or `RestClient` chain split across several
 lines (`.get()` and `.uri(...)` not on the same line in the snippet —
 `_find_first_literal` only searched the first line before its later
 improvements).

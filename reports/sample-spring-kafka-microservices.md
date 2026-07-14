@@ -1,65 +1,24 @@
 # sample-spring-kafka-microservices
 
-## Repository
+## Exécution
 
-| Field | Value |
-|---|---|
-| Path | `/Users/m.el-kouhen/examples/sample-spring-kafka-microservices` |
-| Origin | https://github.com/piomin/sample-spring-kafka-microservices |
-| Branch | master |
-| HEAD | `4e1ed6b4` |
-| Commit date | 2026-06-24T21:52:16Z |
-| Last commit subject | Update dependency net.datafaker:datafaker to v2.7.0 (#134) |
-| Working tree clean | no |
-| Tracked files | 45 |
-| pom.xml files | 5 |
-| cccr init state | already initialized |
-| Report generated | 2026-07-14 13:17:09Z |
+`cccr index` : 13 endpoints. Le graphe contient 3 services, 3 topics et 8 segments Kafka visualisés après déduplication des producteurs identiques.
 
-## cccr graph
+![Graphe cccr](assets/sample-spring-kafka-microservices.png)
 
-| Field | Value |
-|---|---|
-| Services | 3 |
-| Nodes | 6 |
-| Edges | 16 |
-| HTTP flows | 0 |
-| Kafka flows | 8 |
-| Outbound calls in consumers | 0 |
-| Warnings | 0 |
+## Analyse directe
 
-Artifacts: [`assets/sample-spring-kafka-microservices.svg`](assets/sample-spring-kafka-microservices.svg) · [`assets/sample-spring-kafka-microservices.d2`](assets/sample-spring-kafka-microservices.d2)
+Lecture de `OrderApp`, `PaymentApp`, `StockApp` et des services utilisant `KafkaTemplate`. Le flux principal est `order-service → orders → {payment-service, stock-service}`, suivi des topics `payment-orders` et `stock-orders` consommés par `order-service`.
 
-<img src="assets/sample-spring-kafka-microservices.svg" alt="Graph for sample-spring-kafka-microservices" width="960">
+## Diff
 
-## Graph notes and warnings
+| Élément | cccr | Direct | Conclusion |
+|---|---|---|---|
+| Services | 3 | 3 | conforme |
+| Topics | orders, payment-orders, stock-orders | mêmes topics | conforme |
+| Kafka | producteurs/consommateurs détectés | mêmes flux principaux | conforme, doublons de sites producteurs regroupés visuellement |
+| HTTP | contrôleur Order | contrôleur Order | conforme |
 
-None.
+## Axes
 
-## Flows
-
-### Kafka
-
-| Producer | Topic | Consumer | Producer site | Consumer site |
-|---|---|---|---|---|
-| order-service | orders | payment-service | `order-service/src/main/java/pl/piomin/order/OrderApp.java:74-80` | `payment-service/src/main/java/pl/piomin/payment/PaymentApp.java:30-37` |
-| order-service | orders | stock-service | `order-service/src/main/java/pl/piomin/order/OrderApp.java:74-80` | `stock-service/src/main/java/pl/piomin/stock/StockApp.java:29-36` |
-| order-service | orders | payment-service | `order-service/src/main/java/pl/piomin/order/controller/OrderController.java:40-40` | `payment-service/src/main/java/pl/piomin/payment/PaymentApp.java:30-37` |
-| order-service | orders | stock-service | `order-service/src/main/java/pl/piomin/order/controller/OrderController.java:40-40` | `stock-service/src/main/java/pl/piomin/stock/StockApp.java:29-36` |
-| order-service | orders | payment-service | `order-service/src/main/java/pl/piomin/order/service/OrderGeneratorService.java:32-32` | `payment-service/src/main/java/pl/piomin/payment/PaymentApp.java:30-37` |
-| order-service | orders | stock-service | `order-service/src/main/java/pl/piomin/order/service/OrderGeneratorService.java:32-32` | `stock-service/src/main/java/pl/piomin/stock/StockApp.java:29-36` |
-| payment-service | payment-orders | order-service | `payment-service/src/main/java/pl/piomin/payment/service/OrderManageService.java:36-36` | `order-service/src/main/java/pl/piomin/order/OrderApp.java:71-72` |
-| stock-service | stock-orders | order-service | `stock-service/src/main/java/pl/piomin/stock/service/OrderManageService.java:36-36` | `order-service/src/main/java/pl/piomin/order/OrderApp.java:74-78` |
-
-### HTTP
-
-None.
-
-## Discovered services
-
-| Service | Kind | Indexed | Endpoints | Findings | Path |
-|---|---|---:|---:|---:|---|
-| base-domain | shared-module | yes | 0 | 0 | `/Users/m.el-kouhen/examples/sample-spring-kafka-microservices/base-domain` |
-| order-service | microservice | yes | 9 | 0 | `/Users/m.el-kouhen/examples/sample-spring-kafka-microservices/order-service` |
-| payment-service | microservice | yes | 2 | 1 | `/Users/m.el-kouhen/examples/sample-spring-kafka-microservices/payment-service` |
-| stock-service | microservice | yes | 2 | 0 | `/Users/m.el-kouhen/examples/sample-spring-kafka-microservices/stock-service` |
+Le layout Kafka en deux bandes a été appliqué : services au-dessus, topics en dessous. Voir P2 dans le backlog pour la distinction future des appels de test.

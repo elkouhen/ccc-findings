@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ccc_radar.gradle import gradle_service_for_path
+from ccc_radar.gradle import discover_gradle_service_roots, gradle_service_for_path
 
 
 def test_gradle_service_for_path_groups_all_submodules_under_the_top_level_dir(
@@ -59,3 +59,55 @@ def test_gradle_service_for_path_returns_none_for_a_file_at_repo_root(tmp_path: 
     (tmp_path / "Foo.java").write_text("class Foo {}")
 
     assert gradle_service_for_path(tmp_path, "Foo.java") is None
+
+
+def test_gradle_service_for_path_uses_the_repo_name_for_a_standard_single_project(
+    tmp_path: Path,
+) -> None:
+    main_dir = tmp_path / "src" / "main" / "java"
+    main_dir.mkdir(parents=True)
+    (main_dir / "Application.java").write_text(
+        "public class Application {\n"
+        "    public static void main(String[] args) {\n"
+        "        SpringApplication.run(Application.class, args);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    assert discover_gradle_service_roots(tmp_path) == [tmp_path.name]
+    assert gradle_service_for_path(tmp_path, "src/main/java/Application.java") == tmp_path.name
+
+
+def test_gradle_service_for_path_uses_the_declared_artifact_name(tmp_path: Path) -> None:
+    service = tmp_path / "customer-service"
+    main_dir = service / "src" / "main" / "java"
+    main_dir.mkdir(parents=True)
+    (service / "build.gradle").write_text('archivesBaseName = "customer-api"\n')
+    (main_dir / "Application.java").write_text(
+        "public class Application {\n"
+        "    public static void main(String[] args) {\n"
+        "        SpringApplication.run(Application.class, args);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    assert discover_gradle_service_roots(tmp_path) == ["customer-api"]
+    assert gradle_service_for_path(tmp_path, "customer-service/src/main/java/Application.java") == "customer-api"
+
+
+def test_gradle_root_service_uses_root_project_name_when_no_archive_name_is_declared(
+    tmp_path: Path,
+) -> None:
+    main_dir = tmp_path / "src" / "main" / "java"
+    main_dir.mkdir(parents=True)
+    (tmp_path / "settings.gradle.kts").write_text('rootProject.name = "orders-api"\n')
+    (main_dir / "Application.java").write_text(
+        "public class Application {\n"
+        "    public static void main(String[] args) {\n"
+        "        SpringApplication.run(Application.class, args);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    assert discover_gradle_service_roots(tmp_path) == ["orders-api"]
+    assert gradle_service_for_path(tmp_path, "src/main/java/Application.java") == "orders-api"

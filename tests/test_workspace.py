@@ -195,6 +195,44 @@ public class BillingServiceMain {
     assert services[0].path == (tmp_path / "billing-service").resolve()
 
 
+def test_discover_workspace_services_detects_a_single_root_gradle_project(tmp_path: Path) -> None:
+    main_dir = tmp_path / "src" / "main" / "java"
+    main_dir.mkdir(parents=True)
+    (main_dir / "Application.java").write_text(
+        "public class Application {\n"
+        "    public static void main(String[] args) {\n"
+        "        SpringApplication.run(Application.class, args);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    services = discover_workspace_services(tmp_path)
+
+    assert [(service.name, service.path) for service in services] == [
+        (tmp_path.name, tmp_path.resolve())
+    ]
+
+
+def test_discover_workspace_services_uses_a_gradle_artifact_name(tmp_path: Path) -> None:
+    service_dir = tmp_path / "orders-service"
+    main_dir = service_dir / "src" / "main" / "java"
+    main_dir.mkdir(parents=True)
+    (service_dir / "build.gradle.kts").write_text('archiveBaseName.set("orders-api")\n')
+    (main_dir / "Application.java").write_text(
+        "public class Application {\n"
+        "    public static void main(String[] args) {\n"
+        "        SpringApplication.run(Application.class, args);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    services = discover_workspace_services(tmp_path)
+
+    assert [(service.name, service.path) for service in services] == [
+        ("orders-api", service_dir.resolve())
+    ]
+
+
 def test_load_federation_reports_stale_endpoint_inventory_as_warning(workspace_copy: Path) -> None:
     endpoint = make_endpoint("serve", "rest", "GET /orders", "app/OrderController.java")
     with Store(workspace_copy / "service-a") as store:

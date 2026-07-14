@@ -1,57 +1,24 @@
 # booking-microservices-java-spring-boot
 
-## Repository
+## Exécution
 
-| Field | Value |
-|---|---|
-| Path | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot` |
-| Origin | https://github.com/meysamhadeli/booking-microservices-java-spring-boot.git |
-| Branch | main |
-| HEAD | `ea481c3e` |
-| Commit date | 2025-10-09T17:11:56+03:30 |
-| Last commit subject | docs: update documentation |
-| Working tree clean | no |
-| Tracked files | 370 |
-| pom.xml files | 5 |
-| cccr init state | already initialized |
-| Report generated | 2026-07-14 13:17:09Z |
+`cccr index` : 16 endpoints; graphe sans arête. La découverte fédérée retourne `src`, `apigateway`, `buildingblocks`, `booking`, `flight`, `passenger`.
 
-## cccr graph
+![Graphe cccr](assets/booking-microservices-java-spring-boot.png)
 
-| Field | Value |
-|---|---|
-| Services | 4 |
-| Nodes | 4 |
-| Edges | 0 |
-| HTTP flows | 0 |
-| Kafka flows | 0 |
-| Outbound calls in consumers | 0 |
-| Warnings | 0 |
+## Analyse directe
 
-Artifacts: [`assets/booking-microservices-java-spring-boot.svg`](assets/booking-microservices-java-spring-boot.svg) · [`assets/booking-microservices-java-spring-boot.d2`](assets/booking-microservices-java-spring-boot.d2)
+Les contrôleurs de production sont dans les artefacts `booking`, `flight` et `passenger`; `buildingblocks` est une bibliothèque commune et `src` un conteneur de sources. Des configurations `RestTemplate` et des usages Kafka existent, mais les appels métier inter-services ne sont pas résolus en relations statiques par l’inventaire actuel.
 
-<img src="assets/booking-microservices-java-spring-boot.svg" alt="Graph for booking-microservices-java-spring-boot" width="960">
+## Diff
 
-## Graph notes and warnings
+| Élément | cccr | Direct | Écart |
+|---|---|---|---|
+| Services | 6, dont `src` et `buildingblocks` | booking, flight, passenger (et gateway si déployé) | faux positifs de découverte de service |
+| HTTP exposé | 13 routes de production + appels dynamiques de test | mêmes contrôleurs | routes conformes; appels test à isoler |
+| Kafka | topic dynamique non résolu | usages médiateur/Kafka présents | résolution de configuration manquante |
+| Arêtes | 0 | relations non triviales/configurées | faux négatifs attendus |
 
-None.
+## Axes
 
-## Flows
-
-### Kafka
-
-None.
-
-### HTTP
-
-None.
-
-## Discovered services
-
-| Service | Kind | Indexed | Endpoints | Findings | Path |
-|---|---|---:|---:|---:|---|
-| apigateway | microservice | yes | 0 | 0 | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot/src/apigateway` |
-| buildingblocks | microservice | yes | 3 | 1 | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot/src/buildingblocks` |
-| booking | microservice | yes | 1 | 0 | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot/src/services/booking` |
-| flight | microservice | yes | 10 | 0 | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot/src/services/flight` |
-| passenger | microservice | yes | 2 | 0 | `/Users/m.el-kouhen/examples/booking-microservices-java-spring-boot/src/services/passenger` |
+Priorité P0 : ne retenir qu’un module applicatif Maven/Gradle déployable, identifié par son artifact, et exclure les agrégateurs/bibliothèques.

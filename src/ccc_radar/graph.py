@@ -70,6 +70,7 @@ def _segment_matches(call_segment: str, serve_segment: str) -> bool:
 
 _SERVICE_URL_GETTER_RE = re.compile(r"\.get([A-Z][A-Za-z0-9]*)ServiceUrl\(")
 _SERVICE_URL_HOST_RE = re.compile(r'https?://([a-z0-9-]+(?:-[a-z0-9-]+)*-service)\b', re.IGNORECASE)
+_LOAD_BALANCED_URI_RE = re.compile(r"lb://([a-z0-9-]+(?:-[a-z0-9-]+)*-service)\b", re.IGNORECASE)
 
 
 def _camel_to_kebab(name: str) -> str:
@@ -83,6 +84,9 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     host_match = _SERVICE_URL_HOST_RE.search(call.snippet)
     if host_match is not None:
         return host_match.group(1).lower()
+    load_balanced_match = _LOAD_BALANCED_URI_RE.search(call.snippet)
+    if load_balanced_match is not None:
+        return load_balanced_match.group(1).lower()
     return None
 
 
@@ -101,22 +105,25 @@ def paths_match(call_topic: str, serve_topic: str) -> bool:
 
     call_method, _, call_path = call_topic.partition(" ")
     serve_method, _, serve_path = serve_topic.partition(" ")
-    if call_method != serve_method or call_path == "<dynamic>":
+    if (
+        call_path == "<dynamic>"
+        or (call_method != serve_method and call_method != "ANY" and serve_method != "ANY")
+    ):
         return False
 
     call_segments = _split_path(call_path)
     serve_segments = _split_path(serve_path)
     if not call_segments:
         return False
+    if _matches_wildcard_path(call_segments, serve_segments):
+        return True
+    if _matches_wildcard_path(serve_segments, call_segments):
+        return True
     if len(call_segments) == len(serve_segments):
         return all(
             _segment_matches(call_seg, serve_seg)
             for call_seg, serve_seg in zip(call_segments, serve_segments)
         )
-    if _matches_wildcard_path(call_segments, serve_segments):
-        return True
-    if _matches_wildcard_path(serve_segments, call_segments):
-        return True
     return False
 
 
@@ -138,6 +145,7 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
 
     edges: list[GraphEdge] = []
     seen: set[tuple[str, str, str, str, str]] = set()
+    gateway_proxy_targets: set[tuple[str, str]] = set()
     for call_service, call in calls:
         for serve_service, serve in serves:
             if call_service == serve_service:
@@ -145,6 +153,11 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
             if not _service_matches_hint(serve_service, _rest_target_service_hint(call)):
                 continue
             if paths_match(call.topic, serve.topic):
+                proxy_target = (call.id, serve_service)
+                if call.framework == "spring-cloud-gateway" and call.topic.startswith("ANY "):
+                    if proxy_target in gateway_proxy_targets:
+                        continue
+                    gateway_proxy_targets.add(proxy_target)
                 key = ("rest", call_service, serve_service, call.id, serve.id)
                 if key in seen:
                     continue

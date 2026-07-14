@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from ccc_radar.config import Config
-from ccc_radar.scanner import SemgrepError, parse_semgrep_endpoints, run_semgrep_endpoints
+from ccc_radar.scanner import (
+    SemgrepError,
+    infer_framework_endpoints,
+    parse_semgrep_endpoints,
+    run_semgrep_endpoints,
+)
 
 # Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/rest/), pas dans ce repo (ADR-24). Les fixtures ci-dessous sont une
@@ -157,6 +162,90 @@ def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic(
 
     assert endpoints[0].topic == "GET /orders/"
     assert endpoints[0].topic_dynamic is True
+
+
+def test_restclient_concatenation_preserves_path_variable_and_framework(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "CustomerClient.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import org.springframework.web.client.RestClient;\n"
+        "class CustomerClient {\n"
+        "  RestClient client;\n"
+        "  void add(int ownerId) {\n"
+        "    client.post()\n"
+        "      .uri(getCustomerServiceUri() + \"/owners/\" + ownerId + \"/pets\")\n"
+        "      .retrieve();\n"
+        "  }\n"
+        "}\n"
+    )
+    raw = """
+    {"results": [{
+        "check_id": "rules.cccr.rest.java.webclient-post",
+        "path": "src/main/java/CustomerClient.java",
+        "start": {"line": 5}, "end": {"line": 7},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "role": "call", "http_method": "POST",
+                                "framework": "webclient"}}
+    }]}
+    """
+
+    endpoints = parse_semgrep_endpoints(raw, tmp_path)
+
+    assert endpoints[0].framework == "restclient"
+    assert endpoints[0].topic == "POST /owners/{ownerId}/pets"
+    assert endpoints[0].topic_dynamic is True
+
+
+def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "OrderListener.java"
+    source.parent.mkdir(parents=True)
+    source.write_text('@KafkaListener(topics = "orders.created")\nvoid consume() {}\n')
+    raw = """
+    {"results": [{
+        "check_id": "rules.cccr.kafka.java.consume-listener",
+        "path": "src/main/java/OrderListener.java",
+        "start": {"line": 1}, "end": {"line": 1},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "system": "kafka", "role": "consume",
+                                "framework": "spring-kafka"}}
+    }]}
+    """
+
+    endpoints = parse_semgrep_endpoints(raw, tmp_path)
+
+    assert len(endpoints) == 1
+    assert endpoints[0].system == "kafka"
+    assert endpoints[0].topic == "orders.created"
+    assert endpoints[0].framework == "spring-kafka"
+
+
+def test_spring_cloud_gateway_yaml_routes_are_inferred(tmp_path: Path) -> None:
+    config = tmp_path / "src" / "main" / "resources" / "application.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: vets
+              uri: lb://vets-service
+              predicates:
+                - Path=/api/vet/**
+              filters:
+                - StripPrefix=2
+""".strip()
+    )
+
+    endpoints = infer_framework_endpoints(tmp_path, files=["src/main/resources/application.yml"])
+
+    assert {(endpoint.role, endpoint.topic, endpoint.framework) for endpoint in endpoints} == {
+        ("serve", "ANY /api/vet/**", "spring-cloud-gateway"),
+        ("call", "ANY /**", "spring-cloud-gateway"),
+    }
+    assert all("lb://vets-service" in endpoint.snippet for endpoint in endpoints)
 
 
 def test_parse_semgrep_endpoints_renders_request_param_as_query_string(tmp_path: Path) -> None:

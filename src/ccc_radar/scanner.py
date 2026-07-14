@@ -270,6 +270,7 @@ _REST_TEMPLATE_EXCHANGE_RE = re.compile(
     r"\.exchange\(\s*(.+?)\s*,\s*(?:HttpMethod\.)?([A-Z]+)\s*,",
     re.DOTALL,
 )
+_URI_CALL_RE = re.compile(r"\.uri\s*\(")
 _GATEWAY_ROUTE_PATH_RE = re.compile(r'\.path\(\s*"([^"]+)"\s*\)')
 _GATEWAY_ROUTE_METHOD_RE = re.compile(r'\.method\(\s*(?:"([A-Z]+)"|HttpMethod\.([A-Z]+))\s*\)')
 _GATEWAY_ROUTE_URI_RE = re.compile(r"\.uri\(\s*([^)]+?)\s*\)", re.DOTALL)
@@ -356,7 +357,7 @@ def _split_java_concat(expr: str) -> list[str]:
 
 
 def _resolve_rest_path_expression(
-    expr: str, repo_root: Path, source_path: str
+    expr: str, repo_root: Path, source_path: str, *, preserve_dynamic_segments: bool = False
 ) -> tuple[str, bool]:
     resolved_parts: list[str] = []
     dynamic = False
@@ -377,10 +378,14 @@ def _resolve_rest_path_expression(
             resolved = _resolve_value_annotated_variable(repo_root, source_path, part)
             if resolved is None:
                 dynamic = True
+                if preserve_dynamic_segments and resolved_parts:
+                    resolved_parts.append(f"{{{part}}}")
                 continue
             resolved_parts.append(resolved)
             continue
         dynamic = True
+        if preserve_dynamic_segments and resolved_parts:
+            resolved_parts.append("{dynamic}")
     raw = "".join(resolved_parts).strip()
     if not raw:
         return "<dynamic>", True
@@ -881,6 +886,57 @@ def _file_uses_resttemplate(repo_root_str: str, rel_path: str) -> bool:
     )
 
 
+@lru_cache(maxsize=512)
+def _file_uses_restclient(repo_root_str: str, rel_path: str) -> bool:
+    path = Path(repo_root_str) / rel_path
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "org.springframework.web.client.RestClient" in text or "RestClient " in text
+
+
+def _uri_argument(snippet: str) -> str | None:
+    """Extrait l'argument de `.uri(...)` en tenant compte des appels imbriqués."""
+    match = _URI_CALL_RE.search(snippet)
+    if match is None:
+        return None
+    start = match.end()
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    for index in range(start, len(snippet)):
+        char = snippet[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ('"', "'"):
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return snippet[start:index]
+    return None
+
+
+def _extract_restclient_path(
+    snippet: str, repo_root: Path, source_path: str
+) -> tuple[str, bool] | None:
+    expr = _uri_argument(snippet)
+    if expr is None:
+        return None
+    return _resolve_rest_path_expression(
+        expr, repo_root, source_path, preserve_dynamic_segments=True
+    )
+
+
 def _extract_resttemplate_path(
     snippet: str, repo_root: Path, source_path: str
 ) -> tuple[str, bool] | None:
@@ -989,6 +1045,121 @@ def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[M
                     )
                 )
         idx = block_end + 1
+    return inferred
+
+
+def _gateway_route_entries(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, dict):
+        return []
+    spring = data.get("spring")
+    if not isinstance(spring, dict):
+        return []
+    cloud = spring.get("cloud")
+    if not isinstance(cloud, dict):
+        return []
+    gateway = cloud.get("gateway")
+    if not isinstance(gateway, dict):
+        return []
+    routes = gateway.get("routes")
+    if not isinstance(routes, list):
+        server = gateway.get("server")
+        webflux = server.get("webflux") if isinstance(server, dict) else None
+        routes = webflux.get("routes") if isinstance(webflux, dict) else None
+    return [route for route in routes if isinstance(route, dict)] if isinstance(routes, list) else []
+
+
+def _gateway_paths(route: dict[str, object]) -> list[str]:
+    predicates = route.get("predicates")
+    if not isinstance(predicates, list):
+        return []
+    paths: list[str] = []
+    for predicate in predicates:
+        if isinstance(predicate, str) and predicate.startswith("Path="):
+            paths.extend(path.strip() for path in predicate[5:].split(",") if path.strip())
+        elif isinstance(predicate, dict) and predicate.get("name") == "Path":
+            args = predicate.get("args")
+            if isinstance(args, dict):
+                value = args.get("_genkey_0") or args.get("patterns")
+                if isinstance(value, str):
+                    paths.append(value)
+    return paths
+
+
+def _gateway_strip_prefix(route: dict[str, object]) -> int:
+    filters = route.get("filters")
+    if not isinstance(filters, list):
+        return 0
+    for item in filters:
+        if isinstance(item, str) and item.startswith("StripPrefix="):
+            try:
+                return int(item.partition("=")[2])
+            except ValueError:
+                return 0
+    return 0
+
+
+def _strip_gateway_path(route: str, prefix_count: int) -> str:
+    if prefix_count <= 0:
+        return _normalize_rest_path(route)
+    parts = [part for part in route.split("/") if part]
+    remaining = parts[prefix_count:]
+    return "/" + "/".join(remaining) if remaining else "/"
+
+
+def _infer_spring_cloud_gateway_yaml_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    try:
+        documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8", errors="replace")))
+    except (OSError, yaml.YAMLError):
+        return []
+
+    inferred: list[MessageEndpoint] = []
+    for document in documents:
+        for route in _gateway_route_entries(document):
+            uri = route.get("uri")
+            if not isinstance(uri, str) or not uri.startswith("lb://"):
+                continue
+            strip_prefix = _gateway_strip_prefix(route)
+            line_no = 1
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                line_no = next(
+                    index
+                    for index, line in enumerate(text.splitlines(), start=1)
+                    if f"uri: {uri}" in line or f"uri:{uri}" in line
+                )
+            except (OSError, StopIteration):
+                pass
+            for public_path in _gateway_paths(route):
+                public_route = _normalize_rest_path(public_path)
+                target_path = _strip_gateway_path(public_route, strip_prefix)
+                snippet = f"Path={public_route}; StripPrefix={strip_prefix}; uri={uri}"
+                inferred.append(
+                    _build_endpoint(
+                        repo_root,
+                        rel_path,
+                        line_no,
+                        line_no,
+                        "serve",
+                        "rest",
+                        f"ANY {public_route}",
+                        "spring-cloud-gateway",
+                        snippet,
+                    )
+                )
+                inferred.append(
+                    _build_endpoint(
+                        repo_root,
+                        rel_path,
+                        line_no,
+                        line_no,
+                        "call",
+                        "rest",
+                        f"ANY {target_path}",
+                        "spring-cloud-gateway",
+                        snippet,
+                    )
+                )
     return inferred
 
 
@@ -1130,7 +1301,9 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith((".properties", ".yml", ".yaml")):
-            for endpoint in _infer_actuator_endpoint(repo_root, rel_path):
+            for endpoint in _infer_actuator_endpoint(repo_root, rel_path) + _infer_spring_cloud_gateway_yaml_routes(
+                repo_root, rel_path
+            ):
                 inferred[endpoint.id] = endpoint
     return list(inferred.values())
 
@@ -1238,6 +1411,8 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             ) from exc
 
         snippet = _read_snippet(repo_root, path, start_line, end_line)
+        framework = metadata.get("framework")
+        is_restclient = False
 
         if system == "rest":
             try:
@@ -1246,11 +1421,17 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 raise SemgrepError(
                     f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
                 ) from exc
-            framework = metadata.get("framework")
+            is_restclient = framework == "webclient" and _file_uses_restclient(str(repo_root), path)
             if framework == "resttemplate":
                 if not _file_uses_resttemplate(str(repo_root), path):
                     continue
                 extracted = _extract_resttemplate_path(snippet, repo_root, path)
+                if extracted is not None:
+                    route, dynamic = extracted
+                else:
+                    route, dynamic = _extract_rest_path(snippet, repo_root, path, start_line)
+            elif is_restclient:
+                extracted = _extract_restclient_path(snippet, repo_root, path)
                 if extracted is not None:
                     route, dynamic = extracted
                 else:
@@ -1269,7 +1450,7 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 topic=topic,
                 topic_dynamic=dynamic,
                 source="code",
-                framework=metadata.get("framework"),
+                framework="restclient" if is_restclient else framework,
                 path=path,
                 start_line=start_line,
                 end_line=end_line,
@@ -1346,5 +1527,6 @@ def clear_analysis_caches() -> None:
     _load_value_annotated_fields.cache_clear()
     _class_base_path.cache_clear()
     _file_uses_resttemplate.cache_clear()
+    _file_uses_restclient.cache_clear()
     maven_module.clear_caches()
     gradle_module.clear_caches()

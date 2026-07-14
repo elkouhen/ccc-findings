@@ -745,7 +745,7 @@ no `*graph*`/`*cycle*` table exists in the schema (AC5).
 
 **Context**: BACKLOG-10 K2 must extract the topic name in
 `@KafkaListener(topics = "...")` / `KafkaTemplate.send(...)`. In practice
-(target = Java + Spring + Maven), the topic is almost never a raw literal: it
+(target = Java + Spring on Maven or Gradle), the topic is almost never a raw literal: it
 is externalized into configuration —
 `@KafkaListener(topics = "${app.kafka.topics.orders}")`, with the real value in
 `application.yml`/`.properties`. The text captured by regex extraction
@@ -968,10 +968,11 @@ detect a microservice by the Java class that actually starts it
 
 **Decision**: `gradle.gradle_service_for_path` (new, BACKLOG-15 H1) searches the
 whole repo for Java classes carrying a `main()` that calls
-`SpringApplication.run(...)` (regex, no AST — same spirit as ADR-26). The first
-path segment (top-level directory under the indexed root) of each class found
-that way becomes a service name; every file under that same first segment is
-attached to it — a Gradle microservice split across several subprojects
+`SpringApplication.run(...)` (regex, no AST — same spirit as ADR-26). The
+service name is its declared Gradle archive name, then `rootProject.name`, or
+Gradle's default project name. The first path segment (top-level directory
+under the indexed root) only identifies which files belong to that service — a
+Gradle microservice split across several subprojects
 (` <service>/<service>-domain`, `-restapi`, ... `-main`) is thus grouped under a
 single name, at the same granularity that a single Maven `pom.xml` gives for an
 equivalent microservice. `scanner._module_for_path` first tries
@@ -981,9 +982,9 @@ Maven too to `main()`-class detection) and only falls back to Gradle detection
 if no `pom.xml` is found on the path.
 
 **Consequences**: a mixed repo (some Maven modules, some Gradle ones) works
-file by file, with no explicit build-tool configuration. The “first path
-segment” granularity assumes a Gradle microservice split across subprojects lives
-under one top-level directory (the convention observed in the repo that
+file by file, with no explicit build-tool configuration. The grouping by first
+path segment assumes a Gradle microservice split across subprojects lives under
+one top-level directory (the convention observed in the repo that
 motivated this task) — a Gradle layout that puts all subprojects flat at the
 root with no per-service grouping would not be correctly detected ; not handled
 here, to revisit if such a layout appears. No microservice/shared-module

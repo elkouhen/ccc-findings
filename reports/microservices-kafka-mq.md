@@ -1,56 +1,24 @@
 # microservices-kafka-mq
 
-## Repository
+## Exécution
 
-| Field | Value |
-|---|---|
-| Path | `/Users/m.el-kouhen/examples/microservices-kafka-mq` |
-| Origin | https://github.com/kemalat/microservices-kafka-mq |
-| Branch | master |
-| HEAD | `5a597e23` |
-| Commit date | 2020-07-15T21:49:06+03:00 |
-| Last commit subject | Update README.md |
-| Working tree clean | no |
-| Tracked files | 65 |
-| pom.xml files | 3 |
-| cccr init state | already initialized |
-| Report generated | 2026-07-14 13:17:09Z |
+`cccr index` : 15 endpoints; le graphe fédéré détecte 2 services et une relation Kafka inter-service.
 
-## cccr graph
+![Graphe cccr](assets/microservices-kafka-mq.png)
 
-| Field | Value |
-|---|---|
-| Services | 2 |
-| Nodes | 3 |
-| Edges | 2 |
-| HTTP flows | 0 |
-| Kafka flows | 1 |
-| Outbound calls in consumers | 0 |
-| Warnings | 0 |
+## Analyse directe
 
-Artifacts: [`assets/microservices-kafka-mq.svg`](assets/microservices-kafka-mq.svg) · [`assets/microservices-kafka-mq.d2`](assets/microservices-kafka-mq.d2)
+Lecture de `microservice-order` et `microservice-invoicing` : `OrderService` publie sur `order`, et `OrderKafkaListener` consomme ce topic. Les occurrences supplémentaires dans `src/test` sont des tests Kafka/REST et ne doivent pas être confondues avec l’architecture de production.
 
-<img src="assets/microservices-kafka-mq.svg" alt="Graph for microservices-kafka-mq" width="960">
+## Diff
 
-## Graph notes and warnings
+| Élément | cccr | Direct | Conclusion |
+|---|---|---|---|
+| Services | order, invoicing | order, invoicing | conforme |
+| Topic production | order | order | conforme |
+| Consommation | invoicing | invoicing | conforme |
+| Tests | sites détectés si indexés | tests présents | à filtrer/étiqueter |
 
-None.
+## Axes
 
-## Flows
-
-### Kafka
-
-| Producer | Topic | Consumer | Producer site | Consumer site |
-|---|---|---|---|---|
-| microservice-order | order | microservice-invoicing | `microservice-order/src/main/java/de/oriontec/microservice/order/logic/OrderService.java:39-40` | `microservice-invoicing/src/main/java/de/oriontec/microservice/invoicing/events/OrderKafkaListener.java:23-28` |
-
-### HTTP
-
-None.
-
-## Discovered services
-
-| Service | Kind | Indexed | Endpoints | Findings | Path |
-|---|---|---:|---:|---:|---|
-| microservice-invoicing | microservice | yes | 4 | 1 | `/Users/m.el-kouhen/examples/microservices-kafka-mq/microservice-invoicing` |
-| microservice-order | microservice | yes | 11 | 0 | `/Users/m.el-kouhen/examples/microservices-kafka-mq/microservice-order` |
+Voir P2 « exclusion/étiquetage test » dans [BACKLOG.md](../BACKLOG.md).

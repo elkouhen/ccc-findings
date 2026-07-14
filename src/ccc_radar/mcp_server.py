@@ -173,8 +173,8 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     dans un handler de consommation Kafka du projet courant. Utiliser pour
     visualiser la topologie distribuée ET localiser les endroits
     susceptibles de causer un verrouillage intermittent. Sans
-    `workspace_root`, si l'index couvre un répertoire multi-modules Maven
-    (`cccr index` lancé au parent, BACKLOG-13), les endpoints attribués à
+    `workspace_root`, si l'index couvre un répertoire multi-modules Maven ou
+    Gradle (`cccr index` lancé au parent, BACKLOG-13/15), les endpoints attribués à
     un module sont automatiquement groupés pour rapporter de vraies arêtes
     inter-modules. Avec `workspace_root`, fédère en plus les autres
     microservices indexés séparément (BACKLOG-11 A2, lecture seule) —
@@ -240,8 +240,8 @@ def trace_message_flow(query: str, workspace_root: str | None = None) -> FlowRes
     Utiliser pour comprendre qui produit/consomme un topic donné, ou qui
     appelle une route donnée, avant de plonger dans le code. Sans
     `workspace_root`, ne cherche que dans le projet courant — chaque site
-    est attribué à son module Maven si l'index couvre un répertoire
-    multi-modules (BACKLOG-13) ; avec, fédère en plus les autres
+    est attribué à son module Maven ou service Gradle si l'index couvre un
+    répertoire multi-modules (BACKLOG-13/15) ; avec, fédère en plus les autres
     microservices indexés séparément (BACKLOG-11 A2, lecture seule) pour un
     flux qui traverse plusieurs services. Requête sans correspondance, ou
     ambiguë, lève une erreur explicite plutôt que de deviner un topic au

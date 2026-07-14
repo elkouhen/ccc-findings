@@ -1,5 +1,5 @@
-import math
 import subprocess
+from html import escape as html_escape
 from pathlib import Path
 from typing import TypedDict
 from xml.sax.saxutils import quoteattr
@@ -371,82 +371,110 @@ def render_graph_drawio(
     Kafka inter-service. Les arêtes REST vont de l'appelant vers l'appelé ;
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
-    portent des couleurs distinctes. Layout initial en grille — diagrams.net
-    réorganise à la demande, ce n'est pas un rendu figé. Toute valeur dérivée
+    portent des couleurs et des formes distinctes. Le layout initial est
+    déterministe, organisé en couloirs de gauche à droite selon les
+    dépendances. Toute valeur dérivée
     du code source (nom de service, route, topic) est échappée XML via
     `quoteattr` — jamais interpolée brute."""
-    node_width = 220
-    node_height = 60
+    node_width = 320
 
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
+    service_resources = {
+        name: _rest_resources_served(endpoints_by_service.get(name, [])) for name in ordered_services
+    }
     ordered_nodes = [("microservice", name) for name in ordered_services] + [
         ("kafka_topic", name) for name in kafka_topics
     ]
-    node_ids = {name: f"node-{i}" for i, (_, name) in enumerate(ordered_nodes)}
-    positions = _graphviz_node_positions(
-        ordered_services,
-        kafka_topics,
-        edges,
-        node_width=node_width,
-        node_height=node_height,
-    ) or _fallback_drawio_positions(
-        ordered_services,
-        kafka_topics,
-        node_width=node_width,
-        node_height=node_height,
-    )
+    node_ids = {node: f"node-{i}" for i, node in enumerate(ordered_nodes)}
+    node_dimensions = {
+        ("microservice", name): (node_width, _drawio_service_height(service_resources[name]))
+        for name in ordered_services
+    } | {("kafka_topic", name): (220, 60) for name in kafka_topics}
+    # The graph model remains detailed, but the visual export bundles calls
+    # sharing the same endpoints. This removes parallel strokes and keeps their
+    # individual routes as a multi-line label on the single connector.
+    visual_edges = _drawio_visual_graph_edges(edges)
+    if kafka_topics and all(kind == "kafka" for *_nodes, kind in visual_edges):
+        positions = _kafka_layered_drawio_positions(ordered_services, kafka_topics, visual_edges, node_dimensions)
+    else:
+        positions = _layered_drawio_positions(ordered_nodes, visual_edges, node_dimensions)
 
     cells: list[str] = []
     for node_kind, name in ordered_nodes:
         if node_kind == "microservice":
-            label = f"<b>{name}</b>"
-            width = node_width
-            height = node_height
+            label = _drawio_service_label(name, service_resources[name])
+            width, height = node_dimensions[(node_kind, name)]
             style = (
-                "rounded=1;whiteSpace=wrap;html=1;"
-                "fillColor=#dae8fc;strokeColor=#6c8ebf;"
+                "rounded=1;arcSize=14;whiteSpace=wrap;html=1;"
+                "fillColor=#eaf2ff;strokeColor=#4f79b5;strokeWidth=2;"
+                "fontColor=#183b66;fontSize=14;fontStyle=1;shadow=1;"
+                "spacingLeft=12;spacingRight=12;"
             )
         else:
-            label = f"<b>{name}</b>"
-            width = node_width
-            height = node_height
+            label = f"<b>{html_escape(name)}</b>"
+            width, height = node_dimensions[(node_kind, name)]
             style = (
-                "rounded=1;whiteSpace=wrap;html=1;"
-                "fillColor=#ffe6cc;strokeColor=#d79b00;"
+                "shape=cylinder3;boundedLbl=1;whiteSpace=wrap;html=1;"
+                "fillColor=#fff3df;strokeColor=#d18b20;strokeWidth=2;"
+                "fontColor=#744a0b;fontSize=13;"
             )
-        x, y = positions[name]
+        x, y = positions[(node_kind, name)]
         cells.append(
-            f'<mxCell id="{node_ids[name]}" value={quoteattr(label)} '
+                f'<mxCell id="{node_ids[(node_kind, name)]}" value={quoteattr(label)} '
             f'style={quoteattr(style)} '
             f'vertex="1" parent="1"><mxGeometry x="{x}" y="{y}" width="{width}" height="{height}" '
             'as="geometry" /></mxCell>'
         )
 
-    visual_edge_index = 0
-    for source_name, target_name, label, kind, _highlighted in _visual_graph_edges(edges):
-        source_id = node_ids.get(source_name)
-        target_id = node_ids.get(target_name)
+    edge_ports = _drawio_edge_ports(visual_edges, positions)
+    parallel_lanes = _drawio_parallel_lanes(visual_edges)
+    for visual_edge_index, (source_kind, source_name, target_kind, target_name, label, kind) in enumerate(
+        visual_edges
+    ):
+        source_id = node_ids.get((source_kind, source_name))
+        target_id = node_ids.get((target_kind, target_name))
         if source_id is None or target_id is None:
             continue
-        style = "edgeStyle=orthogonalEdgeStyle;html=1;"
-        style += "dashed=1;" if kind == "kafka" else ""
-        style += "strokeColor=#666666;"
+        style = (
+            "edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;"
+            "html=1;endArrow=block;endFill=1;strokeWidth=2;"
+            "labelBackgroundColor=#ffffff;fontSize=11;spacing=4;"
+        )
+        exit_side, exit_port, entry_side, entry_port = edge_ports[visual_edge_index]
+        style += (
+            f"exitX={_drawio_side_coordinate(exit_side, exit_port, x_axis=True)};"
+            f"exitY={_drawio_side_coordinate(exit_side, exit_port, x_axis=False)};"
+            f"entryX={_drawio_side_coordinate(entry_side, entry_port, x_axis=True)};"
+            f"entryY={_drawio_side_coordinate(entry_side, entry_port, x_axis=False)};"
+            "exitPerimeter=1;entryPerimeter=1;"
+        )
+        if kind == "kafka":
+            style += "dashed=1;dashPattern=6 4;strokeColor=#d18b20;fontColor=#744a0b;"
+        else:
+            style += "strokeColor=#4f79b5;fontColor=#183b66;"
+        geometry = _drawio_edge_geometry(
+            visual_edge_index,
+            visual_edges,
+            positions,
+            parallel_lanes,
+            edge_ports,
+            node_dimensions=node_dimensions,
+        )
         cells.append(
             f'<mxCell id="edge-{visual_edge_index}" value={quoteattr(label)} style={quoteattr(style)} '
             f'edge="1" parent="1" source="{source_id}" target="{target_id}">'
-            '<mxGeometry relative="1" as="geometry" /></mxCell>'
+            f'{geometry}</mxCell>'
         )
-        visual_edge_index += 1
 
     body = "\n        ".join(cells)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<mxfile host="cccr">\n'
         '  <diagram name="cccr graph" id="cccr-graph">\n'
-        '    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" '
-        'connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" '
-        'pageHeight="1100" math="0" shadow="0">\n'
+        '    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" '
+        'connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" '
+        'pageHeight="827" background="#fafbfc" math="0" shadow="0">\n'
         "      <root>\n"
         '        <mxCell id="0" />\n'
         '        <mxCell id="1" parent="0" />\n'
@@ -460,6 +488,194 @@ def render_graph_drawio(
 
 def _d2_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _drawio_service_height(resources: list[str]) -> int:
+    """Height of a service card, including its resource header and rows."""
+    return 82 + 22 * max(1, len(resources))
+
+
+def _drawio_service_label(name: str, resources: list[str]) -> str:
+    """HTML label shared by Draw.io service cards.
+
+    Resource names come from source code and must be HTML-escaped separately:
+    XML attribute escaping alone would otherwise let a route containing markup
+    alter the card's label.
+    """
+    title = html_escape(name)
+    if resources:
+        count = f"{len(resources)} ressource{'s' if len(resources) > 1 else ''} exposée{'s' if len(resources) > 1 else ''}"
+        rows = "".join(_drawio_resource_row(resource) for resource in resources)
+    else:
+        count = "Aucune ressource exposée"
+        rows = (
+            '<tr><td colspan="2" style="padding:6px 4px;color:#6b7280;">'
+            'Aucune ressource HTTP détectée</td></tr>'
+        )
+    return (
+        '<div style="text-align:left;line-height:1.25;">'
+        f'<div style="text-align:center;font-size:14px;color:#183b66;"><b>{title}</b></div>'
+        '<div style="margin-top:7px;padding:4px 5px;background-color:#dbeafe;'
+        'color:#315f9b;font-size:10px;font-weight:bold;border-radius:4px;">'
+        f'{count}</div>'
+        '<table style="width:100%;margin-top:3px;font-size:10px;border-collapse:collapse;">'
+        f"{rows}</table></div>"
+    )
+
+
+def _drawio_resource_row(resource: str) -> str:
+    method, separator, path = resource.partition(" ")
+    if not separator:
+        method, path = "HTTP", resource
+    colors = {
+        "GET": ("#dbeafe", "#1d4ed8"),
+        "POST": ("#dcfce7", "#15803d"),
+        "PUT": ("#f3e8ff", "#7e22ce"),
+        "PATCH": ("#fef3c7", "#b45309"),
+        "DELETE": ("#fee2e2", "#b91c1c"),
+        "ANY": ("#e5e7eb", "#4b5563"),
+    }
+    background, foreground = colors.get(method, ("#e5e7eb", "#4b5563"))
+    return (
+        '<tr><td style="padding:2px 5px 2px 0;width:47px;">'
+        f'<span style="background-color:{background};color:{foreground};font-weight:bold;'
+        f'font-size:9px;padding:2px 4px;border-radius:3px;">{html_escape(method)}</span></td>'
+        f'<td style="padding:2px 0;color:#183b66;">{html_escape(path)}</td></tr>'
+    )
+
+
+def _drawio_side_coordinate(side: str, port: float, *, x_axis: bool) -> str:
+    """Return a Draw.io relative connection coordinate for a node side."""
+    if x_axis:
+        value = {"left": 0.0, "right": 1.0}.get(side, port)
+    else:
+        value = {"top": 0.0, "bottom": 1.0}.get(side, port)
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _drawio_edge_sides(
+    source: tuple[str, str],
+    target: tuple[str, str],
+    positions: dict[tuple[str, str], tuple[int, int]],
+) -> tuple[str, str]:
+    source_x, source_y = positions[source]
+    target_x, target_y = positions[target]
+    dx = target_x - source_x
+    dy = target_y - source_y
+    if abs(dx) >= abs(dy):
+        return ("right", "left") if dx >= 0 else ("left", "right")
+    return ("bottom", "top") if dy >= 0 else ("top", "bottom")
+
+
+def _drawio_edge_ports(
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+    positions: dict[tuple[str, str], tuple[int, int]],
+) -> dict[int, tuple[str, float, str, float]]:
+    """Allocate distinct attachment points to every incident edge.
+
+    Draw.io's orthogonal router otherwise attaches several arrows to the same
+    midpoint of a card, making parallel calls appear as one line. Ports are
+    distributed per node side in stable target/source order.
+    """
+    incidences: dict[tuple[str, str, str], list[tuple[int, bool, tuple[str, str]]]] = {}
+    sides: dict[int, tuple[str, str]] = {}
+    for index, (source_kind, source_name, target_kind, target_name, _label, kind) in enumerate(visual_edges):
+        source = (source_kind, source_name)
+        target = (target_kind, target_name)
+        if kind == "kafka" and source_kind == "microservice" and target_kind == "kafka_topic":
+            exit_side, entry_side = "bottom", "top"
+        elif kind == "kafka" and source_kind == "kafka_topic" and target_kind == "microservice":
+            exit_side, entry_side = "top", "bottom"
+        else:
+            exit_side, entry_side = _drawio_edge_sides(source, target, positions)
+        sides[index] = (exit_side, entry_side)
+        incidences.setdefault((*source, exit_side), []).append((index, True, target))
+        incidences.setdefault((*target, entry_side), []).append((index, False, source))
+
+    ports: dict[tuple[int, bool], float] = {}
+    for incident_edges in incidences.values():
+        incident_edges.sort(key=lambda item: (positions[item[2]][1], positions[item[2]][0], item[0]))
+        count = len(incident_edges)
+        for slot, (index, is_source, _peer) in enumerate(incident_edges, start=1):
+            ports[(index, is_source)] = slot / (count + 1)
+
+    return {
+        index: (exit_side, ports[(index, True)], entry_side, ports[(index, False)])
+        for index, (exit_side, entry_side) in sides.items()
+    }
+
+
+def _drawio_parallel_lanes(
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+) -> dict[int, tuple[int, int]]:
+    """Assign a separate orthogonal lane to edges sharing both endpoints."""
+    groups: dict[tuple[str, str, str, str], list[int]] = {}
+    for index, (source_kind, source_name, target_kind, target_name, _label, _kind) in enumerate(visual_edges):
+        groups.setdefault((source_kind, source_name, target_kind, target_name), []).append(index)
+    return {
+        index: (slot, len(indices))
+        for indices in groups.values()
+        for slot, index in enumerate(indices)
+    }
+
+
+def _drawio_port_point(
+    node: tuple[str, str],
+    side: str,
+    port: float,
+    positions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+) -> tuple[float, float]:
+    x, y = positions[node]
+    width, height = node_dimensions[node]
+    if side == "left":
+        return x, y + height * port
+    if side == "right":
+        return x + width, y + height * port
+    if side == "top":
+        return x + width * port, y
+    return x + width * port, y + height
+
+
+def _drawio_edge_geometry(
+    index: int,
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+    positions: dict[tuple[str, str], tuple[int, int]],
+    parallel_lanes: dict[int, tuple[int, int]],
+    edge_ports: dict[int, tuple[str, float, str, float]],
+    *,
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+) -> str:
+    """Add explicit lanes only where Draw.io would otherwise overlap edges."""
+    lane, lane_count = parallel_lanes[index]
+    if lane_count == 1:
+        return '<mxGeometry relative="1" as="geometry" />'
+
+    source_kind, source_name, target_kind, target_name, _label, _kind = visual_edges[index]
+    exit_side, exit_port, entry_side, entry_port = edge_ports[index]
+    source_point = _drawio_port_point(
+        (source_kind, source_name), exit_side, exit_port, positions,
+        node_dimensions=node_dimensions,
+    )
+    target_point = _drawio_port_point(
+        (target_kind, target_name), entry_side, entry_port, positions,
+        node_dimensions=node_dimensions,
+    )
+    offset = (lane - (lane_count - 1) / 2) * 28
+    if exit_side in {"left", "right"}:
+        lane_coordinate = (source_point[0] + target_point[0]) / 2 + offset
+        points = [(lane_coordinate, source_point[1]), (lane_coordinate, target_point[1])]
+    else:
+        lane_coordinate = (source_point[1] + target_point[1]) / 2 + offset
+        points = [(source_point[0], lane_coordinate), (target_point[0], lane_coordinate)]
+    points_xml = "".join(
+        f'<mxPoint x="{int(round(x))}" y="{int(round(y))}" />' for x, y in points
+    )
+    return (
+        '<mxGeometry relative="1" as="geometry"><Array as="points">'
+        f"{points_xml}</Array></mxGeometry>"
+    )
 
 
 def _rest_resources_served(endpoints: list[MessageEndpoint]) -> list[str]:
@@ -480,33 +696,61 @@ def _d2_markdown_block(lines: list[str], indent: str = "  ") -> list[str]:
     )
 
 
-def _visual_graph_edges(edges: list[GraphEdge]) -> list[tuple[str, str, str, str, bool]]:
+def _visual_graph_edges(
+    edges: list[GraphEdge],
+) -> list[tuple[str, str, str, str, str, str]]:
     """Projette les `GraphEdge` vers les arêtes réellement dessinées, en
     supprimant les doublons ayant la même source, destination et label.
 
-    Retourne `(source, target, label, kind, highlighted)` où `kind` vaut
-    `"rest"` ou `"kafka"`. `highlighted` reste toujours `False` et n'est
-    conservé que pour éviter de changer la forme du tuple retourné."""
-    projected: dict[tuple[str, str, str], str] = {}
-    order: list[tuple[str, str, str]] = []
+    Retourne `(source_kind, source, target_kind, target, label, kind)`, où les
+    types de nœuds évitent toute ambiguïté quand un service porte le même nom
+    qu'un topic Kafka."""
+    projected: dict[tuple[str, str, str, str, str], str] = {}
+    order: list[tuple[str, str, str, str, str]] = []
     for edge in edges:
-        visual_edges: list[tuple[str, str, str]] = []
+        visual_edges: list[tuple[str, str, str, str, str]] = []
         if edge.kind == "rest":
-            visual_edges.append((edge.from_service, edge.to_service, edge.from_endpoint.topic))
+            visual_edges.append(
+                ("microservice", edge.from_service, "microservice", edge.to_service, edge.from_endpoint.topic)
+            )
         else:
             topic = edge.from_endpoint.topic
-            visual_edges.append((edge.from_service, topic, topic))
-            visual_edges.append((topic, edge.to_service, topic))
+            visual_edges.append(("microservice", edge.from_service, "kafka_topic", topic, topic))
+            visual_edges.append(("kafka_topic", topic, "microservice", edge.to_service, topic))
 
-        for source_name, target_name, label in visual_edges:
-            key = (source_name, target_name, label)
+        for source_kind, source_name, target_kind, target_name, label in visual_edges:
+            key = (source_kind, source_name, target_kind, target_name, label)
             if key not in projected:
                 projected[key] = edge.kind
                 order.append(key)
 
     return [
-        (source_name, target_name, label, projected[(source_name, target_name, label)], False)
-        for source_name, target_name, label in order
+        (*key, projected[key])
+        for key in order
+    ]
+
+
+def _drawio_visual_graph_edges(
+    edges: list[GraphEdge],
+) -> list[tuple[str, str, str, str, str, str]]:
+    """Bundle detailed relations by endpoints for a readable Draw.io export.
+
+    This is deliberately Draw.io-specific: JSON and D2 retain one relation per
+    route. The generated label contains each route, in stable discovery order.
+    """
+    bundled: dict[tuple[str, str, str, str, str], list[str]] = {}
+    order: list[tuple[str, str, str, str, str]] = []
+    for source_kind, source_name, target_kind, target_name, label, kind in _visual_graph_edges(edges):
+        key = (source_kind, source_name, target_kind, target_name, kind)
+        if key not in bundled:
+            bundled[key] = []
+            order.append(key)
+        if label not in bundled[key]:
+            bundled[key].append(label)
+    return [
+        (source_kind, source_name, target_kind, target_name, "<br/>".join(bundled[key]), kind)
+        for key in order
+        for source_kind, source_name, target_kind, target_name, kind in [key]
     ]
 
 
@@ -561,9 +805,9 @@ def render_graph_d2(
             ]
         )
 
-    for source_name, target_name, label, kind, _highlighted in _visual_graph_edges(edges):
-        source_id = service_ids.get(source_name, topic_ids.get(source_name))
-        target_id = service_ids.get(target_name, topic_ids.get(target_name))
+    for source_kind, source_name, target_kind, target_name, label, kind in _visual_graph_edges(edges):
+        source_id = (service_ids if source_kind == "microservice" else topic_ids).get(source_name)
+        target_id = (service_ids if target_kind == "microservice" else topic_ids).get(target_name)
         if source_id is None or target_id is None:
             continue
         lines.append(f'{source_id} -> {target_id}: "{_d2_escape(label)}" {{')
@@ -600,177 +844,149 @@ def write_graph_d2(output_path: Path, source: str, layout: str = "elk") -> None:
         raise RuntimeError(f"d2 a échoué: {details}")
 
 
-def _fallback_drawio_positions(
-    ordered_services: list[str],
-    kafka_topics: list[str],
-    *,
-    node_width: int,
-    node_height: int,
-) -> dict[str, tuple[int, int]]:
-    top_margin = 24
+def _layered_drawio_positions(
+    ordered_nodes: list[tuple[str, str]],
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Place nodes in dependency lanes without relying on an external layout tool.
+
+    The longest-path rank puts callers on the left and their downstream
+    services on later columns. Isolated services are deliberately placed below
+    the flow so they cannot introduce crossings.
+    """
     left_margin = 24
-    horizontal_gap = 48
-    vertical_gap = 72
-    band_gap = 84
+    top_margin = 24
+    column_gap = 140
+    row_gap = 56
+    isolated_gap = 120
+    node_set = set(ordered_nodes)
+    predecessors: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
+    successors: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
+    for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
+        source = (source_kind, source_name)
+        target = (target_kind, target_name)
+        if source in node_set and target in node_set and source != target:
+            successors[source].add(target)
+            predecessors[target].add(source)
 
-    def grid_columns(count: int) -> int:
-        return max(1, math.ceil(math.sqrt(count))) if count else 1
+    connected = [node for node in ordered_nodes if predecessors[node] or successors[node]]
+    isolated = [node for node in ordered_nodes if not predecessors[node] and not successors[node]]
+    indegree = {node: len(predecessors[node]) for node in connected}
+    rank = {node: 0 for node in connected}
+    ready = sorted(node for node in connected if indegree[node] == 0)
+    processed: set[tuple[str, str]] = set()
+    while ready:
+        node = ready.pop(0)
+        processed.add(node)
+        for target in sorted(successors[node]):
+            rank[target] = max(rank[target], rank[node] + 1)
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                ready.append(target)
+        ready.sort()
 
-    def band_width(count: int, columns: int) -> int:
-        if count == 0:
-            return 0
-        items_in_row = min(count, columns)
-        return items_in_row * node_width + max(0, items_in_row - 1) * horizontal_gap
+    # Cycles have no source node. Keep their members in the leftmost lane;
+    # this remains deterministic and is preferable to a failed export.
+    for node in connected:
+        if node not in processed:
+            rank[node] = 0
 
-    def layout_band(
-        names: list[str], start_y: int, columns: int, content_width: int
-    ) -> tuple[dict[str, tuple[int, int]], int]:
-        positions: dict[str, tuple[int, int]] = {}
-        if not names:
-            return positions, start_y
-
-        row_step = node_height + vertical_gap
-        for row_index in range(math.ceil(len(names) / columns)):
-            row_items = names[row_index * columns : (row_index + 1) * columns]
-            row_width = len(row_items) * node_width + max(0, len(row_items) - 1) * horizontal_gap
-            row_x = left_margin + max(0, (content_width - row_width) // 2)
-            y = start_y + row_index * row_step
-            for column_index, name in enumerate(row_items):
-                x = row_x + column_index * (node_width + horizontal_gap)
-                positions[name] = (x, y)
-
-        last_row_index = math.ceil(len(names) / columns) - 1
-        next_y = start_y + (last_row_index + 1) * row_step
-        return positions, next_y
-
-    service_columns = grid_columns(len(ordered_services))
-    topic_columns = grid_columns(len(kafka_topics))
-    content_width = max(
-        band_width(len(ordered_services), service_columns),
-        band_width(len(kafka_topics), topic_columns),
-    )
-    service_positions, next_y = layout_band(
-        ordered_services, top_margin, service_columns, content_width
-    )
-    topic_positions, _ = layout_band(
-        kafka_topics,
-        next_y + (band_gap if kafka_topics and ordered_services else 0),
-        topic_columns,
-        content_width,
-    )
-    return service_positions | topic_positions
-
-
-def _graphviz_escape(label: str) -> str:
-    return label.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def _graphviz_node_positions(
-    ordered_services: list[str],
-    kafka_topics: list[str],
-    edges: list[GraphEdge],
-    *,
-    node_width: int,
-    node_height: int,
-) -> dict[str, tuple[int, int]] | None:
-    if not ordered_services and not kafka_topics:
-        return {}
-
-    all_nodes = ordered_services + kafka_topics
-    engine = "neato" if len(all_nodes) <= 12 else "sfdp"
-    graphviz_ids = {name: f"n{i}" for i, name in enumerate(all_nodes)}
-    edge_specs: list[tuple[str, str]] = []
-    for edge in edges:
-        if edge.kind == "rest":
-            edge_specs.append((edge.from_service, edge.to_service))
-        else:
-            topic = edge.from_endpoint.topic
-            edge_specs.append((edge.from_service, topic))
-            edge_specs.append((topic, edge.to_service))
-
-    dot_lines = [
-        "digraph G {",
-        (
-            "  graph [overlap=prism0, sep=\"+4\", splines=true, "
-            "outputorder=edgesfirst, pack=true, pad=0.08];"
-        ),
-        (
-            "  node [shape=box, fixedsize=true, width="
-            f"{node_width / 72:.3f}, height={node_height / 72:.3f}];"
-        ),
-    ]
-    if engine == "neato":
-        dot_lines.append("  graph [mode=ipsep, model=shortpath];")
-    else:
-        dot_lines.append("  graph [K=0.45, repulsiveforce=0.8];")
-
-    for name in ordered_services:
-        dot_lines.append(f'  {graphviz_ids[name]} [label="{_graphviz_escape(name)}"];')
-    for name in kafka_topics:
-        dot_lines.append(f'  {graphviz_ids[name]} [label="{_graphviz_escape(name)}"];')
-
-    for source_name, target_name in edge_specs:
-        dot_lines.append(f"  {graphviz_ids[source_name]} -> {graphviz_ids[target_name]};")
-    dot_lines.append("}")
-
-    try:
-        proc = subprocess.run(
-            [engine, "-Tplain"],
-            input="\n".join(dot_lines),
-            capture_output=True,
-            text=True,
-            check=False,
+    lanes: dict[int, list[tuple[str, str]]] = {}
+    for node in connected:
+        lanes.setdefault(rank[node], []).append(node)
+    for lane_index, lane_nodes in lanes.items():
+        if lane_index == 0:
+            lane_nodes.sort()
+            continue
+        lane_nodes.sort(
+            key=lambda node: (
+                sum(lanes.get(rank[parent], []).index(parent) for parent in predecessors[node] if parent in lanes.get(rank[parent], []))
+                / max(1, len(predecessors[node])),
+                node,
+            )
         )
-    except FileNotFoundError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return _parse_graphviz_plain_output(
-        proc.stdout,
-        graphviz_ids,
-        node_width=node_width,
-        node_height=node_height,
-    )
+
+    lane_heights = {
+        lane_index: sum(node_dimensions[node][1] for node in lane_nodes) + row_gap * max(0, len(lane_nodes) - 1)
+        for lane_index, lane_nodes in lanes.items()
+    }
+    flow_height = max(lane_heights.values(), default=0)
+    positions: dict[tuple[str, str], tuple[int, int]] = {}
+    x = left_margin
+    for lane_index in sorted(lanes):
+        lane_nodes = lanes[lane_index]
+        y = top_margin + (flow_height - lane_heights[lane_index]) // 2
+        for node in lane_nodes:
+            positions[node] = (x, y)
+            y += node_dimensions[node][1] + row_gap
+        x += max(node_dimensions[node][0] for node in lane_nodes) + column_gap
+
+    y = top_margin + flow_height + (isolated_gap if connected and isolated else 0)
+    for node in isolated:
+        positions[node] = (left_margin, y)
+        y += node_dimensions[node][1] + row_gap
+    return positions
 
 
-def _parse_graphviz_plain_output(
-    plain_output: str,
-    graphviz_ids: dict[str, str],
-    *,
-    node_width: int,
-    node_height: int,
-) -> dict[str, tuple[int, int]] | None:
-    node_centers: dict[str, tuple[float, float]] = {}
-    for raw_line in plain_output.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        parts = line.split()
-        if parts[0] == "node" and len(parts) >= 4:
-            node_centers[parts[1]] = (float(parts[2]), float(parts[3]))
+def _kafka_layered_drawio_positions(
+    ordered_services: list[str],
+    kafka_topics: list[str],
+    visual_edges: list[tuple[str, str, str, str, str, str]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Use the conventional two-band view for a Kafka-only topology.
 
-    if not node_centers:
-        return None
-
-    reverse_ids = {graphviz_id: name for name, graphviz_id in graphviz_ids.items()}
-    pixels_per_inch = 72.0
+    Services stay in the upper band even when consume/produce cycles exist;
+    topics stay below. Topic order follows their producers whenever possible,
+    which keeps each producer-to-topic segment close to vertical.
+    """
     left_margin = 24
     top_margin = 24
-    positions: dict[str, tuple[int, int]] = {}
-    node_width_in = node_width / pixels_per_inch
-    node_height_in = node_height / pixels_per_inch
-    min_left_in = min(x_in - node_width_in / 2 for x_in, _ in node_centers.values())
-    max_top_in = max(y_in + node_height_in / 2 for _, y_in in node_centers.values())
-    for graphviz_id, (x_in, y_in) in node_centers.items():
-        name = reverse_ids.get(graphviz_id)
-        if name is None:
+    service_gap = 80
+    topic_gap = 96
+    band_gap = 128
+    positions: dict[tuple[str, str], tuple[int, int]] = {}
+
+    x = left_margin
+    service_height = 0
+    for service in ordered_services:
+        node = ("microservice", service)
+        width, height = node_dimensions[node]
+        positions[node] = (x, top_margin)
+        x += width + service_gap
+        service_height = max(service_height, height)
+
+    producer_centers: dict[str, list[float]] = {topic: [] for topic in kafka_topics}
+    for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
+        if source_kind != "microservice" or target_kind != "kafka_topic":
             continue
-        node_left_in = x_in - node_width_in / 2
-        node_top_in = y_in + node_height_in / 2
-        x = int(round(left_margin + (node_left_in - min_left_in) * pixels_per_inch))
-        y = int(round(top_margin + (max_top_in - node_top_in) * pixels_per_inch))
-        positions[name] = (x, y)
-    return positions if len(positions) == len(graphviz_ids) else None
+        source_x, _source_y = positions[(source_kind, source_name)]
+        source_width, _source_height = node_dimensions[(source_kind, source_name)]
+        producer_centers[target_name].append(source_x + source_width / 2)
+
+    ordered_topics = sorted(
+        kafka_topics,
+        key=lambda topic: (
+            sum(producer_centers[topic]) / len(producer_centers[topic])
+            if producer_centers[topic]
+            else float("inf"),
+            topic,
+        ),
+    )
+    topic_y = top_margin + service_height + band_gap
+    next_x = left_margin
+    for topic in ordered_topics:
+        width, _height = node_dimensions[("kafka_topic", topic)]
+        desired_x = (
+            sum(producer_centers[topic]) / len(producer_centers[topic]) - width / 2
+            if producer_centers[topic]
+            else next_x
+        )
+        x = max(next_x, int(round(desired_x)))
+        positions[("kafka_topic", topic)] = (x, topic_y)
+        next_x = x + width + topic_gap
+    return positions
 
 
 class EndpointHit(TypedDict):

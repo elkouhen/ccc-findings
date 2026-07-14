@@ -87,6 +87,29 @@ def test_paths_match_allows_gateway_wildcard_to_match_deeper_serve_routes() -> N
     assert not paths_match("POST /orders/**", "POST /orders")
 
 
+def test_graph_links_a_gateway_yaml_proxy_once_to_its_load_balanced_service() -> None:
+    gateway_call = make_endpoint(
+        "call",
+        "ANY /**",
+        "gateway/application.yml",
+        module="api-gateway",
+        framework="spring-cloud-gateway",
+        snippet="Path=/api/vet/**; uri=lb://vets-service",
+    )
+    vets_get = make_endpoint(
+        "serve", "GET /vets", "vets/VetResource.java", module="vets-service"
+    )
+    vets_post = make_endpoint(
+        "serve", "POST /vets", "vets/VetResource.java", module="vets-service"
+    )
+
+    edges = build_graph({"api-gateway": [gateway_call], "vets-service": [vets_get, vets_post]})
+
+    assert len(edges) == 1
+    assert edges[0].from_service == "api-gateway"
+    assert edges[0].to_service == "vets-service"
+
+
 def test_build_graph_creates_rest_edges_between_distinct_services_only() -> None:
     edges = build_graph(_three_service_fixture())
 

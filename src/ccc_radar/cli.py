@@ -351,7 +351,7 @@ def graph_cmd(
     workspace: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--workspace",
-        help="Répertoire parent Maven à fédérer (BACKLOG-11 A2) pour les "
+        help="Répertoire parent Maven/Gradle à fédérer (BACKLOG-11 A2) pour les "
         "arêtes inter-services.",
     ),
     json_output: bool = typer.Option(False, "--json"),
@@ -379,8 +379,8 @@ def graph_cmd(
     en plus les signaux de blocage probables (BACKLOG-10 K12) : appels REST
     synchrones détectés dans un handler de consommation Kafka du projet
     courant. Sans `--workspace`, si l'index couvre un répertoire
-    multi-modules Maven (`cccr index` lancé au parent, BACKLOG-13), les
-    endpoints/findings attribués à un module sont automatiquement groupés
+    multi-modules Maven ou Gradle (`cccr index` lancé au parent,
+    BACKLOG-13/15), les endpoints attribués à un module/service sont automatiquement groupés
     pour rapporter de vraies arêtes inter-modules — pas besoin de
     fédération pour un monorepo. Avec `--workspace <root>`, fédère en plus
     les autres microservices indexés séparément
@@ -481,7 +481,7 @@ def flow_cmd(
     workspace: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--workspace",
-        help="Répertoire parent Maven à fédérer (BACKLOG-11 A2) pour tracer "
+        help="Répertoire parent Maven/Gradle à fédérer (BACKLOG-11 A2) pour tracer "
         "un flux inter-services.",
     ),
     json_output: bool = typer.Option(False, "--json"),
@@ -493,7 +493,8 @@ def flow_cmd(
     findings Semgrep qui les recouvrent (BACKLOG-10 K5). Sans `--workspace`,
     ne cherche que dans le projet courant (la similarité vectorielle n'est
     disponible que dans ce mode) — chaque site est attribué à son module
-    Maven si l'index couvre un répertoire multi-modules (BACKLOG-13) ;
+    Maven ou service Gradle si l'index couvre un répertoire multi-modules
+    (BACKLOG-13/15) ;
     avec `--workspace <root>`, fédère en plus les autres microservices
     indexés séparément (lecture seule, BACKLOG-11 A2).
     """

@@ -1,68 +1,24 @@
 # fully-completed-microservices-Java-Springboot
 
-## Repository
+## Exécution
 
-| Field | Value |
-|---|---|
-| Path | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot` |
-| Origin | https://github.com/PramithaMJ/fully-completed-microservices-Java-Springboot.git |
-| Branch | main |
-| HEAD | `4a3d1d7c` |
-| Commit date | 2025-03-09T15:45:11+05:30 |
-| Last commit subject | Create jekyll-gh-pages.yml |
-| Working tree clean | no |
-| Tracked files | 181 |
-| pom.xml files | 8 |
-| cccr init state | already initialized |
-| Report generated | 2026-07-14 13:17:09Z |
+`cccr index` : 22 endpoints. Le graphe contient 9 services nommés, 2 topics Kafka et 5 connecteurs visualisés.
 
-## cccr graph
+![Graphe cccr](assets/fully-completed-microservices-Java-Springboot.png)
 
-| Field | Value |
-|---|---|
-| Services | 5 |
-| Nodes | 7 |
-| Edges | 8 |
-| HTTP flows | 4 |
-| Kafka flows | 2 |
-| Outbound calls in consumers | 0 |
-| Warnings | 0 |
+## Analyse directe
 
-Artifacts: [`assets/fully-completed-microservices-Java-Springboot.svg`](assets/fully-completed-microservices-Java-Springboot.svg) · [`assets/fully-completed-microservices-Java-Springboot.d2`](assets/fully-completed-microservices-Java-Springboot.d2)
+Les artefacts applicatifs sont `customer`, `order`, `payment`, `product`, `notification`, `gateway`, `discovery` et `config-server`. `order` appelle Customer/Payment/Product; Order et Payment publient respectivement sur `order-topic` et `payment-topic`, consommés par Notification.
 
-<img src="assets/fully-completed-microservices-Java-Springboot.svg" alt="Graph for fully-completed-microservices-Java-Springboot" width="960">
+## Diff
 
-## Graph notes and warnings
+| Élément | cccr | Direct | Écart |
+|---|---|---|---|
+| Services | 9, dont `services` | 8 applicatifs | `services` est un faux service conteneur |
+| HTTP | 3 appels Order vers Customer/Payment/Product | mêmes appels | conforme |
+| Kafka | 2 producteurs + 2 consommateurs, 2 topics | mêmes flux | conforme |
+| Arêtes | 5 connecteurs Draw.io groupés | 7 relations détaillées | groupement visuel attendu |
 
-None.
+## Axes
 
-## Flows
-
-### Kafka
-
-| Producer | Topic | Consumer | Producer site | Consumer site |
-|---|---|---|---|---|
-| order | order-topic | notification | `services/order/src/main/java/com/alibou/ecommerce/kafka/OrderProducer.java:26-26` | `services/notification/src/main/java/com/alibou/ecommerce/kafka/NotificationsConsumer.java:46-64` |
-| payment | payment-topic | notification | `services/payment/src/main/java/com/alibou/ecommerce/notification/NotificationProducer.java:26-26` | `services/notification/src/main/java/com/alibou/ecommerce/kafka/NotificationsConsumer.java:27-44` |
-
-### HTTP
-
-| Caller | HTTP endpoint | Callee | Caller site | Server site |
-|---|---|---|---|---|
-| order | GET /api/v1/customers/{customer-id} | customer | `services/order/src/main/java/com/alibou/ecommerce/customer/CustomerClient.java:15-16` | `services/customer/src/main/java/com/alibou/ecommerce/customer/CustomerController.java:44-49` |
-| order | GET /api/v1/customers/{customer-id} | customer | `services/order/src/main/java/com/alibou/ecommerce/customer/CustomerClient.java:15-16` | `services/customer/src/main/java/com/alibou/ecommerce/customer/CustomerController.java:51-56` |
-| order | POST /api/v1/payments | payment | `services/order/src/main/java/com/alibou/ecommerce/payment/PaymentClient.java:13-14` | `services/payment/src/main/java/com/alibou/ecommerce/payment/PaymentController.java:18-23` |
-| order | POST /api/v1/products/purchase | product | `services/order/src/main/java/com/alibou/ecommerce/product/ProductClient.java:34-39` | `services/product/src/main/java/com/alibou/ecommerce/product/ProductController.java:29-34` |
-
-## Discovered services
-
-| Service | Kind | Indexed | Endpoints | Findings | Path |
-|---|---|---:|---:|---:|---|
-| config-server | microservice | yes | 0 | 0 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/config-server` |
-| customer | microservice | yes | 6 | 1 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/customer` |
-| discovery | microservice | yes | 0 | 0 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/discovery` |
-| gateway | microservice | yes | 0 | 0 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/gateway` |
-| notification | microservice | yes | 2 | 0 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/notification` |
-| order | microservice | yes | 8 | 2 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/order` |
-| payment | microservice | yes | 2 | 0 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/payment` |
-| product | microservice | yes | 4 | 2 | `/Users/m.el-kouhen/examples/fully-completed-microservices-Java-Springboot/services/product` |
+Priorité P0 : ne jamais promouvoir un répertoire parent (`services`) en microservice; le nom doit rester l’artifact Maven/Gradle.

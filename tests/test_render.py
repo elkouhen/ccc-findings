@@ -50,6 +50,14 @@ def _fixture() -> dict[str, list[MessageEndpoint]]:
     }
 
 
+def _vertex_for_service(root: ET.Element, service: str) -> ET.Element:
+    return next(
+        cell
+        for cell in root.iter("mxCell")
+        if cell.get("vertex") == "1" and f"<b>{service}</b>" in (cell.get("value") or "")
+    )
+
+
 def test_render_graph_json_expands_kafka_edges_via_topic_nodes() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
@@ -144,12 +152,40 @@ def test_render_graph_drawio_produces_well_formed_xml() -> None:
     document = render_graph_drawio(endpoints_by_service, edges)
 
     root = ET.fromstring(document)
-    vertex_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
 
-    assert vertex_values == {"<b>service-a</b>", "<b>service-b</b>", "<b>orders.created</b>"}
+    service_b_label = _vertex_for_service(root, "service-b").get("value") or ""
+    assert "1 ressource exposée" in service_b_label
+    assert "GET" in service_b_label
+    assert "/orders" in service_b_label
+    assert "Aucune ressource HTTP détectée" in (_vertex_for_service(root, "service-a").get("value") or "")
+    assert any(cell.get("value") == "<b>orders.created</b>" for cell in root.iter("mxCell"))
     assert len(edge_cells) == 3
     assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
+
+
+def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
+    endpoints_by_service = _fixture()
+    edges = build_graph(endpoints_by_service)
+
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, edges))
+    model = next(root.iter("mxGraphModel"))
+    edge_styles = {
+        cell.get("value"): cell.get("style", "")
+        for cell in root.iter("mxCell")
+        if cell.get("edge") == "1"
+    }
+
+    assert model.get("page") == "0"
+    assert "rounded=1" in _vertex_for_service(root, "service-a").get("style", "")
+    assert "shape=cylinder3" in next(
+        cell.get("style", "")
+        for cell in root.iter("mxCell")
+        if cell.get("value") == "<b>orders.created</b>"
+    )
+    assert "strokeColor=#4f79b5" in edge_styles["GET /orders"]
+    assert "dashed=1" in edge_styles["orders.created"]
+    assert "labelBackgroundColor=#ffffff" in edge_styles["GET /orders"]
 
 
 def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
@@ -170,6 +206,83 @@ def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
     assert edge_cells[0].get("value") == "GET /orders"
 
 
+def test_render_graph_drawio_bundles_parallel_relations_in_a_multiline_label() -> None:
+    endpoints_by_service = {
+        "service-a": [
+            make_endpoint("call", "GET /orders", "a/Client.java", 5, 5),
+            make_endpoint("call", "POST /orders", "a/Client.java", 10, 10),
+        ],
+        "service-b": [
+            make_endpoint("serve", "GET /orders", "b/Controller.java", 10, 10),
+            make_endpoint("serve", "POST /orders", "b/Controller.java", 20, 20),
+        ],
+    }
+
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
+
+    assert len(edge_cells) == 1
+    assert edge_cells[0].get("value") == "GET /orders<br/>POST /orders"
+    assert edge_cells[0].find("mxGeometry/Array[@as='points']") is None
+
+
+def test_render_graph_drawio_keeps_a_service_and_topic_with_the_same_name_distinct() -> None:
+    endpoints_by_service = {
+        "orders": [make_endpoint("produce", "orders", "orders/Producer.java", system="kafka")],
+        "notifications": [
+            make_endpoint("consume", "orders", "notifications/Consumer.java", system="kafka")
+        ],
+    }
+
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+    vertices = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]
+    edges = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
+    vertex_ids = {cell.get("id") for cell in vertices}
+
+    assert len(vertices) == 3
+    assert len(vertex_ids) == 3
+    assert len(edges) == 2
+    assert all(cell.get("source") in vertex_ids and cell.get("target") in vertex_ids for cell in edges)
+
+
+def test_render_graph_drawio_places_kafka_services_above_topics() -> None:
+    endpoints_by_service = {
+        "orders": [make_endpoint("produce", "orders.created", "orders/Producer.java", system="kafka")],
+        "payments": [
+            make_endpoint("consume", "orders.created", "payments/Listener.java", system="kafka"),
+            make_endpoint("produce", "payments.completed", "payments/Producer.java", system="kafka"),
+        ],
+        "notifications": [
+            make_endpoint("consume", "payments.completed", "notifications/Listener.java", system="kafka")
+        ],
+    }
+
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+    positions = {}
+    for cell in root.iter("mxCell"):
+        if cell.get("vertex") != "1":
+            continue
+        geometry = cell.find("mxGeometry")
+        assert geometry is not None
+        positions[cell.get("id")] = (
+            int(float(geometry.get("x", "0"))),
+            int(float(geometry.get("y", "0"))),
+        )
+    service_cells = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1" and "rounded=1" in cell.get("style", "")]
+    topic_cells = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1" and "cylinder3" in cell.get("style", "")]
+
+    assert len({positions[cell.get("id")][1] for cell in service_cells}) == 1
+    assert min(positions[cell.get("id")][1] for cell in topic_cells) > max(
+        positions[cell.get("id")][1] for cell in service_cells
+    )
+    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
+    assert all(
+        ("exitY=1" in cell.get("style", "") and "entryY=0" in cell.get("style", ""))
+        or ("exitY=0" in cell.get("style", "") and "entryY=1" in cell.get("style", ""))
+        for cell in edge_cells
+    )
+
+
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
@@ -187,26 +300,9 @@ def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     assert "style.stroke-dash: 3" in rendered
 
 
-def test_render_graph_drawio_uses_graphviz_positions_when_available(monkeypatch) -> None:
+def test_render_graph_drawio_uses_deterministic_dependency_lanes() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
-
-    monkeypatch.setattr(
-        render_module.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=args[0],
-            returncode=0,
-            stdout=(
-                "graph 1 8 4\n"
-                "node n0 2 3 3.056 0.833 service-a solid box black lightgrey\n"
-                "node n1 6 3 3.056 0.833 service-b solid box black lightgrey\n"
-                "node n2 4 1 3.056 0.833 orders.created solid box black lightgrey\n"
-                "stop\n"
-            ),
-            stderr="",
-        ),
-    )
 
     document = render_graph_drawio(endpoints_by_service, edges)
 
@@ -217,14 +313,20 @@ def test_render_graph_drawio_uses_graphviz_positions_when_available(monkeypatch)
             continue
         geometry = cell.find("mxGeometry")
         assert geometry is not None
-        positions[cell.get("value")] = (
+        value = cell.get("value") or ""
+        name = next(
+            name
+            for name in ("service-a", "service-b", "orders.created")
+            if f"<b>{name}</b>" in value
+        )
+        positions[name] = (
             int(float(geometry.get("x", "0"))),
             int(float(geometry.get("y", "0"))),
         )
 
-    assert positions["<b>service-a</b>"] == (24, 24)
-    assert positions["<b>service-b</b>"] == (312, 24)
-    assert positions["<b>orders.created</b>"] == (168, 168)
+    assert positions["service-a"] == (24, 24)
+    assert positions["service-a"][0] < positions["orders.created"][0]
+    assert positions["orders.created"][0] < positions["service-b"][0]
 
 
 def test_write_graph_d2_writes_raw_source_when_extension_is_d2(tmp_path) -> None:
