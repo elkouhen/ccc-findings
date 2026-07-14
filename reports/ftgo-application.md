@@ -14,7 +14,7 @@
 | Tracked files | 505 |
 | pom.xml files | 0 |
 | cccr init state | already initialized |
-| Report generated | 2026-07-14 13:00:01Z |
+| Report generated | 2026-07-14 13:06:45Z |
 
 ## cccr graph
 
@@ -23,6 +23,8 @@
 | Services | 8 |
 | Nodes | 8 |
 | Edges | 3 |
+| HTTP flows | 3 |
+| Kafka flows | 0 |
 | Cycles | 0 |
 | Hotspots | 0 |
 | Outbound calls in consumers | 0 |
@@ -35,6 +37,20 @@ Artifacts: [`assets/ftgo-application.svg`](assets/ftgo-application.svg) · [`ass
 ## Graph notes and warnings
 
 None.
+
+## Flows
+
+### Kafka
+
+None.
+
+### HTTP
+
+| Caller | HTTP endpoint | Callee | Caller site | Server site |
+|---|---|---|---|---|
+| ftgo-api-gateway | GET /orders/{orderId} | ftgo-order-history-service | `ftgo-api-gateway/src/main/java/net/chrisrichardson/ftgo/apiagateway/proxies/OrderServiceProxy.java:23-25` | `ftgo-order-history-service/src/main/java/net/chrisrichardson/ftgo/cqrs/orderhistory/web/OrderHistoryController.java:28-34` |
+| ftgo-api-gateway | GET /orders/{orderId} | ftgo-order-history-service | `ftgo-api-gateway/src/main/java/net/chrisrichardson/ftgo/apiagateway/proxies/OrderServiceProxy.java:23-25` | `ftgo-order-history-service/src/main/java/net/chrisrichardson/ftgo/cqrs/orderhistory/web/OrderHistoryController.java:40-45` |
+| ftgo-api-gateway | GET /orders/{orderId} | ftgo-order-service | `ftgo-api-gateway/src/main/java/net/chrisrichardson/ftgo/apiagateway/proxies/OrderServiceProxy.java:23-25` | `ftgo-order-service/src/main/java/net/chrisrichardson/ftgo/orderservice/web/OrderController.java:44-48` |
 
 ## Discovered services
 

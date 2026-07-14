@@ -14,7 +14,7 @@
 | Tracked files | 65 |
 | pom.xml files | 3 |
 | cccr init state | already initialized |
-| Report generated | 2026-07-14 13:00:01Z |
+| Report generated | 2026-07-14 13:06:45Z |
 
 ## cccr graph
 
@@ -23,6 +23,8 @@
 | Services | 2 |
 | Nodes | 3 |
 | Edges | 2 |
+| HTTP flows | 0 |
+| Kafka flows | 1 |
 | Cycles | 0 |
 | Hotspots | 0 |
 | Outbound calls in consumers | 0 |
@@ -33,6 +35,18 @@ Artifacts: [`assets/microservices-kafka-mq.svg`](assets/microservices-kafka-mq.s
 <img src="assets/microservices-kafka-mq.svg" alt="Graph for microservices-kafka-mq" width="960">
 
 ## Graph notes and warnings
+
+None.
+
+## Flows
+
+### Kafka
+
+| Producer | Topic | Consumer | Producer site | Consumer site |
+|---|---|---|---|---|
+| microservice-order | order | microservice-invoicing | `microservice-order/src/main/java/de/oriontec/microservice/order/logic/OrderService.java:39-40` | `microservice-invoicing/src/main/java/de/oriontec/microservice/invoicing/events/OrderKafkaListener.java:23-28` |
+
+### HTTP
 
 None.
 

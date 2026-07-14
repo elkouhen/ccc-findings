@@ -14,7 +14,7 @@
 | Tracked files | 370 |
 | pom.xml files | 5 |
 | cccr init state | already initialized |
-| Report generated | 2026-07-14 13:00:01Z |
+| Report generated | 2026-07-14 13:06:45Z |
 
 ## cccr graph
 
@@ -23,6 +23,8 @@
 | Services | 4 |
 | Nodes | 4 |
 | Edges | 0 |
+| HTTP flows | 0 |
+| Kafka flows | 0 |
 | Cycles | 0 |
 | Hotspots | 0 |
 | Outbound calls in consumers | 0 |
@@ -33,6 +35,16 @@ Artifacts: [`assets/booking-microservices-java-spring-boot.svg`](assets/booking-
 <img src="assets/booking-microservices-java-spring-boot.svg" alt="Graph for booking-microservices-java-spring-boot" width="960">
 
 ## Graph notes and warnings
+
+None.
+
+## Flows
+
+### Kafka
+
+None.
+
+### HTTP
 
 None.
 

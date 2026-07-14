@@ -14,7 +14,7 @@
 | Tracked files | 181 |
 | pom.xml files | 8 |
 | cccr init state | already initialized |
-| Report generated | 2026-07-14 13:00:01Z |
+| Report generated | 2026-07-14 13:06:45Z |
 
 ## cccr graph
 
@@ -23,6 +23,8 @@
 | Services | 5 |
 | Nodes | 7 |
 | Edges | 8 |
+| HTTP flows | 4 |
+| Kafka flows | 2 |
 | Cycles | 0 |
 | Hotspots | 0 |
 | Outbound calls in consumers | 0 |
@@ -35,6 +37,24 @@ Artifacts: [`assets/fully-completed-microservices-Java-Springboot.svg`](assets/f
 ## Graph notes and warnings
 
 None.
+
+## Flows
+
+### Kafka
+
+| Producer | Topic | Consumer | Producer site | Consumer site |
+|---|---|---|---|---|
+| order | order-topic | notification | `services/order/src/main/java/com/alibou/ecommerce/kafka/OrderProducer.java:26-26` | `services/notification/src/main/java/com/alibou/ecommerce/kafka/NotificationsConsumer.java:46-64` |
+| payment | payment-topic | notification | `services/payment/src/main/java/com/alibou/ecommerce/notification/NotificationProducer.java:26-26` | `services/notification/src/main/java/com/alibou/ecommerce/kafka/NotificationsConsumer.java:27-44` |
+
+### HTTP
+
+| Caller | HTTP endpoint | Callee | Caller site | Server site |
+|---|---|---|---|---|
+| order | GET /api/v1/customers/{customer-id} | customer | `services/order/src/main/java/com/alibou/ecommerce/customer/CustomerClient.java:15-16` | `services/customer/src/main/java/com/alibou/ecommerce/customer/CustomerController.java:44-49` |
+| order | GET /api/v1/customers/{customer-id} | customer | `services/order/src/main/java/com/alibou/ecommerce/customer/CustomerClient.java:15-16` | `services/customer/src/main/java/com/alibou/ecommerce/customer/CustomerController.java:51-56` |
+| order | POST /api/v1/payments | payment | `services/order/src/main/java/com/alibou/ecommerce/payment/PaymentClient.java:13-14` | `services/payment/src/main/java/com/alibou/ecommerce/payment/PaymentController.java:18-23` |
+| order | POST /api/v1/products/purchase | product | `services/order/src/main/java/com/alibou/ecommerce/product/ProductClient.java:34-39` | `services/product/src/main/java/com/alibou/ecommerce/product/ProductController.java:29-34` |
 
 ## Discovered services
 
