@@ -522,12 +522,13 @@ correctif.
 - Aucune régression sur les contrôleurs sans `@RequestMapping` de classe
   (comportement identique à avant). ✅
 
-### [ ] Q25 : détecter les endpoints Kafka Streams DSL (`StreamsBuilder.stream`/`KStream.to`)
+### [x] Q25 : détecter les endpoints Kafka Streams DSL (`StreamsBuilder.stream`/`KStream.to`)
 
 **Fichiers** : `tests/fixtures/kafka_repo/rules/java.yaml`,
 `tests/fixtures/kafka_repo/app/java/`, `tests/test_kafka_endpoints.py`,
-`docs/SPEC-TECH.md`. Nécessite aussi le report de ces règles dans le repo
-`ccc-findings-skill` (ADR-24, hors d'atteinte depuis ce repo — signalé, pas fait).
+`src/cccf/scanner.py` (`_KAFKA_STREAMS_TO_RE`), `docs/SPEC-TECH.md`. Portées
+dans `ccc-findings-skill` (ADR-24) le 2026-07-14, commit `78a29c1` — accès à
+ce repo obtenu en cours de tâche, plus hors d'atteinte.
 
 **Description** : vérifié sur `sample-spring-kafka-microservices`
 (`order-service/.../OrderApp.java`) — `@EnableKafkaStreams`/`StreamsBuilder`
@@ -540,9 +541,9 @@ frontière de service (payment-service/stock-service → order-service).
 **CA** :
 - Nouvelle règle `consume` : `StreamsBuilder.stream($TOPIC, Consumed.with(...))`
   et la forme imbriquée `$STREAM.join($BUILDER.stream($TOPIC), ...)` (couvre
-  les deux formes réellement observées dans `OrderApp.java`).
+  les deux formes réellement observées dans `OrderApp.java`). ✅
 - Nouvelle règle `produce` : `$STREAM.to($TOPIC, Produced.with(...))` et
-  `$STREAM.peek(...).to($TOPIC)`.
+  `$STREAM.peek(...).to($TOPIC)`. ✅
 - Volontairement **pas** de pattern bare `$X.stream($TOPIC)`/`$X.to($TOPIC)`
   sans marqueur Kafka Streams (`Consumed`/`Produced`/`.join`/`.peek`) — trop
   proche de `Arrays.stream(x)`/`Collection.stream()`/`.to()` Reactor ou
@@ -550,9 +551,20 @@ frontière de service (payment-service/stock-service → order-service).
   formes précises pour éviter les faux positifs RxJava/Reactor). Limitation
   documentée : un `.to("topic")` isolé sans marqueur ni `.peek()` précédent
   n'est pas détecté — préféré à un faux positif (même politique que
-  `graph.paths_match`, BACKLOG-10 K12 CA4).
+  `graph.paths_match`, BACKLOG-10 K12 CA4). ✅
 - Test : fixture reproduisant le repo réel (join sur deux topics + republication)
-  → 4 endpoints Kafka détectés avec le bon rôle/topic.
+  → 4 endpoints Kafka détectés avec le bon rôle/topic. ✅
+- Découvert en écrivant le test : `.to("topic")` chaîné après `.peek(lambda
+  avec message de log)` faisait extraire à tort le littéral du message de log
+  (premier littéral du snippet) plutôt que le topic — `_KAFKA_STREAMS_TO_RE`
+  ajoutée pour cibler spécifiquement le littéral suivant `.to(`. ✅
+- Validé en conditions réelles sur `sample-spring-kafka-microservices`
+  (`OrderApp.java`, via `run_semgrep_endpoints` direct — `cccf index --full`
+  indisponible sur cette machine pour cause réseau lors de l'étape
+  d'embedding, bug préexistant Q1, sans rapport) : les 4 endpoints attendus
+  sont détectés avec le bon topic/rôle, deux endpoints partagent le même
+  `start_line` (un `.join(...)` englobé dans le préfixe du `.peek(...).to(...)`
+  qui le suit) mais des `end_line` différents → pas de collision d'id. ✅
 
 ### [ ] Q26 : scanner les routes déclaratives Spring Cloud Gateway (YAML)
 

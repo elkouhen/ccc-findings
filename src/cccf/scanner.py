@@ -172,6 +172,10 @@ _MULTI_SLASH_RE = re.compile(r"/{2,}")
 _BARE_TOPIC_VAR_RE = re.compile(
     r"(?:topics\s*=\s*|\.send\(\s*|ProducerRecord\(\s*)([A-Za-z_]\w*)\s*[,)]"
 )
+# BACKLOG Q25 : `KStream.to("topic")`/`.to("topic", Produced.with(...))` —
+# le topic suit directement `.to(`, contrairement au premier littéral
+# quelconque du snippet (qui peut appartenir à un `.peek(...)` chaîné avant).
+_KAFKA_STREAMS_TO_RE = re.compile(r'\.to\(\s*"([^"]*)"\s*(\+)?')
 _VALUE_FIELD_RE = re.compile(
     r'@Value\(\s*"\$\{([^}]+)\}"\s*\)\s*'
     r"(?:private\s+|protected\s+|public\s+|final\s+|static\s+)*"
@@ -484,7 +488,17 @@ def _extract_kafka_topic(
     sur dynamique si la clé est introuvable — jamais résolu au hasard. Une
     variable (pas de littéral du tout, ex. `topics = ordersTopic`) est
     tentée contre les champs `@Value("${...}")` du même fichier source
-    (`_resolve_value_annotated_variable`) avant d'abandonner en dynamique."""
+    (`_resolve_value_annotated_variable`) avant d'abandonner en dynamique.
+
+    BACKLOG Q25 : `KStream.to("topic")` (Kafka Streams) est souvent chaîné
+    après un `.peek(...)` dont le lambda peut lui-même contenir un littéral
+    (message de log) — le premier littéral du snippet n'est alors pas le
+    topic. Un `.to("...")` capté explicitement prime sur la recherche
+    générique du premier littéral."""
+    streams_to_match = _KAFKA_STREAMS_TO_RE.search(snippet)
+    if streams_to_match is not None:
+        return streams_to_match.group(1), streams_to_match.group(2) is not None
+
     literal, dynamic = _find_first_literal(snippet)
     if literal is None:
         if source_path is not None:

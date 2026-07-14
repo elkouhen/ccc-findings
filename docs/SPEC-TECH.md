@@ -413,6 +413,25 @@ source_path)` plutôt que traité comme un nom de topic littéral (ADR-28).
 Résolu → `topic_dynamic=False`, `topic` = la valeur résolue ; non résolu →
 le placeholder est conservé tel quel, `topic_dynamic=True`.
 
+**Kafka Streams DSL (BACKLOG Q25)** : second style d'intégration Kafka,
+distinct de l'idiome impératif `@KafkaListener`/`KafkaTemplate.send`
+(`StreamsBuilder.stream(...)` = consume, `KStream.to(...)` = produce).
+Règles volontairement restreintes aux formes portant un marqueur Kafka
+Streams sans ambiguïté (`Consumed.with(...)`/`Produced.with(...)`, ou
+nichées dans un `.join(...)`/`.peek(...)`) — un `$X.stream($TOPIC)`/
+`$X.to($TOPIC)` bare collisionnerait avec `Arrays.stream(x)`/
+`Collection.stream()`/`Mono.to(...)` (Reactor)/mappers `.to(Class)`, même
+logique que `cccf.kafka.java.consume-raw`. `.to("topic")` est fréquemment
+chaîné après un `.peek(...)` dont le lambda peut contenir un littéral (message
+de log) avant le topic dans le texte du snippet — `_KAFKA_STREAMS_TO_RE`
+recherche spécifiquement le littéral qui suit directement `.to(`, prioritaire
+sur la recherche générique du premier littéral (qui prendrait à tort le
+message de log). Un `.join(...)` et le `.peek(...).to(...)` qui le suit dans
+la même expression chaînée peuvent produire deux endpoints avec le même
+`start_line` (le second englobe le premier comme préfixe de sa propre
+expression) — `end_line` diffère toujours, pas de collision d'id
+(`compute_endpoint_id` inclut les deux).
+
 **Variable alimentée par `@Value` (BACKLOG-10 K2, reliquat)** : quand
 `_find_first_literal` ne trouve aucun littéral du tout (ex.
 `@KafkaListener(topics = ordersTopic)`, `kafkaTemplate.send(ordersTopic,

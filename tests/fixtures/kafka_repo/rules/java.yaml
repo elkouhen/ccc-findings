@@ -62,3 +62,47 @@ rules:
           - pattern: $CONSUMER.subscribe(Collections.singletonList(...))
           - pattern: $CONSUMER.subscribe(Arrays.asList(...))
           - pattern: $CONSUMER.subscribe(List.of(...))
+
+  # Kafka Streams DSL (BACKLOG Q25) : second style d'intégration Kafka,
+  # distinct de l'idiome impératif @KafkaListener/KafkaTemplate.send ci-dessus
+  # (`@EnableKafkaStreams`, `StreamsBuilder`). Volontairement restreint aux
+  # formes portant un marqueur Kafka Streams sans ambiguïté
+  # (`Consumed.with(...)`, ou nichée dans un `.join(...)`) — un bare
+  # `$X.stream($TOPIC)` collisionnerait avec `Arrays.stream(x)`/
+  # `Collection.stream()`, même logique que consume-raw ci-dessus (restreint
+  # pour éviter les faux positifs RxJava/Reactor).
+  - id: cccf.kafka.java.streams-consume
+    languages: [java]
+    severity: INFO
+    message: Consommation Kafka (Kafka Streams, StreamsBuilder.stream).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: consume
+      framework: kafka-streams
+    patterns:
+      - pattern-either:
+          - pattern: $BUILDER.stream($TOPIC, Consumed.with(...))
+          - pattern: |
+              $STREAM.join($BUILDER.stream($TOPIC), ...)
+          - pattern: |
+              $STREAM.join($OTHER, $BUILDER.stream($TOPIC), ...)
+
+  # Marqueur `Produced.with(...)`, ou `.peek(...).to(...)` (forme observée
+  # dans les exemples réels) — un `.to(...)` isolé sans l'un de ces deux
+  # marqueurs n'est volontairement pas capté (collision possible avec
+  # Reactor `Mono/Flux.to(...)`, des mappers `.to(Class)`, etc.).
+  - id: cccf.kafka.java.streams-produce
+    languages: [java]
+    severity: INFO
+    message: Production Kafka (Kafka Streams, KStream.to).
+    metadata:
+      category: endpoint-inventory
+      system: kafka
+      role: produce
+      framework: kafka-streams
+    patterns:
+      - pattern-either:
+          - pattern: $STREAM.to($TOPIC, Produced.with(...))
+          - pattern: |
+              $STREAM.peek(...).to($TOPIC)
