@@ -1,11 +1,9 @@
 # Architecture Decision Records — ccc-radar (`cccr`)
 
 > One entry per structuring decision: context, decision, consequences.
-> ADR-1 to ADR-6 are decisions made before implementation (coming from
-> `archive/BACKLOG.md` §“Architecture decisions”, not reopened during
-> development). ADR-7 to ADR-11 were made along the way in response to gaps
-> between the specification and the real behavior of external tools (Semgrep,
-> `ccc`) or the execution environment.
+> ADR-1 to ADR-6 capture the initial framing. ADR-7 onward records decisions
+> taken during implementation in response to tool behavior, architecture
+> pressure, or execution-environment constraints.
 
 ---
 
@@ -92,9 +90,8 @@ where `normalized_snippet = " ".join(snippet.split())`.
 
 **Consequences**: survives line shifts caused by edits elsewhere in the file.
 Accepted trade-off later identified as a real limit in review: two findings of
-the same rule/path with identical snippets (duplicated line, or empty snippet on
-an unreadable file) collide — see known defect R6 in `archive/BACKLOG-2.md`,
-still unfixed at this date.
+the same rule/path with identical snippets (duplicated line, or empty snippet
+on an unreadable file) still collide.
 
 ---
 
@@ -128,8 +125,7 @@ outside the task's declared `Files` scope F0.2).
 **Consequences**: fixes the `ccc-radar` repo itself. **Does NOT** fix the
 general case — in any target repo used by a `cccr` user, the same Semgrep issue
 applies: its `tests/` directories are silently absent from the index, with no
-error or warning (see known defect R2 in `archive/BACKLOG-2.md`, unresolved for
-user repos).
+error or warning in user repos.
 
 ---
 
@@ -195,8 +191,8 @@ without `--json` and parses the real text output format (blocks
 
 **Consequences**: works with the version of `ccc` actually installed.
 Contract is inherently fragile — a display-format change in `ccc` silently
-breaks parsing (block ignored, no error — see `archive/BACKLOG-2.md`, note
-“accepted fragility”). Hardening path identified but not implemented: detect the
+breaks parsing (block ignored, no error). Hardening path identified but not
+implemented: detect the
 absence of parsed blocks on non-empty output and switch to `CccUnavailable` to
 trigger the existing fallback.
 
@@ -219,8 +215,7 @@ checks the real model only if it is already present locally; otherwise it
 explicitly skips itself with an actionable message.
 
 **Consequences**: `uv run pytest` (without arguments) no longer covers that test
-on every run — a weakening of the DoD “`uv run pytest` passes completely”,
-documented in commit F3.1 and in `archive/BACKLOG-2.md`. Rejected alternative:
+on every run — a weakening of the default test surface. Rejected alternative:
 `pytest.mark.skipif` conditioned on network presence, which would have kept the
 test in the default run while cleanly neutralizing it in isolated
 environments.
@@ -231,24 +226,20 @@ environments.
 
 **Status**: Accepted (at the user's explicit request).
 
-**Context**: F6.1 had shipped `skills/cccr/SKILL.md` as part of the
-`ccc-radar` package. The user asked to move that file to
-`~/cocoindex-ext-skill/SKILL.md`, outside the repo, removing the versioned copy
-(not merely duplicating it for convenience).
+**Context**: `skills/cccr/SKILL.md` had originally shipped inside the
+`ccc-radar` package. The skill was later moved to its own repository,
+`ccc-radar-skill`, outside this repo, rather than being duplicated in both
+places.
 
 **Decision**: `skills/cccr/SKILL.md` is removed from the `ccc-radar` repo; the
-skill now lives only in `~/cocoindex-ext-skill/SKILL.md`
-(`SKILL.md` file at the root of that directory, Claude Code convention: one
-folder = one skill). `docs/SPEC-FONC.md` §4 and `README.md` are updated to
-point to that new location rather than documenting a path that no longer exists
-in this repo.
+skill now lives only in the separate `ccc-radar-skill` repository under
+`skills/cccr/SKILL.md`. `docs/SPEC-FONC.md` §4 and `README.md` point to that
+companion repository rather than to a path that no longer exists here.
 
 **Consequences**: the `ccc-radar` package (pip/uv) no longer contains the skill
-— anyone installing only `ccc-radar` must fetch `SKILL.md` separately to enable
-it in Claude Code. `archive/BACKLOG.md` (task F6.1, frozen history) continues to
-mention `skills/cccr/SKILL.md` as part of the file scope: accurate at the time
-it was executed, no longer accurate today — do not “fix” an archived document;
-only living documents (`docs/`, `README.md`) reflect the current state.
+— anyone installing only `ccc-radar` must also fetch `ccc-radar-skill` to
+enable the Claude Code workflow. Only living documents (`docs/`, `README.md`)
+reflect the current state.
 
 ---
 
@@ -418,11 +409,11 @@ shape (rich schema, not a string to re-parse), without adding a direct
 dependency (`pydantic` is already transitive through `mcp`, but `TypedDict` is
 enough here — no runtime validation needed on the `cccr` side, which already
 controls both ends). Positive side effect: `search_findings`,
-`findings_summary`, and `search_code_with_findings` no longer manually duplicate
-`Finding → dict` serialization (see N3 in `archive/BACKLOG-2.md`, now shared
-through `TypedDict`s in `render.py`/`ccc_bridge.py` rather than inline-built
-dicts). The skill (`~/ccc-radar-skill/SKILL.md`) depended on no strict parsing
-of an `"error"` key — verified before this change — so no update was required.
+`findings_summary`, and `search_code_with_findings` no longer manually
+duplicate `Finding → dict` serialization; that logic is now shared through
+`TypedDict`s in `render.py`/`ccc_bridge.py` rather than inline-built dicts.
+The companion skill in `ccc-radar-skill` depended on no strict parsing of an
+`"error"` key, so no update was required.
 
 ---
 
@@ -456,10 +447,9 @@ before annotation, ranking, and final truncation.
 cases are re-ordered and a clearly irrelevant result never rises). They may be
 adjusted if real usage shows a different need. Over-fetch adds cost (up to 3×
 more results requested from `ccc` per call), negligible at target scale
-(interactive search, not high-volume traffic). The idea of translating a finding
-into `ccc grep` remains open but out of scope: see `archive/BACKLOG-6.md` for
-the feasibility write-up, to revisit only if restricted to rules without
-ellipsis and if it becomes a priority.
+(interactive search, not high-volume traffic). The idea of translating a
+finding into `ccc grep` remains open but out of scope, and should only be
+revisited for rules that do not rely on ellipsis.
 
 ---
 
@@ -495,7 +485,7 @@ findings-only usages must migrate to `cccr findings`) — accepted, the package
 not yet being distributed beyond this workstation. MCP tools are unchanged
 (`search_findings` = `cccr findings`, `search_code_with_findings` =
 `cccr search`). Along the way, fake `ccc` fixtures are shared in
-`tests/conftest.py` (first step of N2, `archive/BACKLOG-2.md`).
+`tests/conftest.py`.
 
 ---
 
@@ -830,9 +820,8 @@ way ; deleting a file also purges endpoints (already true since K1 through
 microservices at once (inter-service REST/Kafka graph, K12), without depending
 on manual “named workspace” configuration (K7's initial plan,
 `~/.cccr/workspaces/<name>.yml`) — the real target is a parent directory
-containing all microservices and shared Maven modules of one product (see
-`archive/BACKLOG-PRIORITY.md`, framing 2026-07-13), not unrelated standalone
-repos.
+containing all microservices and shared Maven modules of one product, not
+unrelated standalone repos.
 
 **Decision**:
 1. **Discovery** (`workspace.discover_maven_services`): every `pom.xml` found
@@ -865,7 +854,7 @@ repos.
 
 **Consequences**: `src/ccc_radar/workspace.py` (new), no dependency on a
 third-party Maven parser (only `xml.etree.ElementTree`, stdlib). CLI
-`cccr workspace <root>` and MCP tool `list_workspace_services` expose
+`cccr microservices [root]` and MCP tool `list_workspace_services` expose
 service discovery + endpoint/finding counts, ahead of K12 which consumes
 `load_federation` to build the real graph and hotspots.
 `tests/test_workspace.py` freezes the contract: names/classification, indexing

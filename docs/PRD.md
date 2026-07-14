@@ -226,10 +226,9 @@ Agent: search_findings("security", path_glob="src/payments/*", severity="ERROR")
 | **M2 — Agent integration** | MCP (findings + code join), skill | UC2/UC3 demonstrated end to end in Claude Code |
 | **M3 — V1** | Documentation, end-to-end eval | §9 targets reached on the internal eval set |
 
-Real status: the **core product** corresponding to this PRD is delivered
-(`archive/BACKLOG.md`, tasks F0.1 to F7.2). The repo also carries an important
-but distinct Java/Spring microservices audit extension whose stabilization
-continues in more recent backlogs.
+Real status: the **core product** corresponding to this PRD is delivered. The
+repo also carries an important but distinct Java/Spring microservices audit
+extension whose stabilization is still ongoing.
 
 ## 12. Remaining open questions
 

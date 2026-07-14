@@ -85,13 +85,11 @@ Key points:
 
 ## Documentation
 
-- [`AGENT.md`](AGENT.md) — for any agent contributing to this repo: document map and the rule “every change must be documented in a BACKLOG”.
+- [`AGENT.md`](AGENT.md) — for any agent contributing to this repo: document map and documentation maintenance rules.
 - [`docs/PRD.md`](docs/PRD.md) — product: problem, vision, personas, use cases, success metrics.
 - [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — functional specification: CLI commands, MCP tools, skill, error behaviors.
 - [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — technical specification: modules, data model, SQLite schema, algorithms.
 - [`docs/ADR.md`](docs/ADR.md) — architecture decisions (context, choice, consequences).
-- `archive/` — history of the implementation plan (`BACKLOG.md`) and code review findings (`BACKLOG-2.md`).
-
 The Claude Code skill (`SKILL.md`) is distributed separately from this repo, in
 [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill); its
 functional behavior remains documented in

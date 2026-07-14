@@ -1,21 +1,33 @@
 # AGENT.md — How to navigate and maintain this project's documentation
 
-> This file is intended for any agent (Claude Code or otherwise) working on
-> `ccc-radar`. It describes where each kind of documentation lives and the
-> non-negotiable rule: **every change must be documented in a BACKLOG file**.
+This file is for any agent working on `ccc-radar`. It points to the right
+documents and summarizes the documentation hygiene expected in this repository.
 
 ## Document map
 
 | Document | Content | When to read it |
 |---|---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Problem, vision, personas, use cases, success metrics | To understand *why* the product exists and what it must achieve |
-| [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) | Observable behavior: CLI commands, flags, error messages/exit codes, MCP tools, skill workflows | Before changing anything a user or agent sees (CLI, MCP, skill) |
-| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, data model, SQLite schema, algorithms, JSON contract | Before changing internal architecture (`src/ccc_radar/*.py`) |
-| [`docs/ADR.md`](docs/ADR.md) | Architecture decisions: context, choice, consequences | Before revisiting an already-settled choice — to know whether it is a D1-D6 “do not reopen” decision or a documented ADR-7+ adaptation |
-| `archive/BACKLOG*.md` | Work tasks (initial implementation, remediations) — see below | For any new or ongoing work |
+| [`README.md`](README.md) | Entry point: positioning, installation, quickstart, MCP setup | First stop for onboarding or user-facing repo updates |
+| [`docs/PRD.md`](docs/PRD.md) | Problem, vision, personas, scope, success metrics | When you need product intent and scope boundaries |
+| [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) | Observable behavior: CLI commands, flags, error messages, MCP tools, skill workflows | Before changing anything a user or agent sees |
+| [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) | Modules, data model, SQLite schema, algorithms, JSON contract | Before changing internal architecture in `src/ccc_radar/` |
+| [`docs/ADR.md`](docs/ADR.md) | Architecture decisions: context, choice, consequences | Before revisiting an existing technical choice |
+| [`../ccc-radar-skill/`](../ccc-radar-skill/) | Companion skill repo: agent workflow, bundled rule packs, operational guidance | Whenever a `ccc-radar` change can affect the skill or its docs |
 
-`README.md` remains the short entry point (installation, getting started) and
-points to these documents; it does not duplicate their content.
+`README.md` stays intentionally short. The specifications and ADRs hold the
+authoritative detail.
+
+## Documentation maintenance rules
+
+1. Keep `README.md` focused on onboarding and day-to-day usage.
+2. Update `docs/SPEC-FONC.md` in the same change as any CLI, MCP, or skill
+   behavior change.
+3. Update `docs/SPEC-TECH.md` in the same change as any architectural or data
+   model change.
+4. Record durable design decisions in `docs/ADR.md` instead of leaving them only
+   in commit messages.
+5. If a change in `ccc-radar` affects the companion skill, update
+   `../ccc-radar-skill/` in the same pass.
 
 ## Hugging Face model downloads
 
@@ -33,55 +45,3 @@ env -u SSL_CERT_FILE uvx --from huggingface_hub hf download \
 
 The local path expected by default on the `cccr` side is
 `~/models/jina-code-embeddings-1.5b`.
-
-## Golden rule: every change must be documented in a BACKLOG
-
-No task (feature, fix, refactor, documentation change) should be carried out
-without a matching entry in an `archive/BACKLOG-<n>.md` file:
-
-1. **Before starting**: check whether the task already exists in an ongoing
-   backlog (`archive/BACKLOG-2.md` or the most recent one). Otherwise add it
-   using the same template as the existing entries: title, `Files` (exact
-   scope), `Description`, `AC` (verifiable acceptance criteria).
-2. **During**: one task = one commit (`F<epic>.<n>: <title>` for the original
-   implementation backlog, `R<n>: <title>` for remediations, `N<n>: <title>`
-   for cross-cutting cleanup — see `archive/BACKLOG-2.md`).
-3. **After**: check the box (`[ ]` → `[x]`) in the matching BACKLOG file in the
-   same commit (or an explicit dedicated commit) — never let the file lie about
-   the repository's real state.
-4. **If the change reveals an architecture decision** (new, or a deviation from
-   an existing decision): add an entry to `docs/ADR.md` (context / decision /
-   consequences); do not leave it implicit in a commit message.
-5. **If the change modifies observable behavior or internal architecture**:
-   update `docs/SPEC-FONC.md` and/or `docs/SPEC-TECH.md` in the same commit as
-   the code — these documents describe the code *as it is*, not as it was
-   planned.
-
-## BACKLOG file lifecycle
-
-- All backlogs (completed or ongoing) live in `archive/`, sequentially
-  numbered: `BACKLOG.md` (initial implementation plan, completed),
-  `BACKLOG-2.md` (code review findings, ongoing), `BACKLOG-3.md`, etc.
-- A new body of work (notable feature, remediation campaign) creates a new
-  `archive/BACKLOG-<n>.md` rather than extending an already-closed file
-  indefinitely.
-- An existing and still-open backlog (unchecked boxes) receives new tasks that
-  extend its subject.
-
-## Inherited conventions (do not reopen)
-
-Taken from `archive/BACKLOG.md` §“Conventions for the executing agent” — valid
-for any present or future BACKLOG file:
-
-1. Handle tasks in order; only start a task if its declared dependencies are
-   `DONE`.
-2. A task is `DONE` only when all its acceptance criteria pass, plus the global
-   DoD.
-3. **Global DoD**: `uv run pytest` passes completely, `uv run ruff check .`
-   without errors, no file outside the task's `Files` scope is modified (any
-   exception to this rule must be reported and approved before being applied —
-   see `docs/ADR.md` ADR-7 for a precedent), and no `TODO` remains in the
-   delivered code.
-4. If an acceptance criterion is impossible to satisfy as written: stop and
-   report it, do not silently reinterpret it (see `docs/ADR.md` for previous
-   cases where this rule was applied).

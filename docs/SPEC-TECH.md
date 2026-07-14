@@ -3,7 +3,7 @@
 > Describes the internal architecture actually delivered: modules, data model,
 > algorithms, SQLite schema, internal contracts. For user-visible behavior, see
 > [`SPEC-FONC.md`](./SPEC-FONC.md). For the reasoning behind the choices, see
-> [`ADR.md`](./ADR.md). For known defects, see `archive/BACKLOG-2.md`.
+> [`ADR.md`](./ADR.md).
 
 ## 1. Module map (`src/ccc_radar/`)
 
@@ -315,7 +315,8 @@ Without explicit `--rules` and without an existing Semgrep config in the target
 repo, `cli.init()` tries the following sources in order:
 
 1. `~/ccc-radar-skill/skills/cccr/rules/`
-2. `~/cocoindex-ext-skill/skills/cccr/rules/`
+2. `~/cocoindex-ext-skill/skills/cccr/rules/` (legacy location, still checked
+   for compatibility)
 
 Each source must contain the packs `default`, `liveness`, `rest`, `kafka`,
 `kafka-security`. If all are present, they are copied recursively into
@@ -642,8 +643,7 @@ File: src/mailer.py:1-6 [python]
 ```
 through two regexes anchored on that format (`_RESULT_HEADER_RE`,
 `_FILE_LINE_RE`), splitting blocks on `\n(?=--- Result \d+ )`. A block that does
-not match both regexes is silently ignored (no error — undetected format drift,
-see `archive/BACKLOG-2.md`).
+not match both regexes is silently ignored (no error — undetected format drift).
 
 Before spawning the subprocess, `search_code` now fails fast if `ccc` is absent
 from `PATH`, or if the fallback bridge would need a `ccc` index that is not
@@ -832,8 +832,8 @@ Pure functions, no SQLite write:
   embedder: it lives in `flow.py` (thematic consistency) but is not pure — CLI/
   MCP callers invoke it explicitly when falling back from a `FlowError` raised
   by `trace_flow`, never from inside `trace_flow` itself. Threshold not
-  empirically calibrated against a real model (documented starting point) — see
-  `archive/BACKLOG-10.md` K3 for the rationale.
+  empirically calibrated against a real model yet; `0.35` is the documented
+  starting point.
 - `trace_flow(query, endpoints_by_service, findings_by_service, warnings=None)
   -> FlowResult` — resolves `query` through `resolve_topic` (failure →
   `FlowError`), then for each endpoint whose `topic == resolved_topic` in any
@@ -874,8 +874,8 @@ during that attempt (missing config, unavailable model) are silently absorbed
 problem — tested in `tests/test_flow.py` (threshold, with directly built
 vectors) and `tests/test_k5_flow_e2e.py`/`tests/test_mcp_server.py`
 (CLI/MCP wiring, by substituting `resolve_topic_by_similarity` rather than
-relying on a real/fake embedder over arbitrary text — not calibrated, see
-`archive/BACKLOG-10.md` K3).
+relying on a real/fake embedder over arbitrary text — threshold not
+calibrated on a production corpus yet).
 
 ## 7. JSON contract (F4.2 — frozen)
 
@@ -889,9 +889,8 @@ Consumed by `cccr search --json`, the MCP tool `search_findings`, and (without
   "context": "str (optional)"
 }
 ```
-This schema must not be modified without updating the 3 serialization points
-(`render.py`, `ccc_bridge.py`) — currently duplicated, see
-`archive/BACKLOG-2.md` (N3).
+This schema must not be modified without updating the serialization points in
+`render.py` and `ccc_bridge.py`.
 
 ## 8. Tests and fixtures
 

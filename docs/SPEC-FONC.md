@@ -45,12 +45,11 @@ semgrep_timeout_s: 120
   naming convention for test source sets (`test`, `componentTest`,
   `contractTest`, `endToEndTest`, ... — name equal to `test` or ending in
   `Test`) is **always** excluded from scanning, for both findings and
-  endpoints (BACKLOG-15 H2, ADR-34; rule tightened in BACKLOG-16 P1) — neither
-  configurable nor bypassable through `include`. A generic `src/<package>`
-  layout (Python, JS, Rust, ...) is **not** concerned: `<package>` does not
-  follow that convention. A file that was already indexed and becomes excluded
-  by this rule is purged on the next `cccr index`, just like a file deleted from
-  disk.
+  endpoints (ADR-34) — neither configurable nor bypassable through `include`.
+  A generic `src/<package>` layout (Python, JS, Rust, ...) is **not**
+  concerned: `<package>` does not follow that convention. A file that was
+  already indexed and becomes excluded by this rule is purged on the next
+  `cccr index`, just like a file deleted from disk.
 
 ## 2. `cccr` CLI
 
@@ -81,8 +80,7 @@ Creates `.cccr/config.yml`.
   existing file is never overwritten.
 
 ### `cccr index [--full] [--engine manual|cocoindex]`
-Indexes the project (Semgrep findings **and** REST/Kafka endpoints —
-BACKLOG-11 A1).
+Indexes the project (Semgrep findings **and** REST/Kafka endpoints).
 
 - Default: incremental — only re-scans files added or modified since the last
   indexing (SHA-256 hash per file); files deleted from disk have their findings
@@ -193,7 +191,7 @@ right finding even when the embedding alone would be weak.
 
 | Option | Effect |
 |---|---|
-| `--severity S` | keeps only findings with severity ≥ S (S ∈ INFO/WARNING/ERROR ; a value outside this set — e.g. raw Semgrep severity `HIGH` — is a blocking error, exit code 2, BACKLOG-16 P4) |
+| `--severity S` | keeps only findings with severity ≥ S (S ∈ INFO/WARNING/ERROR ; a value outside this set — e.g. raw Semgrep severity `HIGH` — is a blocking error, exit code 2) |
 | `--rule R` | keeps only findings from rule `R` (exact equality on `rule_id`) |
 | `--path GLOB` | keeps only findings whose path matches the glob (style `fnmatch`) |
 | `--limit N` | maximum number of results (default 5) |
@@ -250,7 +248,7 @@ Same “index absent” rules as `findings` (same message, code 2).
 ### `cccr endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
 *Java/Spring microservices extension — beta.*
 
-Lists indexed REST/Kafka endpoints (BACKLOG-10 K1, BACKLOG-11 A1).
+Lists indexed REST/Kafka endpoints.
 Optional combinable filters:
 
 | Option | Effect |
@@ -259,7 +257,7 @@ Optional combinable filters:
 | `--role` | `serve`/`call` (rest) or `produce`/`consume` (kafka) |
 | `--topic` | exact equality on `topic` (e.g. `"GET /orders/{id}"`, `"orders.created"`) |
 | `--path` | path pattern (`fnmatch`), same style as `cccr search --path` |
-| `--module` | Maven module name (artifactId, BACKLOG-13) or detected Gradle service (BACKLOG-15 H1) — `None` if neither applies |
+| `--module` | Maven module name (artifactId) or detected Gradle service — `None` if neither applies |
 
 Text rendering, one line per endpoint:
 `[<system>/<role>] <topic>[ (dynamic)][ [<module>]]  <path>:<start>-<end>`
@@ -288,12 +286,12 @@ application routes.
 `--json` rendering: list of `EndpointHit` (`id`, `role`, `system`, `topic`,
 `topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
 `module`, `qualified_name`). `module` first comes from the nearest Maven
-`pom.xml` (artifactId, BACKLOG-13); if the repo has no `pom.xml`, it falls back
-on Gradle detection (BACKLOG-15 H1, ADR-33) — the first-level directory that
-contains, somewhere in its tree, a Java class with a `main()` starting Spring
-Boot (`SpringApplication.run(...)`), thereby grouping all Gradle subprojects of
-the same microservice together. `qualified_name` (package + Java class) is
-`None` for a non-Java file.
+`pom.xml` (artifactId); if the repo has no `pom.xml`, it falls back on Gradle
+detection (ADR-33) — the first-level directory that contains, somewhere in its
+tree, a Java class with a `main()` starting Spring Boot
+(`SpringApplication.run(...)`), thereby grouping all Gradle subprojects of the
+same microservice together. `qualified_name` (package + Java class) is `None`
+for a non-Java file.
 
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
@@ -303,7 +301,7 @@ lives in the same database as `findings`.
 
 Inter-service graph built from indexed endpoints: microservices linked by
 HTTP endpoints (`call` -> `serve`) and Kafka topics (`produce` -> `consume`),
-plus likely blocking points derived from that graph (BACKLOG-10 K12). Always
+plus likely blocking points derived from that graph. Always
 included: synchronous REST calls detected inside a Kafka consumer handler
 **of the current project** (same file, call site inside the handler's line
 range).
@@ -312,11 +310,11 @@ For inter-service cycles/hotspots, two sources are possible, tried in this
 order:
 1. **Without `--workspace`**: if the index covers a multi-module Maven
    directory (`cccr index` run at the parent directory, with endpoints/findings
-   assigned to a module during indexing — BACKLOG-13), endpoints/findings are
+   assigned to a module during indexing), endpoints/findings are
    grouped by module and the graph is built directly from that single index —
    no federation needed for a monorepo.
 2. **With `--workspace ROOT`**: also federates Maven microservices under `ROOT`,
-   indexed **separately** (BACKLOG-11 A2, read-only —
+   indexed **separately** (read-only —
    `discover_maven_services`/`load_federation`) — the path for services that
    live in genuinely separate repos.
 
@@ -371,9 +369,9 @@ project. Without inter-module data, `services` and `edges` stay empty just like
 Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `endpoints` lives in the same database as `findings` (`.cccr/findings.db`).
 `--workspace` never makes the command fail: a missing or incompatible federated
-service is reported in `note`, not as an error (K7 CA2).
+service is reported in `note`, not as an error.
 
-`--drawio FILE` (BACKLOG-14 G1): instead of JSON/text rendering, writes the
+`--drawio FILE`: instead of JSON/text rendering, writes the
 complete service ↔ service graph (not only cycle edges) in `.drawio`
 (mxGraph XML, directly openable in diagrams.net) to `FILE`, and displays a
 short confirmation (number of services/edges). One node per service known from
@@ -389,11 +387,12 @@ as `--json` (never a silent failure). Incompatible with `--json`: `--drawio`
 takes precedence if provided. No equivalent MCP tool — a `.drawio` file is not
 an agent-consumable result, unlike the JSON already returned by `graph`.
 
-### `cccr workspace <root> [--json]`
+### `cccr microservices [root] [--json]`
 *Java/Spring microservices extension — beta.*
 
-Discovers Maven modules under `root` (BACKLOG-11 A2, ADR-30): one module per
-found `pom.xml`, named after its `artifactId`, classified as `microservice`
+Discovers Maven modules under `root` (default: current directory, ADR-30): one
+module per found `pom.xml`, named after its `artifactId`, classified as
+`microservice`
 (the module carries a `main()` class that runs `SpringApplication.run(...)`, or
 its `pom.xml` declares Spring Boot on a runtime packaging) or `shared-module`
 otherwise. Aggregator poms with `packaging=pom` are always ignored, even if
@@ -417,7 +416,7 @@ another project's database) to count its endpoints and findings.
 
 `endpoint_count` of a `shared-module` is always `0`: a shared module is never
 handled as a runtime producer/consumer, even if endpoints were detected there by
-mistake (A2 CA5). A module not indexed, with a missing database, or with an
+mistake. A module not indexed, with a missing database, or with an
 incompatible schema does not make the command fail: it appears in `warnings`,
 absent from the counts. An indexed module whose
 `meta.endpoint_inventory_signature` is missing/old also adds an explicit
@@ -427,13 +426,13 @@ error — `root` may legitimately not be a Maven directory).
 ### `cccr flow <query> [--workspace ROOT] [--json]`
 *Java/Spring microservices extension — beta.*
 
-Resolves `<query>` into a Kafka topic or REST route (BACKLOG-10 K5): exact name
+Resolves `<query>` into a Kafka topic or REST route: exact name
 first, otherwise case-insensitive substring **if it designates a unique
 route/topic** among indexed endpoints — an ambiguous match (several topics
 contain the substring) fails rather than choosing arbitrarily.
 
 Without `--workspace` only: if textual resolution fails, a last-resort
-**vector similarity** fallback (BACKLOG-10 K3) looks for the nearest neighbor
+**vector similarity** fallback looks for the nearest neighbor
 among endpoints already embedded by `cccr index` (`cccr endpoints`/`cccr graph`
 also depend on it indirectly, same indexing pipeline) — useful for a natural-
 language query that contains no literal topic/route name. Below a minimum
@@ -443,11 +442,11 @@ unsuccessful textual resolution. This fallback is not available with
 `--workspace` (multi-service federation).
 
 Without `--workspace`: searches only the current project, but `service` now
-reflects the Maven module of each site (`endpoint.module`, BACKLOG-13) when the
+reflects the Maven module of each site (`endpoint.module`) when the
 index covers a multi-module directory — `null` only for a non-Maven repo or a
 site outside the Maven tree, never to hide federation. With `--workspace ROOT`:
 also federates separately indexed Maven microservices under `ROOT`
-(BACKLOG-11 A2, read-only). In both cases, every site in the flow
+(read-only). In both cases, every site in the flow
 (Kafka producer/consumer, or REST server/caller) appears assigned to its
 service, and for each site the overlapping Semgrep findings (overlapping file +
 lines, same service — spirit of ADR-19) are listed by `rule_id`. A stale
@@ -477,8 +476,8 @@ Query with no match, or ambiguous query (several topics match as a substring):
 explicit stderr message, exit code 2. Same “index absent” rules as
 `findings`/`summary` (same message, code 2) when `--workspace` is not provided;
 with `--workspace`, a missing or incompatible federated service never makes
-`flow` fail (same guarantees as `cccr graph --workspace`/`cccr workspace`,
-K7 CA2), but is **not** silently absorbed either: it appears in `warnings` — a
+`flow` fail (same guarantees as `cccr graph --workspace`/`cccr microservices`),
+but is **not** silently absorbed either: it appears in `warnings` — a
 missing site caused by a non-federated service must stay visible, not be
 confused with the real absence of a producer/consumer.
 
@@ -511,10 +510,10 @@ the **Java/Spring microservices extension**.
 | `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |
-| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | BACKLOG-10 K1, BACKLOG-11 A1 |
-| `graph(workspace_root=None)` | `GraphResult` | Likely blocking points (BACKLOG-10 K12) — equivalent to CLI `cccr graph`/`cccr graph --workspace` | `cycles`/`hotspots` empty without `workspace_root` (ADR-27); real otherwise (A2 federation) |
-| `list_workspace_services(root)` | `WorkspaceResult` | Maven module discovery + endpoint/finding counts per service — equivalent to CLI `cccr workspace` | Read-only (ADR-30); BACKLOG-11 A2 |
-| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` (BACKLOG-10 K5/K6) |
+| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
+| `graph(workspace_root=None)` | `GraphResult` | Likely blocking points — equivalent to CLI `cccr graph`/`cccr graph --workspace` | `cycles`/`hotspots` empty without `workspace_root` (ADR-27); real otherwise |
+| `list_workspace_services(root)` | `WorkspaceResult` | Maven module discovery + endpoint/finding counts per service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
+| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` |
 
 `search` adds to each code result:
 - `findings`: list of findings whose `path` is identical and whose
@@ -544,7 +543,7 @@ case, so that `outputSchema` remains valid:
 If `ccc` fails or is absent: exception (`ccc not found...` or
 `ccc failed...`) → `isError: true` on the MCP side, exit code 2 on the CLI.
 
-## 4. Claude Code skill (distributed separately — `~/cocoindex-ext-skill/SKILL.md`)
+## 4. Claude Code skill (distributed separately in `ccc-radar-skill`)
 
 Triggers: vulnerability, security, semgrep, finding, debt, audit.
 
@@ -581,7 +580,7 @@ blocking unnecessarily.
 | Any exception | MCP tools | bubbles up as-is → FastMCP `ToolError` → `isError: true` on the protocol side; the server remains usable for the next call |
 | `ccc` absent or failing | `cccr search` / `search` (MCP) | explicit stderr/exception, code 2 on CLI, `isError: true` on MCP |
 
-## 6. Liveness rule pack (BACKLOG-10 K8)
+## 6. Liveness rule pack
 
 The rule pack lives in the skill repo, not in this repo: see
 [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill)
@@ -617,7 +616,7 @@ rules:
 Scope: Java (`RestTemplate`, Spring Kafka `@KafkaListener`, `synchronized`,
 `Future`/`CompletableFuture`, MongoDB pessimistic locks
 `findAndModify`/`findOneAndUpdate`) — the target stack is Java + Spring +
-Maven; Python/JS/TS are not targets (see K8 in `archive/BACKLOG-10.md`). The
+Maven; Python/JS/TS are not targets. The
 security part (cleartext SASL, `PLAINTEXT`, unsafe deserialization) is now
 covered separately in the Kafka security pack.
 
@@ -636,7 +635,7 @@ polling loop or JVM monitor:
   `locked`/`lockedAt`/etc.): the structure (loop+sleep, or synchronized) around
   the atomic write is what signals the lock usage, not a naming convention.
 
-## 7. REST inventory rule pack (BACKLOG-10 K11)
+## 7. REST inventory rule pack
 
 Like the liveness pack, it lives in `ccc-radar-skill`
 (`skills/cccr/rules/rest/java.yaml`, ADR-24) — test copy in
@@ -673,13 +672,13 @@ best-effort scanner logic now:
    Server files such as `configurations/order-service.yml`;
 3. keeps a `.put(...)` match as a REST call only when the file actually shows a
    `RestTemplate` footprint, which removes `Map.put(...)` false positives.
-Scope: Java only — target stack is Java + Spring + Maven (see K8/K11 in
-`archive/BACKLOG-10.md`). Remaining gap: `WebClient` chain split across several
+Scope: Java only — target stack is Java + Spring + Maven. Remaining gap:
+`WebClient` chain split across several
 lines (`.get()` and `.uri(...)` not on the same line in the snippet —
 `_find_first_literal` only searched the first line before its later
 improvements).
 
-## 8. Kafka inventory rule pack (BACKLOG-10 K2)
+## 8. Kafka inventory rule pack
 
 Like the REST pack, it lives in `ccc-radar-skill`
 (`skills/cccr/rules/kafka/java.yaml`, ADR-24) — test copy in
@@ -727,7 +726,7 @@ of scope. `cccr` also adds local inference for Spring producers built through
 `@Value` field with the same rules; if nothing is resolvable, it remains
 `<dynamic>`.
 
-## 9. Kafka security rule pack (BACKLOG-10 K8, security part)
+## 9. Kafka security rule pack
 
 Lives in `ccc-radar-skill` (`skills/cccr/rules/kafka-security/
 java.yaml`, ADR-24) — test copy in
@@ -752,8 +751,8 @@ ADR-31, a non-obvious trap to know before writing this kind of rule).
 risky `enable.auto.commit`, and handler without DLQ/retry were in K8's initial
 scope but are already covered by the `default` pack
 (`skills/cccr/rules/default/b-kafka.yaml`, rules R7 and R10) — see
-`archive/BACKLOG-10.md` K8. Risky `max.poll.interval.ms` remains a documented
+that pack. Risky `max.poll.interval.ms` remains a documented
 gap (no rule, since the threshold/intent of “risky” is not unambiguous enough
 for reliable detection without false positives).
 
-Scope: Java only (see note at the top of `archive/BACKLOG-10.md`).
+Scope: Java only.
