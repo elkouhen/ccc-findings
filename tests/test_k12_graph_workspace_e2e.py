@@ -1,9 +1,5 @@
-"""BACKLOG-10 K12 — cccr graph --workspace de bout en bout : trois vrais
-microservices Maven indexés séparément, avec un cycle d'appels REST
-A -> B -> C -> A, et un site sur ce cycle recouvert par un finding liveness
-(hotspot). CA1 (cycle rapporté avec les sites des deux extrémités) et CA3
-(hotspot = cycle + finding, classé par sévérité) de K12.
-"""
+"""E2E `cccr graph --workspace` sur un workspace multi-services indexé
+séparément : le CLI doit remonter la topologie inter-services fédérée."""
 
 import json
 import shutil
@@ -35,7 +31,7 @@ def indexed_cycle_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.integration
-def test_graph_workspace_reports_the_three_service_rest_cycle_with_sites(
+def test_graph_workspace_reports_the_three_service_rest_topology(
     indexed_cycle_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(indexed_cycle_workspace / "service-x")
@@ -48,36 +44,17 @@ def test_graph_workspace_reports_the_three_service_rest_cycle_with_sites(
     data = json.loads(result.output)
     assert set(data["services"]) == {"service-x", "service-y", "service-z"}
     assert len(data["edges"]) == 3
-    assert len(data["cycles"]) == 1
-    cycle = data["cycles"][0]
-    assert set(cycle["services"][:-1]) == {"service-x", "service-y", "service-z"}
-    assert cycle["has_synchronous_rest"] is True
-    assert len(cycle["edges"]) == 3
-    sites = {(e["from_site"]["path"], e["from_site"]["start_line"]) for e in cycle["edges"]}
+    assert {edge["label"] for edge in data["edges"]} == {
+        "GET /x-status",
+        "GET /y-status",
+        "GET /z-status",
+    }
+    sites = {(e["from_site"]["path"], e["from_site"]["start_line"]) for e in data["edges"]}
     assert ("app/YClient.java", 13) in sites
 
 
 @pytest.mark.integration
-def test_graph_workspace_reports_hotspot_where_finding_overlaps_a_cycle_site(
-    indexed_cycle_workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(indexed_cycle_workspace / "service-x")
-
-    result = runner.invoke(
-        app, ["graph", "--workspace", str(indexed_cycle_workspace), "--json"]
-    )
-
-    data = json.loads(result.output)
-    assert len(data["hotspots"]) >= 1
-    hotspot = data["hotspots"][0]
-    assert hotspot["service"] == "service-x"
-    assert hotspot["site"]["path"] == "app/YClient.java"
-    assert hotspot["finding_rule_id"] == "rules.cccr.liveness.java.new-resttemplate-no-timeout"
-    assert hotspot["finding_severity"] == "WARNING"
-
-
-@pytest.mark.integration
-def test_graph_text_renders_cycle_and_hotspot(
+def test_graph_text_renders_inter_service_topology(
     indexed_cycle_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(indexed_cycle_workspace / "service-y")
@@ -85,9 +62,9 @@ def test_graph_text_renders_cycle_and_hotspot(
     result = runner.invoke(app, ["graph", "--workspace", str(indexed_cycle_workspace)])
 
     assert result.exit_code == 0
-    assert "Cycles inter-services" in result.output
-    assert "Hotspots" in result.output
+    assert "Arêtes du graphe" in result.output
     assert "service-x" in result.output and "service-y" in result.output
+    assert "GET /x-status" in result.output
 
 
 def test_graph_without_workspace_still_reports_the_no_workspace_note(
@@ -105,16 +82,13 @@ def test_graph_without_workspace_still_reports_the_no_workspace_note(
     data = json.loads(result.output)
     assert data["services"] == []
     assert data["edges"] == []
-    assert data["cycles"] == []
-    assert data["hotspots"] == []
     assert "--workspace" in data["note"]
 
 
 @pytest.mark.integration
-def test_graph_drawio_writes_a_valid_mxgraph_file_with_the_cycle_highlighted(
+def test_graph_drawio_writes_a_valid_mxgraph_file(
     indexed_cycle_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-14 G1 CA1."""
     import xml.etree.ElementTree as ET
 
     monkeypatch.chdir(indexed_cycle_workspace / "service-x")
@@ -130,22 +104,15 @@ def test_graph_drawio_writes_a_valid_mxgraph_file_with_the_cycle_highlighted(
 
     root = ET.fromstring(out_file.read_text(encoding="utf-8"))
     node_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
-    assert len(node_values) == 3
     assert node_values == {"<b>service-x</b>", "<b>service-y</b>", "<b>service-z</b>"}
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
-    assert len(edge_cells) >= 3
-    assert all("strokeColor=#d32f2f" in cell.get("style", "") for cell in edge_cells)
-    assert {cell.get("value") for cell in edge_cells} == {
-        "GET /x-status",
-        "GET /y-status",
-        "GET /z-status",
-    }
+    assert len(edge_cells) == 3
+    assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
 
 
 def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-14 G1 CA2."""
     import xml.etree.ElementTree as ET
 
     from ccc_radar.store import Store

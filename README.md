@@ -152,7 +152,7 @@ Semgrep scan, persistence, embedding) before the final
 ```bash
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr endpoints                  # indexed REST/Kafka inventory
-cccr graph                      # inter-service REST/Kafka graph + cycles/hotspots
+cccr graph                      # inter-service REST/Kafka topology
 cccr microservices              # discovery of indexed Maven services from current dir
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
 ```

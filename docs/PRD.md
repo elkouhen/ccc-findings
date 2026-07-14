@@ -122,7 +122,7 @@ rewriting an analysis engine.
 ### Java/Spring microservices audit extension (outside the initial V1 commitment)
 
 - REST/Kafka endpoint inventory from dedicated Semgrep rules.
-- Inter-service graph, hotspots, and flow tracing.
+- Inter-service graph and flow tracing.
 - Multi-service Maven workspace discovery and `.drawio` export.
 - Scope focused on Java/Spring repos; best-effort behavior currently being
   stabilized.

@@ -18,7 +18,7 @@
 | `coco_indexer.py` | Experimental `--engine cocoindex` adapter: findings + code chunks as typed target states | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (semantic + lexical hybrid), `summary`, `get_context` | `store`, `models` |
-| `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_cycles`, `find_outbound_calls_in_consumers`, `find_hotspots`/`rank_hotspots`, `paths_match` | `models` |
+| `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
 | `workspace.py` | Read-only federation of a multi-service Maven directory (BACKLOG-11 A2, ADR-30): `discover_maven_services`, `load_federation` | `models`, `store` |
 | `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings`, `rank_by_severity` | `models`, `store` |
@@ -677,67 +677,50 @@ Pure functions, no SQLite write (ADR-27):
   **fewer** segments than the exposed route (literal prefix before
   concatenation, ADR-26) but never more. Best-effort by design (K12 AC4):
   no match → no edge, never an exception.
-- `find_cycles(edges) -> list[Cycle]` — simple cycles (DFS, each service visited
-  at most once per cycle) on the service→service graph induced by `edges` ;
-  deduplicated by the set of edges composing them (`frozenset(id(edge) ...)`),
-  independently of the traversal start service. `Cycle.has_synchronous_rest`:
-  at least one `"rest"` edge in the cycle, except edges whose call site is
-  `WebClient` (`framework` `webclient`, non-blocking by nature, K11): a cycle
-  made only of reactive calls is still reported (it is a cycle), but
-  `has_synchronous_rest` is `False` — no false synchronous-blocking alarm for a
-  flow that does not block a thread.
 - `find_outbound_calls_in_consumers(endpoints) -> list[OutboundCallInConsumer]`
   — for a **single** service (file/lines not comparable across repos): a `call`
   whose `start_line` falls inside `[consume.start_line, consume.end_line]` of
   the same file. Does not depend on the multi-service graph — works as soon as a
   single project is indexed (K1/K11 are enough).
-- `find_hotspots(cycles, findings_by_service) -> list[Hotspot]` /
-  `rank_hotspots(hotspots) -> list[Hotspot]` — for each endpoint of each cycle
-  edge, join with findings **of the same service** by file+lines (same
-  inclusive overlap as in §6) ; sort by descending severity
-  (`INFO < WARNING < ERROR`), stable sort.
 
-`endpoints_by_service`/`findings_by_service`: two ways to produce that
-multi-key dict, consumed interchangeably by `build_graph`/`find_cycles`/
-`find_hotspots` — graph and cycles depend only on the *shape* of the dict,
-never on where it came from:
+`endpoints_by_service`: two ways to produce that multi-key dict, consumed by
+`build_graph` — topology depends only on the *shape* of the dict, never on
+where it came from:
 - `workspace.load_federation` (§6ter) — several services indexed
   **separately**, federated at query time (BACKLOG-11 A2).
-- `group_endpoints_by_module(endpoints) -> dict[str, list[MessageEndpoint]]` /
-  `group_findings_by_module(findings) -> dict[str, list[Finding]]`
+- `group_endpoints_by_module(endpoints) -> dict[str, list[MessageEndpoint]]`
   (BACKLOG-13 M2) — a **single** index covering several Maven modules
-  (`endpoint.module`/`finding.module`, M1), without federation. An endpoint /
-  finding without a module (`None`) is excluded from grouping: without a stable
+  (`endpoint.module`, M1), without federation. An endpoint without a module
+  (`None`) is excluded from grouping: without a stable
   name, it can never form a reliable inter-service edge — deliberately
-  conservative choice (fewer detected cycles rather than an invented cycle
+  conservative choice (fewer detected edges rather than an invented edge
   between two unattributed sites that would arbitrarily fall into the same
   `None` bucket).
 
 CLI `cccr graph` / MCP tool `graph` (§2/§3): without `--workspace`/
 `workspace_root`, they first try `group_endpoints_by_module` on endpoints from
 the current project; if the result is non-empty, they build the graph directly
-(no federation). Otherwise (no Maven module detected), `cycles`/`hotspots`
-remain empty with an explicit note — same behavior as before BACKLOG-13.
+(no federation). Otherwise (no Maven module detected), `services`/`nodes`/
+`edges` remain empty with an explicit note — same behavior as before
+BACKLOG-13.
 Providing `--workspace`/`workspace_root` always triggers full federation,
 unchanged.
 
-`render_graph_json`/`render_graph_text` now expose the **base topology**
-alongside derived risk signals: `services` (the keys of
-`endpoints_by_service`) and `edges` (every `GraphEdge` returned by
-`build_graph`, REST or Kafka, with both endpoint sites). `cycles` and
-`hotspots` remain derived views built from that same edge set, not a separate
-graph.
+`render_graph_json`/`render_graph_text` expose the topology as
+`services` (the keys of `endpoints_by_service`), `nodes` (services + Kafka
+topics), `edges` (every `GraphEdge` returned by `build_graph`, REST or Kafka,
+with both endpoint sites), plus `outbound_calls_in_consumers`.
 
 ### 6bis-bis. Visual graph export (`render.py`, BACKLOG-14 G1)
 
 `render_graph_drawio(endpoints_by_service: dict[str, list[MessageEndpoint]],
-edges: list[GraphEdge], cycles: list[Cycle]) -> str` — pure function, no
+edges: list[GraphEdge]) -> str` — pure function, no
 dependency on SQLite nor the CLI. Renders the **complete** graph (all
-`build_graph` edges, not only cycle edges, unlike `render_graph_json`) as
+`build_graph` edges) as
 mxGraph XML (native diagrams.net/drawio format):
 - one node (`mxCell vertex="1"`) per service name in `endpoints_by_service`,
   including a service with no edge at all; each node label is HTML and lists
-  the service name plus its discovered endpoints as `[system/role] topic`;
+  the service name only;
   initial grid layout (`ceil(sqrt(n))` columns), purely indicative:
   diagrams.net may freely reorganize on open;
 - one edge (`mxCell edge="1"`) per `GraphEdge`, connected through `source` /
@@ -746,19 +729,16 @@ mxGraph XML (native diagrams.net/drawio format):
   `services` come from the same source) ; dashed style (`dashed=1`) for
   `kind="kafka"`, solid line for `"rest"` ; label = `edge.to_endpoint.topic`
   (route or topic name);
-- edges belonging to a cycle whose `has_synchronous_rest=True` are identified by
-  `id(edge)` (same `GraphEdge` objects as the ones passed in `cycles`, never by
-  value comparison) and colored red (`strokeColor=#d32f2f`) — same signal as the
-  `[synchronous]` marker in text rendering.
+- no special highlighting is applied to a subset of edges.
 
 Any value derived from source code (service name, route/topic) is escaped via
 `xml.sax.saxutils.quoteattr` before interpolation into an XML attribute — never
 raw f-strings on untrusted content, so that a service name or path containing
 `<`/`&`/`"` can never produce a malformed document (BACKLOG-14 G1 AC3).
 
-`cccr graph --drawio FILE` (CLI, §2): computes `services_by_name`/
-`edges`/`cycles` exactly like `--json` does (same `--workspace`/module-grouping
-branching), writes the result of `render_graph_drawio` to `FILE`, displays a
+`cccr graph --drawio FILE` (CLI, §2): computes `services_by_name`/`edges`
+exactly like `--json` does (same `--workspace`/module-grouping branching),
+writes the result of `render_graph_drawio` to `FILE`, displays a
 short confirmation, then if `render_graph_json(...) ["note"]` is non-empty,
 displays it too — never a silent failure, a file with no node/edge still
 remains valid XML (AC2). No equivalent MCP tool (§3): a file is not a
@@ -791,8 +771,7 @@ reading shared between `workspace.py` and `scanner.py`:
   open `Store(service.index_root, readonly=True)`: either the module database,
   or the parent mono-indexed one. In the parent-database case, findings and
   endpoints are filtered on `endpoint.module`/`finding.module == service.name`.
-  `findings_by_service` is always populated (a shared module may carry findings
-  relevant for hotspots) ; `endpoints_by_service` only for
+  `findings_by_service` is always populated ; `endpoints_by_service` only for
   `kind="microservice"` (A2 AC5 — a shared module is never a source of
   endpoints). Non-indexed service, missing DB, or incompatible schema
   (`StoreError`) → message added to `warnings`, federation continues with the
@@ -804,9 +783,9 @@ reading shared between `workspace.py` and `scanner.py`:
   not match the current schema.
 
 `FederationResult.endpoints_by_service`/`.findings_by_service` are directly the
-multi-key dicts expected by `graph.build_graph`/`find_hotspots` (§6bis) —
-`workspace.py` knows nothing about the graph, `graph.py` knows nothing about
-Maven or SQLite: the coupling is only through the shape of the two dicts.
+multi-key dicts expected by `graph.build_graph` and `trace_flow` (§6bis/§6quater)
+— `workspace.py` knows nothing about the graph, `graph.py` knows nothing about
+Maven or SQLite: the coupling is only through dict shape.
 
 `tests/test_k7_federation_e2e.py` (BACKLOG-10 K7) chains the three layers on
 real fixtures: two Maven microservices indexed separately through the CLI
@@ -838,7 +817,7 @@ Pure functions, no SQLite write:
   -> FlowResult` — resolves `query` through `resolve_topic` (failure →
   `FlowError`), then for each endpoint whose `topic == resolved_topic` in any
   service builds a `FlowSite` (`service`, `endpoint`, overlapping `findings` —
-  same file+line join as `graph.find_hotspots`, spirit of ADR-19).
+  same file+line join as the rest of the project, spirit of ADR-19).
   `endpoints_by_service`/`findings_by_service` have the same shape as in
   `workspace.py` (§6ter) but with possible `None` keys (current-project mode,
   outside federation) — `flow.py` knows nothing about Maven, `workspace.py`

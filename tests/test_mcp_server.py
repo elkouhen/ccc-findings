@@ -192,7 +192,6 @@ def test_graph_tool_returns_outbound_calls_in_kafka_consumer_handlers(
     assert result["edges"] == []
     assert len(result["outbound_calls_in_consumers"]) == 1
     assert result["outbound_calls_in_consumers"][0]["call"]["topic"] == "POST /payments"
-    assert result["cycles"] == []
 
 
 def test_graph_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(
@@ -267,13 +266,10 @@ def test_list_workspace_services_tool_discovers_and_flags_unindexed(tmp_path: Pa
 
 
 @pytest.mark.integration
-def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
+def test_graph_tool_with_workspace_root_reports_a_real_cross_service_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-10 K12 : graph(workspace_root=...) rapporte un cycle réel
-    une fois fédéré, pas seulement les endpoints du projet courant (voir
-    aussi tests/test_k12_graph_workspace_e2e.py, côté CLI, pour le détail
-    des sites et des hotspots)."""
+    """Le graphe MCP fédéré remonte bien la topologie inter-services."""
     from ccc_radar.cli import app as cli_app
 
     rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
@@ -291,13 +287,11 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
 
     assert set(result["services"]) == {"service-x", "service-y", "service-z"}
     assert len(result["edges"]) == 3
-    assert len(result["cycles"]) == 1
-    assert set(result["cycles"][0]["services"][:-1]) == {
-        "service-x",
-        "service-y",
-        "service-z",
+    assert {edge["label"] for edge in result["edges"]} == {
+        "GET /x-status",
+        "GET /y-status",
+        "GET /z-status",
     }
-    assert len(result["hotspots"]) >= 1
     assert result["note"] == ""
 
 

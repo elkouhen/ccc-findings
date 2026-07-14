@@ -16,12 +16,8 @@ from ccc_radar.flow import (
 )
 from ccc_radar.graph import (
     build_graph,
-    find_cycles,
-    find_hotspots,
     find_outbound_calls_in_consumers,
     group_endpoints_by_module,
-    group_findings_by_module,
-    rank_hotspots,
 )
 from ccc_radar.indexer import IndexReport, index_repo
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
@@ -178,18 +174,16 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     visualiser la topologie distribuée ET localiser les endroits
     susceptibles de causer un verrouillage intermittent. Sans
     `workspace_root`, si l'index couvre un répertoire multi-modules Maven
-    (`cccr index` lancé au parent, BACKLOG-13), les endpoints/findings
-    attribués à un module sont automatiquement groupés pour rapporter de
-    vraies arêtes/cycles/hotspots inter-modules. Avec `workspace_root`,
-    fédère en plus les autres microservices indexés séparément (BACKLOG-11
-    A2, lecture seule) — sinon `services`/`nodes`/`edges`/`cycles`/`hotspots`
-    restent vides, voir `note`.
+    (`cccr index` lancé au parent, BACKLOG-13), les endpoints attribués à
+    un module sont automatiquement groupés pour rapporter de vraies arêtes
+    inter-modules. Avec `workspace_root`, fédère en plus les autres
+    microservices indexés séparément (BACKLOG-11 A2, lecture seule) —
+    sinon `services`/`nodes`/`edges` restent vides, voir `note`.
     """
     repo_root = _repo_root()
     _require_index(repo_root)
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
-        findings = store.all_findings()
         repo_warning = _current_repo_endpoint_warning(store)
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
@@ -203,15 +197,10 @@ def graph(workspace_root: str | None = None) -> GraphResult:
                 warnings=[repo_warning] if repo_warning else None,
             )
         edges = build_graph(grouped_endpoints)
-        cycles = find_cycles(edges)
-        grouped_findings = group_findings_by_module(findings)
-        hotspots = rank_hotspots(find_hotspots(cycles, grouped_findings))
         return render_graph_json(
             list(grouped_endpoints),
             edges,
             outbound_calls,
-            cycles=cycles,
-            hotspots=hotspots,
             warnings=[repo_warning] if repo_warning else None,
             cross_module_data_available=True,
         )
@@ -219,14 +208,10 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     services = discover_maven_services(Path(workspace_root))
     federation = load_federation(services)
     edges = build_graph(federation.endpoints_by_service)
-    cycles = find_cycles(edges)
-    hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
     return render_graph_json(
         list(federation.endpoints_by_service),
         edges,
         outbound_calls,
-        cycles=cycles,
-        hotspots=hotspots,
         warnings=([repo_warning] if repo_warning else []) + federation.warnings,
         cross_module_data_available=True,
     )

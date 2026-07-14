@@ -479,8 +479,6 @@ def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
     hit = data["outbound_calls_in_consumers"][0]
     assert hit["call"]["topic"] == "POST /payments"
     assert hit["consumer"]["topic"] == "orders.created"
-    assert data["cycles"] == []
-    assert data["hotspots"] == []
     assert "--workspace" in data["note"]
 
 

@@ -249,8 +249,6 @@ def main() -> int:
                 ("Edges", str(len(graph.get("edges", [])))),
                 ("HTTP flows", str(len(http_rows))),
                 ("Kafka flows", str(len(kafka_rows))),
-                ("Cycles", str(len(graph.get("cycles", [])))),
-                ("Hotspots", str(len(graph.get("hotspots", [])))),
                 ("Outbound calls in consumers", str(len(graph.get("outbound_calls_in_consumers", [])))),
                 ("Warnings", str(len(warnings))),
             ]
@@ -317,7 +315,6 @@ def main() -> int:
                 "edges": len(graph.get("edges", [])),
                 "http_flows": len(http_rows),
                 "kafka_flows": len(kafka_rows),
-                "cycles": len(graph.get("cycles", [])),
                 "warnings": len(warnings),
             }
         )
@@ -327,12 +324,12 @@ def main() -> int:
         "",
         "Generated pages for each directory in `~/examples`, with the `cccr` graph rendered from D2 to SVG, flow summaries, and basic Git repository metadata.",
         "",
-        "| Repository | Branch | Commit | Services | Edges | HTTP flows | Kafka flows | Cycles | Warnings | Page |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---|",
+        "| Repository | Branch | Commit | Services | Edges | HTTP flows | Kafka flows | Warnings | Page |",
+        "|---|---|---|---:|---:|---:|---:|---:|---|",
     ]
     for item in results:
         index_lines.append(
-            f"| {item['name']} | {item['branch']} | `{item['commit']}` | {item['services']} | {item['edges']} | {item['http_flows']} | {item['kafka_flows']} | {item['cycles']} | {item['warnings']} | [{item['page']}]({item['page']}) |"
+            f"| {item['name']} | {item['branch']} | `{item['commit']}` | {item['services']} | {item['edges']} | {item['http_flows']} | {item['kafka_flows']} | {item['warnings']} | [{item['page']}]({item['page']}) |"
         )
 
     (REPORTS / "README.md").write_text("\n".join(index_lines) + "\n", encoding="utf-8")

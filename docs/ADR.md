@@ -713,17 +713,17 @@ extraction.
 
 **Status**: Accepted.
 
-**Context**: BACKLOG-10 K12 must detect inter-service call cycles and hotspots
-(site on a cycle + K8 liveness finding) from indexed endpoints (K1/K11). One
-option would have been to materialize the graph (edges, cycles) in dedicated
+**Context**: BACKLOG-10 K12 must expose inter-service topology from indexed
+endpoints (K1/K11). One option would have been to materialize the graph
+(edges) in dedicated
 SQLite tables, recomputed on each `cccr index` — consistent with the rest of
 the store (findings, code_chunks, endpoints).
 
 **Decision**: `src/ccc_radar/graph.py` does not touch the SQLite schema.
-`build_graph`/`find_cycles`/`find_outbound_calls_in_consumers`/
-`find_hotspots` are pure functions taking in-memory `MessageEndpoint`/
-`Finding` objects (read from the store by the caller) and returning in-memory
-structures (`GraphEdge`, `Cycle`, `Hotspot`) — never written to the database.
+`build_graph`/`find_outbound_calls_in_consumers` are pure functions taking
+in-memory `MessageEndpoint` objects (read from the store by the caller) and
+returning in-memory structures (`GraphEdge`, `OutboundCallInConsumer`) —
+never written to the database.
 Reasons:
 1. The graph depends on **multiple projects** as soon as K7 (multi-repo
    federation) comes into play — it has no natural “owner” among the SQLite
@@ -735,12 +735,9 @@ Reasons:
    join at query time”, already applied to `search_code_with_findings`
    (ADR-19) and to `cccr flow`/K10.
 
-**Consequences**: today `cccr graph` (CLI/MCP) can only report
-`find_outbound_calls_in_consumers` (K1/K11 are enough, one repo) ; the
-`cycles`/`hotspots` fields of its output stay empty until K7 feeds
-`build_graph`/`find_hotspots` with endpoints/findings from multiple projects —
-the limitation is explicit in output (`note`), not hidden. `tests/test_graph.py`
-verifies that no `*graph*`/`*cycle*` table exists in the schema (AC5).
+**Consequences**: `cccr graph` (CLI/MCP) keeps exposing a derived view built
+at query time rather than persisted state. `tests/test_graph.py` verifies that
+no `*graph*`/`*cycle*` table exists in the schema (AC5).
 
 ## ADR-28 — A Kafka topic given as a Spring property is resolved locally against `application.yml`/`.properties`, never guessed
 
@@ -847,8 +844,7 @@ unrelated standalone repos.
    federation of other services — never a global failure because of one bad
    module.
 4. **Shared modules vs microservices** (A2 AC5): `load_federation` includes
-   findings from a `shared-module` (an internal library carries code, therefore
-   potentially findings relevant to hotspots), but never its endpoints — a
+   findings from a `shared-module`, but never its endpoints — a
    shared module is not a runtime producer/consumer, even if a scan mistakenly
    detected an endpoint-inventory there.
 
@@ -856,7 +852,7 @@ unrelated standalone repos.
 third-party Maven parser (only `xml.etree.ElementTree`, stdlib). CLI
 `cccr microservices [root]` and MCP tool `list_workspace_services` expose
 service discovery + endpoint/finding counts, ahead of K12 which consumes
-`load_federation` to build the real graph and hotspots.
+`load_federation` to build the real graph.
 `tests/test_workspace.py` freezes the contract: names/classification, indexing
 detection, warning on non-indexed service or incompatible database, no endpoint
 leak from a shared module, and effective non-write behavior of a read-only
@@ -908,7 +904,7 @@ blind to inter-module relationships until each module has its own database and
 `--workspace` is provided.
 
 **Decision**: indexing the parent directory once must be enough to detect
-inter-module cycles/hotspots, without going through federation.
+inter-module topology, without going through federation.
 `Finding`/`MessageEndpoint` gain two optional fields (schema v4→v5, purely
 additive):
 - `module: str | None` — name of the nearest Maven module (artifactId of the
@@ -920,14 +916,13 @@ additive):
   (`scanner._java_qualified_name`, regex on `package ...;` + file name, never
   AST), `None` for non-Java files.
 
-`graph.group_endpoints_by_module`/`group_findings_by_module` turn a flat list
-into the same dict shape (`dict[str, list[...]]`) that
-`workspace.load_federation` already produces — `build_graph`/`find_cycles`/
-`find_hotspots` need **no** change, they consume equally well a dict coming from
-federation or from module grouping. An endpoint/finding without a module is
+`graph.group_endpoints_by_module` turns a flat list into the same dict shape
+(`dict[str, list[...]]`) that `workspace.load_federation` already produces —
+`build_graph` needs **no** change, it consumes equally well a dict coming from
+federation or from module grouping. An endpoint without a module is
 excluded from that grouping (never a false edge between two unattributed sites
 that would arbitrarily land in the same bucket) — deliberately conservative
-choice: fewer detected cycles rather than an invented one. `cccr flow` needs a
+choice: fewer detected edges rather than an invented one. `cccr flow` needs a
 different grouping (`flow.group_endpoints_by_module_for_flow` /
 `group_findings_by_module_for_flow`) : unlike the graph, listing all sites of a
 topic is the contract, so a site without a module stays present under key
@@ -944,8 +939,8 @@ when provided.
 **Consequences**: `src/ccc_radar/maven.py` (new) factors out shared `pom.xml`
 reading (`parse_pom`) between `workspace.py` (federation) and `scanner.py`
 (module attribution) — no more `_parse_pom` duplication. `render_graph_json` /
-`GraphResult.note` now reflect “no inter-module data available” rather than “no
-`--workspace`”: the message stays correct even when missing cycles/hotspots come
+`GraphResult.note` now reflects “no inter-module data available” rather than
+“no `--workspace`”: the message stays correct even when missing topology comes
 from a non-Maven repo, not only from the absence of the flag.
 `cccr endpoints --module` / `EndpointHit.module` expose the new field for
 direct inspection. Tested end-to-end in `tests/test_m3_module_graph_e2e.py`:

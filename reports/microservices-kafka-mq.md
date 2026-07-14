@@ -14,7 +14,7 @@
 | Tracked files | 65 |
 | pom.xml files | 3 |
 | cccr init state | already initialized |
-| Report generated | 2026-07-14 13:06:45Z |
+| Report generated | 2026-07-14 13:17:09Z |
 
 ## cccr graph
 
@@ -25,8 +25,6 @@
 | Edges | 2 |
 | HTTP flows | 0 |
 | Kafka flows | 1 |
-| Cycles | 0 |
-| Hotspots | 0 |
 | Outbound calls in consumers | 0 |
 | Warnings | 0 |
 

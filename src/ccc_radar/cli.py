@@ -20,12 +20,8 @@ from ccc_radar.flow import (
 from ccc_radar.graph import (
     GraphEdge,
     build_graph,
-    find_cycles,
-    find_hotspots,
     find_outbound_calls_in_consumers,
     group_endpoints_by_module,
-    group_findings_by_module,
-    rank_hotspots,
 )
 from ccc_radar.indexer import index_repo
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
@@ -356,7 +352,7 @@ def graph_cmd(
         None,
         "--workspace",
         help="Répertoire parent Maven à fédérer (BACKLOG-11 A2) pour les "
-        "arêtes, cycles et hotspots inter-services.",
+        "arêtes inter-services.",
     ),
     json_output: bool = typer.Option(False, "--json"),
     drawio: Optional[Path] = typer.Option(  # noqa: UP007
@@ -385,9 +381,9 @@ def graph_cmd(
     courant. Sans `--workspace`, si l'index couvre un répertoire
     multi-modules Maven (`cccr index` lancé au parent, BACKLOG-13), les
     endpoints/findings attribués à un module sont automatiquement groupés
-    pour rapporter de vraies arêtes/cycles/hotspots inter-modules — pas
-    besoin de fédération pour un monorepo. Avec `--workspace <root>`,
-    fédère en plus les autres microservices indexés séparément
+    pour rapporter de vraies arêtes inter-modules — pas besoin de
+    fédération pour un monorepo. Avec `--workspace <root>`, fédère en plus
+    les autres microservices indexés séparément
     (BACKLOG-11 A2, lecture seule).
     """
     repo_root = Path.cwd()
@@ -398,15 +394,12 @@ def graph_cmd(
 
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
-        findings = store.all_findings()
         repo_warning = _current_repo_endpoint_warning(store)
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
     services_by_name: dict[str, list[MessageEndpoint]] = {}
     edges: list[GraphEdge] = []
-    cycles = []
-    hotspots = []
     warnings: list[str] = [repo_warning] if repo_warning else []
     cross_module_data_available = False
     if workspace is not None:
@@ -415,32 +408,25 @@ def graph_cmd(
         warnings.extend(federation.warnings)
         services_by_name = federation.endpoints_by_service
         edges = build_graph(services_by_name)
-        cycles = find_cycles(edges)
-        hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
         cross_module_data_available = True
     else:
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if grouped_endpoints:
             services_by_name = grouped_endpoints
             edges = build_graph(grouped_endpoints)
-            cycles = find_cycles(edges)
-            grouped_findings = group_findings_by_module(findings)
-            hotspots = rank_hotspots(find_hotspots(cycles, grouped_findings))
             cross_module_data_available = True
 
     result = render_graph_json(
         list(services_by_name),
         edges,
         outbound_calls,
-        cycles=cycles,
-        hotspots=hotspots,
         warnings=warnings,
         cross_module_data_available=cross_module_data_available,
     )
 
     if drawio is not None:
         drawio.write_text(
-            render_graph_drawio(services_by_name, edges, cycles), encoding="utf-8"
+            render_graph_drawio(services_by_name, edges), encoding="utf-8"
         )
         typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
@@ -449,7 +435,7 @@ def graph_cmd(
 
     if d2 is not None:
         try:
-            write_graph_d2(d2, render_graph_d2(services_by_name, edges, cycles), layout=d2_layout)
+            write_graph_d2(d2, render_graph_d2(services_by_name, edges), layout=d2_layout)
         except RuntimeError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=2) from exc

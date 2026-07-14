@@ -1,11 +1,5 @@
-"""BACKLOG-13 M3 — `cccr graph`/`cccr flow` sans `--workspace` détectent de
-vrais cycles/hotspots (ou attribuent un site à son module) à partir d'un
-**seul** index couvrant un répertoire parent multi-modules Maven — pas de
-fédération multi-dépôts (A2/K7) nécessaire. Réutilise la fixture
-`rest_cycle_workspace` (déjà utilisée par test_k12_graph_workspace_e2e.py
-pour prouver l'équivalent en mode fédéré), mais indexée une seule fois à la
-racine plutôt que service par service.
-"""
+"""`cccr graph`/`cccr flow` sans `--workspace` sur un index parent Maven
+multi-modules : attribution correcte des services/modules et topologie réelle."""
 
 import json
 import shutil
@@ -37,7 +31,7 @@ def single_index_cycle_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.integration
-def test_graph_without_workspace_reports_cross_module_cycle_from_a_single_parent_index(
+def test_graph_without_workspace_reports_cross_module_topology_from_single_parent_index(
     single_index_cycle_parent: Path,
 ) -> None:
     result = runner.invoke(app, ["graph", "--json"])
@@ -46,11 +40,11 @@ def test_graph_without_workspace_reports_cross_module_cycle_from_a_single_parent
     data = json.loads(result.output)
     assert set(data["services"]) == {"service-x", "service-y", "service-z"}
     assert len(data["edges"]) == 3
-    assert len(data["cycles"]) == 1
-    cycle = data["cycles"][0]
-    assert set(cycle["services"][:-1]) == {"service-x", "service-y", "service-z"}
-    assert cycle["has_synchronous_rest"] is True
-    assert len(data["hotspots"]) >= 1
+    assert {edge["label"] for edge in data["edges"]} == {
+        "GET /x-status",
+        "GET /y-status",
+        "GET /z-status",
+    }
     assert data["note"] == ""
 
 
@@ -58,8 +52,6 @@ def test_graph_without_workspace_reports_cross_module_cycle_from_a_single_parent
 def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Non-régression : un repo sans layout Maven multi-modules continue de
-    renvoyer la note explicite (cycles/hotspots vides), même après M1/M2/M3."""
     from ccc_radar.store import Store
 
     monkeypatch.chdir(tmp_path)
@@ -72,8 +64,6 @@ def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
     data = json.loads(result.output)
     assert data["services"] == []
     assert data["edges"] == []
-    assert data["cycles"] == []
-    assert data["hotspots"] == []
     assert "--workspace" in data["note"]
 
 
@@ -91,7 +81,7 @@ def single_index_kafka_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.integration
-def test_flow_without_workspace_attributes_sites_to_their_module_from_a_single_parent_index(
+def test_flow_without_workspace_attributes_sites_to_their_module_from_single_parent_index(
     single_index_kafka_parent: Path,
 ) -> None:
     result = runner.invoke(app, ["flow", "orders.created", "--json"])

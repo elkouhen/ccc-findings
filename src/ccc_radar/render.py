@@ -6,7 +6,7 @@ from xml.sax.saxutils import quoteattr
 
 from ccc_radar.ccc_bridge import CodeHitWithFindings
 from ccc_radar.flow import FlowResult
-from ccc_radar.graph import Cycle, GraphEdge, Hotspot, OutboundCallInConsumer
+from ccc_radar.graph import GraphEdge, OutboundCallInConsumer
 from ccc_radar.models import MessageEndpoint
 from ccc_radar.search import SearchHit, Summary, get_context
 from ccc_radar.workspace import DiscoveredService, FederationResult
@@ -182,14 +182,6 @@ class OutboundCallHit(TypedDict):
     call: GraphSite
 
 
-class CycleEdgeInfo(TypedDict):
-    kind: str  # "rest" | "kafka"
-    from_service: str
-    to_service: str
-    from_site: GraphSite
-    to_site: GraphSite
-
-
 class GraphEdgeInfo(TypedDict):
     kind: str  # "rest" | "kafka_produce" | "kafka_consume"
     from_node: str
@@ -201,44 +193,29 @@ class GraphEdgeInfo(TypedDict):
     to_site: GraphSite | None
 
 
-class CycleInfo(TypedDict):
-    services: list[str]
-    edges: list[CycleEdgeInfo]
-    has_synchronous_rest: bool
-
-
-class HotspotInfo(TypedDict):
-    service: str
-    site: GraphSite
-    finding_rule_id: str
-    finding_severity: str
-
-
 class GraphResult(TypedDict):
     """Shape returned by `cccr graph --json` et le tool MCP `graph`.
 
-    `services`/`nodes`/`edges`/`cycles`/`hotspots` restent vides tant qu'aucune
-    donnée inter-module n'est disponible : ni fédération explicite
-    (`--workspace`/`workspace_root`, BACKLOG-11 A2), ni endpoints/findings
-    attribués à un module Maven par l'indexation d'un répertoire parent
-    multi-modules (BACKLOG-13 M1/M2/M3) — voir `note`.
+    `services`/`nodes`/`edges` restent vides tant qu'aucune donnée
+    inter-module n'est disponible : ni fédération explicite
+    (`--workspace`/`workspace_root`, BACKLOG-11 A2), ni endpoints attribués à
+    un module Maven par l'indexation d'un répertoire parent multi-modules
+    (BACKLOG-13 M1/M2/M3) — voir `note`.
     """
 
     services: list[str]
     nodes: list[GraphNodeInfo]
     edges: list[GraphEdgeInfo]
     outbound_calls_in_consumers: list[OutboundCallHit]
-    cycles: list[CycleInfo]
-    hotspots: list[HotspotInfo]
     note: str
 
 
 _NO_CROSS_MODULE_DATA_NOTE = (
-    "Cycles et hotspots inter-services nécessitent soit un répertoire multi-services "
-    "fédéré (--workspace/workspace_root, BACKLOG-11 A2), soit des endpoints/findings "
+    "La topologie inter-services nécessite soit un répertoire multi-services "
+    "fédéré (--workspace/workspace_root, BACKLOG-11 A2), soit des endpoints "
     "attribués à un module Maven par une indexation multi-modules (BACKLOG-13) — "
-    "seuls les appels REST détectés dans un handler Kafka de ce projet sont remontés "
-    "pour l'instant."
+    "seuls les appels REST détectés dans un handler Kafka de ce projet sont "
+    "remontés pour l'instant."
 )
 
 
@@ -248,23 +225,6 @@ def _endpoint_to_site(endpoint: MessageEndpoint) -> GraphSite:
         start_line=endpoint.start_line,
         end_line=endpoint.end_line,
         topic=endpoint.topic,
-    )
-
-
-def _cycle_to_info(cycle: Cycle) -> CycleInfo:
-    return CycleInfo(
-        services=list(cycle.services),
-        edges=[
-            CycleEdgeInfo(
-                kind=edge.kind,
-                from_service=edge.from_service,
-                to_service=edge.to_service,
-                from_site=_endpoint_to_site(edge.from_endpoint),
-                to_site=_endpoint_to_site(edge.to_endpoint),
-            )
-            for edge in cycle.edges
-        ],
-        has_synchronous_rest=cycle.has_synchronous_rest,
     )
 
 
@@ -321,26 +281,13 @@ def _graph_edges(edges: list[GraphEdge]) -> list[GraphEdgeInfo]:
     return rendered_edges
 
 
-def _hotspot_to_info(hotspot: Hotspot) -> HotspotInfo:
-    return HotspotInfo(
-        service=hotspot.service,
-        site=_endpoint_to_site(hotspot.endpoint),
-        finding_rule_id=hotspot.finding.rule_id,
-        finding_severity=hotspot.finding.severity,
-    )
-
-
 def render_graph_json(
     services: list[str],
     edges: list[GraphEdge],
     outbound_calls: list[OutboundCallInConsumer],
-    cycles: list[Cycle] | None = None,
-    hotspots: list[Hotspot] | None = None,
     warnings: list[str] | None = None,
     cross_module_data_available: bool = False,
 ) -> GraphResult:
-    cycles = cycles or []
-    hotspots = hotspots or []
     warning_note = " ".join(f"⚠ {w}" for w in (warnings or []))
     if cross_module_data_available:
         note = warning_note
@@ -358,8 +305,6 @@ def render_graph_json(
             )
             for hit in outbound_calls
         ],
-        cycles=[_cycle_to_info(c) for c in cycles],
-        hotspots=[_hotspot_to_info(h) for h in hotspots],
         note=note,
     )
 
@@ -413,53 +358,23 @@ def render_graph_text(result: GraphResult) -> str:
     else:
         lines.append("Aucun appel REST détecté dans un handler Kafka.")
 
-    cycles = result["cycles"]
-    if cycles:
-        lines.append(f"Cycles inter-services ({len(cycles)}) :")
-        for cycle in cycles:
-            chain = " -> ".join(cycle["services"])
-            sync_marker = " [synchrone]" if cycle["has_synchronous_rest"] else ""
-            lines.append(f"  {chain}{sync_marker}")
-            for edge in cycle["edges"]:
-                lines.append(
-                    f"    [{edge['kind']}] {edge['from_service']} "
-                    f"({edge['from_site']['path']}:{edge['from_site']['start_line']}) -> "
-                    f"{edge['to_service']} "
-                    f"({edge['to_site']['path']}:{edge['to_site']['start_line']})"
-                )
-
-    hotspots = result["hotspots"]
-    if hotspots:
-        lines.append(f"Hotspots ({len(hotspots)}, classés par sévérité) :")
-        for hotspot in hotspots:
-            site = hotspot["site"]
-            lines.append(
-                f"  [{hotspot['finding_severity']}] {hotspot['service']} "
-                f"{site['path']}:{site['start_line']} — {hotspot['finding_rule_id']}"
-            )
-
     if result["note"]:
         lines.append(result["note"])
     return "\n".join(lines)
 
 
 def render_graph_drawio(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge], cycles: list[Cycle]
+    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
 ) -> str:
     """Rend le graphe d'interactions en XML mxGraph (format natif
     diagrams.net/drawio) : un nœud par microservice, plus un nœud par topic
     Kafka inter-service. Les arêtes REST vont de l'appelant vers l'appelé ;
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
-    portent des couleurs distinctes. Les arêtes d'un cycle
-    `has_synchronous_rest=True` sont mises en évidence en rouge (même signal
-    que le cycle « synchrone » du rendu JSON/texte). Layout initial en grille
-    — diagrams.net réorganise à la demande, ce n'est pas un rendu figé. Toute
-    valeur dérivée du code source (nom de service, route, topic) est échappée
-    XML via `quoteattr` — jamais interpolée brute."""
-    synchronous_edge_ids = {
-        id(edge) for cycle in cycles if cycle.has_synchronous_rest for edge in cycle.edges
-    }
+    portent des couleurs distinctes. Layout initial en grille — diagrams.net
+    réorganise à la demande, ce n'est pas un rendu figé. Toute valeur dérivée
+    du code source (nom de service, route, topic) est échappée XML via
+    `quoteattr` — jamais interpolée brute."""
     node_width = 220
     node_height = 60
 
@@ -509,20 +424,14 @@ def render_graph_drawio(
         )
 
     visual_edge_index = 0
-    for source_name, target_name, label, kind, highlighted in _visual_graph_edges(
-        edges, synchronous_edge_ids
-    ):
+    for source_name, target_name, label, kind, _highlighted in _visual_graph_edges(edges):
         source_id = node_ids.get(source_name)
         target_id = node_ids.get(target_name)
         if source_id is None or target_id is None:
             continue
         style = "edgeStyle=orthogonalEdgeStyle;html=1;"
         style += "dashed=1;" if kind == "kafka" else ""
-        style += (
-            "strokeColor=#d32f2f;fontColor=#d32f2f;"
-            if highlighted
-            else "strokeColor=#666666;"
-        )
+        style += "strokeColor=#666666;"
         cells.append(
             f'<mxCell id="edge-{visual_edge_index}" value={quoteattr(label)} style={quoteattr(style)} '
             f'edge="1" parent="1" source="{source_id}" target="{target_id}">'
@@ -571,17 +480,14 @@ def _d2_markdown_block(lines: list[str], indent: str = "  ") -> list[str]:
     )
 
 
-def _visual_graph_edges(
-    edges: list[GraphEdge], synchronous_edge_ids: set[int]
-) -> list[tuple[str, str, str, str, bool]]:
+def _visual_graph_edges(edges: list[GraphEdge]) -> list[tuple[str, str, str, str, bool]]:
     """Projette les `GraphEdge` vers les arêtes réellement dessinées, en
     supprimant les doublons ayant la même source, destination et label.
 
     Retourne `(source, target, label, kind, highlighted)` où `kind` vaut
-    `"rest"` ou `"kafka"`. Si plusieurs arêtes physiques se projettent vers la
-    même arête visuelle, `highlighted` est conservé dès qu'au moins une de ces
-    arêtes appartient à un cycle synchrone."""
-    projected: dict[tuple[str, str, str], tuple[str, bool]] = {}
+    `"rest"` ou `"kafka"`. `highlighted` reste toujours `False` et n'est
+    conservé que pour éviter de changer la forme du tuple retourné."""
+    projected: dict[tuple[str, str, str], str] = {}
     order: list[tuple[str, str, str]] = []
     for edge in edges:
         visual_edges: list[tuple[str, str, str]] = []
@@ -594,31 +500,23 @@ def _visual_graph_edges(
 
         for source_name, target_name, label in visual_edges:
             key = (source_name, target_name, label)
-            highlighted = id(edge) in synchronous_edge_ids
             if key not in projected:
-                projected[key] = (edge.kind, highlighted)
+                projected[key] = edge.kind
                 order.append(key)
-                continue
-            kind, existing_highlighted = projected[key]
-            projected[key] = (kind, existing_highlighted or highlighted)
 
     return [
-        (source_name, target_name, label, *projected[(source_name, target_name, label)])
+        (source_name, target_name, label, projected[(source_name, target_name, label)], False)
         for source_name, target_name, label in order
     ]
 
 
 def render_graph_d2(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge], cycles: list[Cycle]
+    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
 ) -> str:
     """Rend le graphe en source D2 pour bénéficier du moteur d'agencement
     natif de D2. Les nœuds restent microservices + topics Kafka, les arêtes
     REST vont de l'appelant vers l'appelé et les arêtes Kafka sont dépliées
-    en production puis consommation. Les cycles synchrones sont marqués en
-    rouge, Kafka en pointillé."""
-    synchronous_edge_ids = {
-        id(edge) for cycle in cycles if cycle.has_synchronous_rest for edge in cycle.edges
-    }
+    en production puis consommation. Kafka reste en pointillé."""
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
     service_ids = {name: f"svc_{i}" for i, name in enumerate(ordered_services)}
@@ -663,9 +561,7 @@ def render_graph_d2(
             ]
         )
 
-    for source_name, target_name, label, kind, highlighted in _visual_graph_edges(
-        edges, synchronous_edge_ids
-    ):
+    for source_name, target_name, label, kind, _highlighted in _visual_graph_edges(edges):
         source_id = service_ids.get(source_name, topic_ids.get(source_name))
         target_id = service_ids.get(target_name, topic_ids.get(target_name))
         if source_id is None or target_id is None:
@@ -673,8 +569,6 @@ def render_graph_d2(
         lines.append(f'{source_id} -> {target_id}: "{_d2_escape(label)}" {{')
         if kind == "kafka":
             lines.append("  style.stroke-dash: 3")
-        if highlighted:
-            lines.append('  style.stroke: "#d32f2f"')
         lines.append("}")
         lines.append("")
 

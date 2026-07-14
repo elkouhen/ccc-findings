@@ -3,7 +3,7 @@ endpoints indexés (BACKLOG-10 K5). Résout une requête (nom de topic/route
 exact, sinon correspondance approximative sur le texte du topic) vers tous
 ses sites — producteurs/consommateurs Kafka, ou serveurs/appelants REST —
 avec les findings Semgrep qui recouvrent chaque site (même jointure
-fichier + lignes que `graph.find_hotspots`, esprit ADR-19).
+fichier + lignes que le reste du projet, esprit ADR-19).
 
 Résolution textuelle d'abord (égalité exacte, puis sous-chaîne insensible
 à la casse si le résultat est non ambigu) ; `resolve_topic_by_similarity`

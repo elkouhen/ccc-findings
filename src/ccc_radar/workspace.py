@@ -83,9 +83,8 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
     découverts. Un service non indexé, dont la base est introuvable ou
     incompatible, génère un avertissement (`warnings`) plutôt que de faire
     échouer la fédération entière (K7 CA2). Les modules partagés
-    (`shared-module`) contribuent leurs findings (pour les hotspots) mais
-    pas leurs endpoints : ce ne sont pas des producteurs/consommateurs
-    runtime (A2 CA5)."""
+    (`shared-module`) contribuent leurs findings, mais pas leurs endpoints :
+    ce ne sont pas des producteurs/consommateurs runtime (A2 CA5)."""
     endpoints_by_service: dict[str, list[MessageEndpoint]] = {}
     findings_by_service: dict[str, list[Finding]] = {}
     warnings: list[str] = []

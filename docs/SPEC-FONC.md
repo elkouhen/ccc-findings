@@ -300,61 +300,53 @@ lives in the same database as `findings`.
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
-HTTP endpoints (`call` -> `serve`) and Kafka topics (`produce` -> `consume`),
-plus likely blocking points derived from that graph. Always
+HTTP endpoints (`call` -> `serve`) and Kafka topics (`produce` -> `consume`).
+Always
 included: synchronous REST calls detected inside a Kafka consumer handler
 **of the current project** (same file, call site inside the handler's line
 range).
 
-For inter-service cycles/hotspots, two sources are possible, tried in this
-order:
+For the inter-service topology, two sources are possible, tried in this order:
 1. **Without `--workspace`**: if the index covers a multi-module Maven
-   directory (`cccr index` run at the parent directory, with endpoints/findings
-   assigned to a module during indexing), endpoints/findings are
-   grouped by module and the graph is built directly from that single index —
-   no federation needed for a monorepo.
+  directory (`cccr index` run at the parent directory, with endpoints
+  assigned to a module during indexing), endpoints are grouped by module and
+  the graph is built directly from that single index —
+  no federation needed for a monorepo.
 2. **With `--workspace ROOT`**: also federates Maven microservices under `ROOT`,
-   indexed **separately** (read-only —
-   `discover_maven_services`/`load_federation`) — the path for services that
-   live in genuinely separate repos.
+  indexed **separately** (read-only —
+  `discover_maven_services`/`load_federation`) — the path for services that
+  live in genuinely separate repos.
 
 Both sources feed the same algorithm (`graph.build_graph`) and report:
 - **services**: service/module names participating in the inter-service graph;
+- **nodes**: microservices plus Kafka topic nodes used in the rendered topology;
 - **edges**: REST and Kafka edges with both sites (`from_site` / `to_site`)
   and their topic/route labels;
-- **cycles**: simple cycles containing at least one synchronous REST edge
-  (a `WebClient` edge, non-blocking by nature, does not count — K11), with the
-  sites (file:lines) of each edge;
-- **hotspots**: sites on a cycle overlapped by a finding (file+lines
-  overlapping, same module/service), ranked by descending severity.
+- **outbound_calls_in_consumers**: synchronous REST calls detected inside a
+  Kafka consumer handler of the current project.
 
 If neither is available (non-Maven repo without `--workspace`, or no Maven
-module detected), `cycles`/`hotspots` remain empty, with a `note` explicitly
-saying so (see ADR-27) rather than making the absence of a result ambiguous.
+module detected), `services`/`nodes`/`edges` remain empty, with a `note`
+explicitly saying so (see ADR-27) rather than making the absence of a result
+ambiguous.
 
 `--json` rendering:
 ```json
 {
   "services": ["service-x", "service-y", "service-z"],
+  "nodes": [
+    {"name": "service-x", "kind": "microservice"},
+    {"name": "service-y", "kind": "microservice"},
+    {"name": "service-z", "kind": "microservice"}
+  ],
   "edges": [
-    {"kind": "rest", "from_service": "service-x", "to_service": "service-y",
+    {"kind": "rest", "from_node": "service-x", "to_node": "service-y",
      "from_site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
      "to_site": {"path": "...", "start_line": 9, "end_line": 11, "topic": "GET /y-status"}}
   ],
   "outbound_calls_in_consumers": [
     {"consumer": {"path": "...", "start_line": 15, "end_line": 25, "topic": "orders.created"},
      "call": {"path": "...", "start_line": 20, "end_line": 20, "topic": "POST /payments"}}
-  ],
-  "cycles": [
-    {"services": ["service-x", "service-y", "service-z", "service-x"],
-     "has_synchronous_rest": true,
-     "edges": [{"kind": "rest", "from_service": "service-x", "to_service": "service-y",
-                "from_site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
-                "to_site": {"path": "...", "start_line": 9, "end_line": 11, "topic": "GET /y-status"}}]}
-  ],
-  "hotspots": [
-    {"service": "service-x", "site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
-     "finding_rule_id": "rules.cccr.liveness.java.new-resttemplate-no-timeout", "finding_severity": "WARNING"}
   ],
   "note": ""
 }
@@ -363,8 +355,8 @@ saying so (see ADR-27) rather than making the absence of a result ambiguous.
 `--workspace`) produced a result without warning; otherwise it concatenates the
 applicable warnings, whether they come from federation (`service` not indexed,
 incompatible database) or from a stale endpoint inventory on the current
-project. Without inter-module data, `services` and `edges` stay empty just like
-`cycles`/`hotspots`.
+project. Without inter-module data, `services`, `nodes`, and `edges` stay
+empty.
 
 Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `endpoints` lives in the same database as `findings` (`.cccr/findings.db`).
@@ -511,7 +503,7 @@ the **Java/Spring microservices extension**.
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
-| `graph(workspace_root=None)` | `GraphResult` | Likely blocking points — equivalent to CLI `cccr graph`/`cccr graph --workspace` | `cycles`/`hotspots` empty without `workspace_root` (ADR-27); real otherwise |
+| `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
 | `list_workspace_services(root)` | `WorkspaceResult` | Maven module discovery + endpoint/finding counts per service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` |
 

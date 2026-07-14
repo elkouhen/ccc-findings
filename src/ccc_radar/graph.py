@@ -1,13 +1,9 @@
-"""Graphe d'interactions entre services et détection de points de blocage
-(BACKLOG-10 K12). Tout est dérivé à la requête à partir d'endpoints déjà
-indexés (K1) — aucune table de graphe en base (ADR-27).
-"""
+"""Graphe d'interactions entre services dérivé à la requête à partir
+d'endpoints déjà indexés — aucune table de graphe en base (ADR-27)."""
 
 from dataclasses import dataclass
 
-from ccc_radar.models import Finding, MessageEndpoint
-
-_SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "ERROR": 2}
+from ccc_radar.models import MessageEndpoint
 
 
 @dataclass(frozen=True)
@@ -20,53 +16,28 @@ class GraphEdge:
 
 
 @dataclass(frozen=True)
-class Cycle:
-    services: tuple[str, ...]  # ordre du parcours, dernier == premier
-    edges: tuple[GraphEdge, ...]
-    has_synchronous_rest: bool
-
-
-@dataclass(frozen=True)
 class OutboundCallInConsumer:
     consumer: MessageEndpoint
     call: MessageEndpoint
 
 
-@dataclass(frozen=True)
-class Hotspot:
-    service: str
-    endpoint: MessageEndpoint
-    cycle: Cycle
-    finding: Finding
-
-
 def group_endpoints_by_module(
     endpoints: list[MessageEndpoint],
 ) -> dict[str, list[MessageEndpoint]]:
-    """Regroupe des endpoints par module Maven (`endpoint.module`,
-    BACKLOG-13 M1) — même forme de dict que `workspace.load_federation`
-    produit, consommable telle quelle par `build_graph`/`find_hotspots`.
-    Permet de détecter des cycles/hotspots inter-modules à partir d'un seul
-    index (répertoire parent scanné en une fois), sans fédération
-    multi-dépôts (A2/K7). Un endpoint sans module (`None` — repo non-Maven,
-    ou fichier hors arborescence Maven) est ignoré : sans nom stable, il ne
-    peut jamais former une arête inter-service fiable."""
+    """Regroupe des endpoints par module Maven (`endpoint.module`).
+
+    La forme du dictionnaire est la même que celle produite par
+    `workspace.load_federation`, et peut donc alimenter directement
+    `build_graph`. Un endpoint sans module (`None` — repo non-Maven, ou fichier
+    hors arborescence Maven) est ignoré : sans nom stable, il ne peut jamais
+    former une arête inter-service fiable.
+    """
+
     grouped: dict[str, list[MessageEndpoint]] = {}
     for endpoint in endpoints:
         if endpoint.module is None:
             continue
         grouped.setdefault(endpoint.module, []).append(endpoint)
-    return grouped
-
-
-def group_findings_by_module(findings: list[Finding]) -> dict[str, list[Finding]]:
-    """Même principe que `group_endpoints_by_module`, pour les findings
-    utilisés par `find_hotspots`."""
-    grouped: dict[str, list[Finding]] = {}
-    for finding in findings:
-        if finding.module is None:
-            continue
-        grouped.setdefault(finding.module, []).append(finding)
     return grouped
 
 
@@ -87,9 +58,9 @@ def _segment_matches(call_segment: str, serve_segment: str) -> bool:
 def paths_match(call_topic: str, serve_topic: str) -> bool:
     """Best-effort : même méthode HTTP, et les segments de chemin du call
     (littéral ↔ template `{param}`) préfixent ou couvrent ceux de la route
-    exposée. Un call sans aucun littéral exploitable (`<dynamic>`) ne
-    matche jamais — mieux vaut une arête absente qu'une fausse arête
-    (BACKLOG-10 K12 CA4)."""
+    exposée. Un call sans aucun littéral exploitable (`<dynamic>`) ne matche
+    jamais — mieux vaut une arête absente qu'une fausse arête."""
+
     call_method, _, call_path = call_topic.partition(" ")
     serve_method, _, serve_path = serve_topic.partition(" ")
     if call_method != serve_method or call_path == "<dynamic>":
@@ -110,6 +81,7 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     Kafka (produce -> consume, même topic) entre services distincts. Pas
     d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
     graphe inter-services."""
+
     all_endpoints = [
         (service, endpoint)
         for service, endpoints in endpoints_by_service.items()
@@ -147,62 +119,14 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     return edges
 
 
-def find_cycles(edges: list[GraphEdge]) -> list[Cycle]:
-    """Cycles simples (chaque service visité au plus une fois) sur le
-    graphe services -> services induit par `edges`. Dérivé à la requête,
-    jamais persisté (ADR-27). `has_synchronous_rest` ignore les arêtes REST
-    dont le site d'appel est `WebClient` (framework `webclient`, non
-    bloquant par nature) : un cycle composé uniquement d'appels réactifs
-    n'est pas un risque de blocage synchrone, même s'il reste un cycle."""
-    adjacency: dict[str, list[GraphEdge]] = {}
-    for edge in edges:
-        adjacency.setdefault(edge.from_service, []).append(edge)
-
-    cycles: list[Cycle] = []
-    seen: set[frozenset[int]] = set()
-
-    def dfs(
-        start: str,
-        current: str,
-        path_edges: list[GraphEdge],
-        visited: list[str],
-    ) -> None:
-        for edge in adjacency.get(current, []):
-            if edge.to_service == start and path_edges:
-                cycle_edges = tuple(path_edges + [edge])
-                key = frozenset(id(e) for e in cycle_edges)
-                if key in seen:
-                    continue
-                seen.add(key)
-                cycles.append(
-                    Cycle(
-                        services=tuple(visited + [start]),
-                        edges=cycle_edges,
-                        has_synchronous_rest=any(
-                            e.kind == "rest" and e.from_endpoint.framework != "webclient"
-                            for e in cycle_edges
-                        ),
-                    )
-                )
-                continue
-            if edge.to_service in visited:
-                continue
-            dfs(start, edge.to_service, path_edges + [edge], visited + [edge.to_service])
-
-    for service in adjacency:
-        dfs(service, service, [], [service])
-
-    return cycles
-
-
 def find_outbound_calls_in_consumers(
     endpoints: list[MessageEndpoint],
 ) -> list[OutboundCallInConsumer]:
     """Un appel REST (`call`) dont le site tombe dans la plage de lignes
-    d'un handler de consommation Kafka (`consume`) du même fichier — même
-    signal que les règles liveness K8, mais dérivé des endpoints plutôt que
-    d'une règle Semgrep dédiée. `endpoints` doit venir d'un seul service :
-    fichier et lignes ne sont comparables qu'au sein d'un même repo."""
+    d'un handler de consommation Kafka (`consume`) du même fichier. `endpoints`
+    doit venir d'un seul service : fichier et lignes ne sont comparables qu'au
+    sein d'un même repo."""
+
     consumers = [e for e in endpoints if e.system == "kafka" and e.role == "consume"]
     calls = [e for e in endpoints if e.system == "rest" and e.role == "call"]
 
@@ -214,30 +138,3 @@ def find_outbound_calls_in_consumers(
             if consumer.start_line <= call.start_line <= consumer.end_line:
                 results.append(OutboundCallInConsumer(consumer, call))
     return results
-
-
-def find_hotspots(
-    cycles: list[Cycle], findings_by_service: dict[str, list[Finding]]
-) -> list[Hotspot]:
-    """Sites qui sont à la fois sur un cycle et recouverts par un finding
-    (fichier + lignes qui se chevauchent — même jointure qu'ADR-19) : les
-    candidats les plus probables au blocage observé."""
-    hotspots: list[Hotspot] = []
-    for cycle in cycles:
-        for edge in cycle.edges:
-            for service, endpoint in (
-                (edge.from_service, edge.from_endpoint),
-                (edge.to_service, edge.to_endpoint),
-            ):
-                for finding in findings_by_service.get(service, []):
-                    if finding.path != endpoint.path:
-                        continue
-                    if finding.start_line <= endpoint.end_line and finding.end_line >= endpoint.start_line:
-                        hotspots.append(Hotspot(service, endpoint, cycle, finding))
-    return hotspots
-
-
-def rank_hotspots(hotspots: list[Hotspot]) -> list[Hotspot]:
-    """Classement pondéré par sévérité du finding recouvrant (esprit
-    ADR-19), ordre stable en cas d'égalité."""
-    return sorted(hotspots, key=lambda h: _SEVERITY_RANK[h.finding.severity], reverse=True)
