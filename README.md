@@ -90,6 +90,7 @@ Key points:
 - [`docs/SPEC-FONC.md`](docs/SPEC-FONC.md) — functional specification: CLI commands, MCP tools, skill, error behaviors.
 - [`docs/SPEC-TECH.md`](docs/SPEC-TECH.md) — technical specification: modules, data model, SQLite schema, algorithms.
 - [`docs/ADR.md`](docs/ADR.md) — architecture decisions (context, choice, consequences).
+- [`reports/README.md`](reports/README.md) — example reports generated from the repositories under `~/examples`.
 The Claude Code skill (`SKILL.md`) is distributed separately from this repo, in
 [`ccc-radar-skill`](https://github.com/elkouhen/ccc-radar-skill); its
 functional behavior remains documented in
