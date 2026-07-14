@@ -215,13 +215,126 @@ def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
     return None, True
 
 
-def _extract_rest_path(snippet: str) -> tuple[str, bool]:
+# BACKLOG Q24 : une règle Semgrep `endpoint-inventory` est bornée à la
+# méthode annotée (`pattern: @GetMapping(...) $RET $METHOD(...) { ... }`) —
+# elle ne voit jamais le `@RequestMapping` porté par la classe englobante,
+# alors que Spring MVC le préfixe silencieusement au chemin de la méthode.
+# Conséquence observée sur des repos réels (spring-petclinic-microservices,
+# microservices-kafka-mq) : soit le chemin sort sous-qualifié (méthode avec
+# valeur explicite, préfixe de classe ignoré), soit il sort `<dynamic>`
+# (méthode sans valeur explicite : `@GetMapping` seul hérite du chemin de
+# classe côté Spring, mais Semgrep n'a aucun littéral à extraire) — dans les
+# deux cas, la corrélation caller/callee de `graph.paths_match` échoue sur
+# des appels réels. Best-effort ligne par ligne (ADR-26, pas d'AST) : la
+# classe/interface la plus proche au-dessus de la méthode, avec ses lignes
+# d'annotation contiguës.
+_CLASS_DECL_RE = re.compile(
+    r"^\s*(?:public\s+|private\s+|protected\s+|final\s+|abstract\s+|static\s+)*"
+    r"(?:class|interface|record)\s+\w+"
+)
+_MAPPING_ANNOTATION_RE = re.compile(r"@\w+Mapping\s*(?:\(([^)]*)\))?")
+_NON_PATH_MAPPING_ATTRS = {"method", "produces", "consumes", "headers", "params", "name"}
+
+
+def _mapping_args_have_only_non_path_attrs(args: str) -> bool:
+    """`True` si les arguments d'une annotation `@XMapping(...)` ne portent
+    aucun chemin explicite (vide, ou uniquement `method=`/`produces=`/...) —
+    dans ce cas le chemin effectif de la méthode est vide (hérite du préfixe
+    de classe), pas inconnu."""
+    args = args.strip()
+    if not args:
+        return True
+    for part in args.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            return False  # argument positionnel : c'est le chemin lui-même
+        key = part.split("=", 1)[0].strip()
+        if key not in _NON_PATH_MAPPING_ATTRS:
+            return False
+    return True
+
+
+@lru_cache(maxsize=1024)
+def _class_base_path(repo_root_str: str, source_path: str, start_line: int) -> tuple[str, bool]:
+    """Chemin `@RequestMapping` de la classe/interface qui englobe la
+    méthode trouvée à `start_line` — renvoie (préfixe, dynamique) ;
+    (`""`, `False`) si aucune classe englobante ou aucun `@RequestMapping`
+    de classe (rien à préfixer, pas une valeur inconnue)."""
+    path = Path(repo_root_str) / source_path
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "", False
+
+    class_line_idx: int | None = None
+    for idx in range(min(start_line - 1, len(lines) - 1), -1, -1):
+        if _CLASS_DECL_RE.match(lines[idx]):
+            class_line_idx = idx
+            break
+    if class_line_idx is None:
+        return "", False
+
+    annotation_idx = class_line_idx - 1
+    while annotation_idx >= 0:
+        stripped = lines[annotation_idx].strip()
+        if not stripped:
+            annotation_idx -= 1
+            continue
+        if not stripped.startswith("@"):
+            break
+        if stripped.startswith("@RequestMapping"):
+            match = _MAPPING_ANNOTATION_RE.match(stripped)
+            args = match.group(1) or "" if match is not None else ""
+            literal, _ = _find_first_literal(args)
+            if literal is not None:
+                return literal, False
+            return "", True  # @RequestMapping de classe présent mais valeur non littérale
+        annotation_idx -= 1
+
+    return "", False
+
+
+def _extract_rest_path(
+    snippet: str,
+    repo_root: Path | None = None,
+    source_path: str | None = None,
+    start_line: int | None = None,
+) -> tuple[str, bool]:
     """Renvoie (chemin, dynamique) — jamais résolu silencieusement (même
-    esprit que `topic_dynamic` en K2)."""
-    literal, dynamic = _find_first_literal(snippet)
+    esprit que `topic_dynamic` en K2). Fusionne le préfixe `@RequestMapping`
+    de la classe englobante (Q24) quand `repo_root`/`source_path`/
+    `start_line` sont fournis."""
+    prefix, prefix_dynamic = "", False
+    if repo_root is not None and source_path is not None and start_line is not None:
+        prefix, prefix_dynamic = _class_base_path(str(repo_root), source_path, start_line)
+
+    literal, method_dynamic = _find_first_literal(snippet)
     if literal is None:
+        first_line = snippet.splitlines()[0] if snippet else ""
+        match = _MAPPING_ANNOTATION_RE.search(first_line)
+        if match is None or not _mapping_args_have_only_non_path_attrs(match.group(1) or ""):
+            return "<dynamic>", True
+        literal, method_dynamic = "", False  # annotation sans valeur : hérite du préfixe
+
+    if prefix_dynamic:
         return "<dynamic>", True
-    return _normalize_rest_path(literal), dynamic
+
+    method_path = _normalize_rest_path(literal) if literal else "/"
+    if not prefix:
+        return method_path, method_dynamic
+    return _join_rest_paths(_normalize_rest_path(prefix), method_path), method_dynamic
+
+
+def _join_rest_paths(prefix: str, suffix: str) -> str:
+    """Assemble deux chemins déjà normalisés (slash de tête unique) sans
+    jamais repasser par l'heuristique d'URL protocole-relatif de
+    `_normalize_rest_path` : une simple concaténation `"" + "/" +
+    "/orders/{id}"` produit `"//orders/{id}"`, que `urlsplit` interprète à
+    tort comme `http://orders/{id}` (`orders` avalé comme nom d'hôte)."""
+    segments = [s for s in (prefix.strip("/"), suffix.strip("/")) if s]
+    return "/" + "/".join(segments) if segments else "/"
 
 
 def _normalize_rest_path(literal: str) -> str:
@@ -438,7 +551,7 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 raise SemgrepError(
                     f"Règle d'inventaire d'endpoints mal formée : champ manquant ({exc})"
                 ) from exc
-            route, dynamic = _extract_rest_path(snippet)
+            route, dynamic = _extract_rest_path(snippet, repo_root, path, start_line)
             topic = f"{http_method} {route}"
         else:
             topic, dynamic = _extract_kafka_topic(snippet, repo_root, path)
@@ -524,5 +637,6 @@ def clear_analysis_caches() -> None:
     _java_qualified_name.cache_clear()
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()
+    _class_base_path.cache_clear()
     maven_module.clear_caches()
     gradle_module.clear_caches()

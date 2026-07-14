@@ -72,6 +72,40 @@ def test_java_client_calls_flag_concatenated_url_as_dynamic() -> None:
     assert by_line[26].topic_dynamic is True
 
 
+@pytest.mark.integration
+def test_java_class_level_request_mapping_prefix_is_merged_into_method_path() -> None:
+    # BACKLOG Q24 : @RequestMapping("/owners") sur la classe, fusionné avec
+    # le chemin (ou l'absence de chemin) de chaque méthode annotée.
+    endpoints = run_semgrep_endpoints(
+        REST_REPO, make_config(), files=["app/java/OwnerController.java"]
+    )
+
+    by_line = {e.start_line: e for e in endpoints}
+    assert len(endpoints) == 4
+
+    # @PostMapping seul (pas de valeur explicite) : hérite entièrement du
+    # préfixe de classe, ce n'est plus "<dynamic>".
+    create = by_line[9]
+    assert create.topic == "POST /owners"
+    assert create.topic_dynamic is False
+
+    # @GetMapping("/{ownerId}") : préfixe de classe + chemin méthode fusionnés.
+    find_one = by_line[14]
+    assert find_one.topic == "GET /owners/{ownerId}"
+    assert find_one.topic_dynamic is False
+
+    # @GetMapping seul : même cas que create, sur GET.
+    find_all = by_line[19]
+    assert find_all.topic == "GET /owners"
+    assert find_all.topic_dynamic is False
+
+    # @RequestMapping(method = ..., value = "/{ownerId}") : la forme
+    # générique avec value= explicite fusionne aussi correctement.
+    update = by_line[24]
+    assert update.topic == "PUT /owners/{ownerId}"
+    assert update.topic_dynamic is False
+
+
 def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic() -> None:
     # getForObject(base + "/orders/" + id, ...) : premier littéral trouvé
     # au milieu de l'expression, toujours marqué dynamique (concaténation).
@@ -132,9 +166,10 @@ def test_java_webclient_fluent_calls_are_call_sites() -> None:
 def test_rest_endpoint_pack_runs_standalone_without_other_backlog_tasks() -> None:
     endpoints = run_semgrep_endpoints(REST_REPO, make_config())
 
-    # java : 9 serve (OrderController) + 5 call resttemplate (OrderClient)
-    # + 3 call feign (PaymentClient) + 3 call webclient (WebClientCaller)
-    assert len(endpoints) == 20
+    # java : 9 serve (OrderController) + 4 serve (OwnerController, Q24)
+    # + 5 call resttemplate (OrderClient) + 3 call feign (PaymentClient)
+    # + 3 call webclient (WebClientCaller)
+    assert len(endpoints) == 24
     assert {e.role for e in endpoints} == {"serve", "call"}
     assert {e.system for e in endpoints} == {"rest"}
     assert {e.source for e in endpoints} == {"code"}

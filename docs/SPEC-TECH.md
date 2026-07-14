@@ -363,7 +363,8 @@ système est ignoré. Communs aux deux systèmes :
   `MessageEndpoint` : `maven.module_name_for_path(repo_root, path)` et
   `scanner._java_qualified_name(str(repo_root), path)` — voir §2.
 
-**REST** (`system: rest`, ou absent) — `_extract_rest_path(snippet)` :
+**REST** (`system: rest`, ou absent) — `_extract_rest_path(snippet, repo_root,
+source_path, start_line)` :
 premier littéral entre guillemets du snippet (relu depuis le fichier
 source, comme `parse_semgrep_json`), recherché ligne par ligne dans
 l'ordre — pas seulement la première (BACKLOG-10 K13 : une chaîne fluent
@@ -379,6 +380,28 @@ absolues/scheme-relative sont normalisées en route canonique
 slashes répétés compactés. `topic = f"{http_method} {chemin}"` (ex.
 `"GET /orders/{id}"`), `http_method` fixé par la règle (une règle = une
 méthode).
+
+**Préfixe `@RequestMapping` de classe (BACKLOG Q24)** : une règle
+`endpoint-inventory` REST est bornée à la méthode annotée — elle ne voit
+jamais le `@RequestMapping` porté par la classe englobante, alors que
+Spring MVC le préfixe silencieusement au chemin de la méthode.
+`_class_base_path(repo_root, source_path, start_line)` retrouve la
+classe/interface la plus proche au-dessus de `start_line` (best-effort ligne
+par ligne, ADR-26 — pas d'AST) et son éventuel `@RequestMapping` de classe.
+Deux cas où l'absence de littéral au niveau méthode ne veut *pas* dire
+`<dynamic>` : une annotation vide (`@GetMapping`) ou ne portant que des
+attributs non liés au chemin (`method=`/`produces=`/`consumes=`/`headers=`/
+`params=`/`name=`) hérite silencieusement du chemin de classe côté Spring —
+`_mapping_args_have_only_non_path_attrs` distingue ce cas d'une valeur
+réellement inconnue (référence à une constante, expression). Le préfixe et
+le chemin de méthode sont chacun normalisés séparément puis rejoints par
+segments (`_join_rest_paths`) plutôt que concaténés puis renormalisés : une
+concaténation naïve `"" + "/" + "/orders/{id}"` produit `"//orders/{id}"`,
+que `_normalize_rest_path` interprète à tort comme une URL
+protocole-relative (`http://orders/{id}`, `orders` avalé comme nom d'hôte).
+Un `@RequestMapping` de classe présent mais sans valeur littérale rend tout
+le chemin `<dynamic>`, y compris si la méthode a elle-même un chemin
+littéral (le préfixe réel reste inconnu).
 
 **Kafka** (`system: kafka`) — `_extract_kafka_topic(snippet, repo_root,
 source_path)` :
