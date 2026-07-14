@@ -552,7 +552,9 @@ UX golden rule: start with the least costly query that answers the question,
 then ask for more context only when action is needed. The skill therefore
 chooses among:
 1. **Overview** — `findings_summary()` for a short state.
-2. **Targeted search** — `search_findings(...)` for a problem or a file.
+2. **Natural-language findings lookup** — `search_findings(...)` to find
+   findings from a problem description, a rule/CWE identifier, or a file/path
+   clue.
 3. **Code + debt search** — `search(...)` when the question is primarily about
    code.
 4. **Remediation loop** — `search_findings(..., include_context=true)` →

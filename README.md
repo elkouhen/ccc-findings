@@ -51,7 +51,7 @@ SQLite + sqlite-vec")]
 experimental code chunks"]
         XCHUNKS --> FDB
         FDB --> FFIND["cccr findings
-natural language"]
+natural-language findings lookup"]
         FDB --> FSEARCH["cccr search
 code + findings"]
         FFIND --> FMCP["cccr mcp"]
@@ -137,7 +137,7 @@ cccr init                       # detects a Semgrep config, otherwise copies the
 cccr index                      # incremental scan + progress + embeddings
 ccc index                       # required for cccr search fallback unless you use --engine cocoindex
 cccr search "user auth flow"    # code search (via ccc) + findings that overlap it
-cccr findings "sql injection"   # hybrid search in findings (semantic + exact keyword/rule/CWE matches)
+cccr findings "sql injection"   # natural-language lookup in findings (hybrid semantic + exact keyword/rule/CWE matches)
 cccr summary                    # aggregated view (severities, top rules, top directories)
 ```
 
