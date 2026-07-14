@@ -2,7 +2,7 @@ import fnmatch
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 
@@ -23,6 +23,9 @@ from ccc_radar.store import CodeChunk, Store
 
 class EmbedderLike(Protocol):
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
+
+
+ProgressCallback = Callable[[str], None]
 
 
 @dataclass
@@ -202,6 +205,11 @@ def _embed_code_chunks(
     return dim
 
 
+def _report_progress(progress: ProgressCallback | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
 def index_repo(
     repo_root: Path,
     config: Config,
@@ -209,6 +217,7 @@ def index_repo(
     embedder: EmbedderLike,
     full: bool = False,
     index_code_chunks: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> IndexReport:
     # BACKLOG-16 P2 : purge les lru_cache d'analyse best-effort (package
     # Java, propriétés Spring, module Maven/Gradle) avant de relire le
@@ -220,6 +229,7 @@ def index_repo(
     if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
         full = True
 
+    _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
 
@@ -239,6 +249,12 @@ def index_repo(
         }
         changed = sorted(added | modified)
     unchanged = current_paths - set(changed)
+    _report_progress(
+        progress,
+        "→ Indexation : delta calculé "
+        f"({len(changed)} fichier(s) à scanner, {len(unchanged)} inchangé(s), "
+        f"{len(deleted)} supprimé(s)).",
+    )
 
     findings_removed = store.count_findings_for_paths(deleted)
     endpoints_removed = store.count_endpoints_for_paths(deleted)
@@ -249,6 +265,7 @@ def index_repo(
     findings: list[Finding] = []
     endpoints: list[MessageEndpoint] = []
     if changed:
+        _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
         findings_removed += store.count_findings_for_paths(changed)
         endpoints_removed += store.count_endpoints_for_paths(changed)
 
@@ -266,6 +283,11 @@ def index_repo(
         endpoints = parse_semgrep_endpoints(raw, repo_root)
         endpoints.extend(infer_framework_endpoints(repo_root, changed))
 
+        _report_progress(
+            progress,
+            "→ Indexation : écriture des résultats "
+            f"({len(findings)} finding(s), {len(endpoints)} endpoint(s)).",
+        )
         store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
         findings_added = len(findings)
@@ -282,6 +304,10 @@ def index_repo(
             chunk_paths = sorted(current_paths)
         chunks: list[CodeChunk] = []
         if chunk_paths:
+            _report_progress(
+                progress,
+                f"→ Indexation : préparation des chunks de code sur {len(chunk_paths)} fichier(s)...",
+            )
             chunks = [
                 chunk
                 for path in chunk_paths
@@ -297,8 +323,10 @@ def index_repo(
         code_signature = _embedder_signature(embedder, config)
         if store.get_meta("code_embedding_signature") != code_signature:
             store.set_meta("code_embedding_signature", code_signature)
+            _report_progress(progress, "→ Indexation : embedding complet des chunks de code...")
             _embed_code_chunks(embedder, store, store.all_code_chunks())
         elif chunks:
+            _report_progress(progress, f"→ Indexation : embedding de {len(chunks)} chunk(s) de code...")
             _embed_code_chunks(embedder, store, chunks)
 
     signature = _embedder_signature(embedder, config)
@@ -306,16 +334,21 @@ def index_repo(
         store.set_meta("embedding_signature", signature)
         store.set_meta("embedding_model", str(getattr(embedder, "model_name", config.embedding_model)))
         store.set_meta("embedding_dim", "")
+        _report_progress(progress, "→ Indexation : embedding complet des findings...")
         dim = _embed_findings(embedder, store, store.all_findings())
         if dim is not None:
             store.set_meta("embedding_dim", str(dim))
+        _report_progress(progress, "→ Indexation : embedding complet des endpoints...")
         endpoint_dim = _embed_endpoints(embedder, store, store.all_endpoints())
         if endpoint_dim is not None:
             store.set_meta("endpoint_embedding_dim", str(endpoint_dim))
     else:
         embedded_ids = {finding_id for finding_id, _ in store.iter_embeddings()}
+        new_findings = [f for f in findings if f.id not in embedded_ids]
+        if new_findings:
+            _report_progress(progress, f"→ Indexation : embedding de {len(new_findings)} finding(s) nouveau(x)...")
         dim = _embed_findings(
-            embedder, store, [f for f in findings if f.id not in embedded_ids]
+            embedder, store, new_findings
         )
         if dim is not None and store.get_meta("embedding_dim") != str(dim):
             store.set_meta("embedding_dim", str(dim))
@@ -323,8 +356,14 @@ def index_repo(
         embedded_endpoint_ids = {
             endpoint_id for endpoint_id, _ in store.iter_endpoint_embeddings()
         }
+        new_endpoints = [e for e in endpoints if e.id not in embedded_endpoint_ids]
+        if new_endpoints:
+            _report_progress(
+                progress,
+                f"→ Indexation : embedding de {len(new_endpoints)} endpoint(s) nouveau(x)...",
+            )
         endpoint_dim = _embed_endpoints(
-            embedder, store, [e for e in endpoints if e.id not in embedded_endpoint_ids]
+            embedder, store, new_endpoints
         )
         if endpoint_dim is not None and store.get_meta("endpoint_embedding_dim") != str(
             endpoint_dim

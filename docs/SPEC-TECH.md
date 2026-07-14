@@ -17,7 +17,7 @@
 | `indexer.py` | `index_repo`: incremental orchestration (file diff → targeted scan → findings + endpoints (A1) → embedding ; can also index code chunks) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Experimental `--engine cocoindex` adapter: findings + code chunks as typed target states | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
-| `search.py` | `search_findings` (cosine), `summary`, `get_context` | `store`, `models` |
+| `search.py` | `search_findings` (semantic + lexical hybrid), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_cycles`, `find_outbound_calls_in_consumers`, `find_hotspots`/`rank_hotspots`, `paths_match` | `models` |
 | `workspace.py` | Read-only federation of a multi-service Maven directory (BACKLOG-11 A2, ADR-30): `discover_maven_services`, `load_federation` | `models`, `store` |
 | `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
@@ -572,8 +572,9 @@ which avoids reloading the model on every MCP call. Each embedder exposes a
 `signature` stored in `meta.embedding_signature`; vector dimension is stored in
 `meta.embedding_dim`.
 
-`search.search_findings` (since ADR-17, delegates similarity computation to
-`sqlite-vec` instead of NumPy brute force):
+`search.search_findings` (since ADR-17, delegates semantic similarity
+computation to `sqlite-vec` instead of NumPy brute force, then fuses it with a
+lexical ranking):
 1. First filter in SQL (`store.all_findings(severity_at_least, rule_id,
    path_glob)`) → candidate set.
 2. Check that the query vector has the same dimension as
@@ -584,12 +585,18 @@ which avoids reloading the model on every MCP call. Each embedder exposes a
    needed) instead of asking for the whole vec0 table up front. Since `vec0`
    does not expose arbitrary metadata filtering in `WHERE`, severity/rule/path
    filtering remains applied in Python after KNN, but the query only escalates
-   to more neighbors if `offset + limit` filtered results have not yet been
+   to more neighbors if the requested hybrid result window has not yet been
    found.
-4. Returned score is `1 - cosine_distance` (the vec0 table is declared with
-   `distance_metric=cosine`), therefore equivalent to the dot product of the old
-   brute-force approach on L2-normalized vectors.
-5. Paginate (`offset`, `limit`) on already sorted results.
+4. Independently, every candidate finding gets a lexical score from exact or
+   partial matches on `rule_id`, `message`, `path`, `CWE`/`OWASP`, `snippet`,
+   and `severity`.
+5. The semantic and lexical rankings are combined with reciprocal-rank fusion
+   (RRF, constant 60), so exact identifiers (`custom.sql-fstring`, `CWE-89`,
+   path fragments) can win even when the embedding is weak, while broad natural
+   language queries still benefit from semantic recall.
+6. The returned `SearchHit.score` is the fused hybrid relevance, no longer the
+   raw `1 - cosine_distance` score.
+7. Paginate (`offset`, `limit`) on already fused/sorted results.
 
 `search.summary`: `by_severity`/`top_rules` via `Store.counts_by` (SQL
 `GROUP BY`), `by_top_level_dir` computed in Python from
@@ -638,7 +645,13 @@ through two regexes anchored on that format (`_RESULT_HEADER_RE`,
 not match both regexes is silently ignored (no error — undetected format drift,
 see `archive/BACKLOG-2.md`).
 
-`ccc` missing from PATH or non-zero return code → `CccUnavailable`.
+Before spawning the subprocess, `search_code` now fails fast if `ccc` is absent
+from `PATH`, or if the fallback bridge would need a `ccc` index that is not
+ready (`.cocoindex_code/target_sqlite.db` missing while `refresh=False`). The
+subprocess is also bounded by `CCCR_CCC_SEARCH_TIMEOUT_S` (default 20 seconds):
+`ccc` missing from PATH, missing code index, timeout, or non-zero return code
+all surface as `CccUnavailable`, which the CLI/MCP layer turns into a blocking
+error instead of letting the caller hang until its own timeout.
 
 `annotate_with_findings(code_hits, store)`: load only findings for the paths
 present in `code_hits`, then join by strict path equality and inclusive range
@@ -708,15 +721,25 @@ remain empty with an explicit note — same behavior as before BACKLOG-13.
 Providing `--workspace`/`workspace_root` always triggers full federation,
 unchanged.
 
+`render_graph_json`/`render_graph_text` now expose the **base topology**
+alongside derived risk signals: `services` (the keys of
+`endpoints_by_service`) and `edges` (every `GraphEdge` returned by
+`build_graph`, REST or Kafka, with both endpoint sites). `cycles` and
+`hotspots` remain derived views built from that same edge set, not a separate
+graph.
+
 ### 6bis-bis. Visual graph export (`render.py`, BACKLOG-14 G1)
 
-`render_graph_drawio(services: list[str], edges: list[GraphEdge], cycles:
-list[Cycle]) -> str` — pure function, no dependency on SQLite nor the CLI.
-Renders the **complete** graph (all `build_graph` edges, not only cycle edges,
-unlike `render_graph_json`) as mxGraph XML (native diagrams.net/drawio format):
-- one node (`mxCell vertex="1"`) per service name in `services`, including a
-  service with no edge at all — initial grid layout (`ceil(sqrt(n))` columns),
-  purely indicative: diagrams.net may freely reorganize on open;
+`render_graph_drawio(endpoints_by_service: dict[str, list[MessageEndpoint]],
+edges: list[GraphEdge], cycles: list[Cycle]) -> str` — pure function, no
+dependency on SQLite nor the CLI. Renders the **complete** graph (all
+`build_graph` edges, not only cycle edges, unlike `render_graph_json`) as
+mxGraph XML (native diagrams.net/drawio format):
+- one node (`mxCell vertex="1"`) per service name in `endpoints_by_service`,
+  including a service with no edge at all; each node label is HTML and lists
+  the service name plus its discovered endpoints as `[system/role] topic`;
+  initial grid layout (`ceil(sqrt(n))` columns), purely indicative:
+  diagrams.net may freely reorganize on open;
 - one edge (`mxCell edge="1"`) per `GraphEdge`, connected through `source` /
   `target` to the corresponding nodes (an edge whose service is not in
   `services` is silently ignored — should not happen in normal use, `edges` and

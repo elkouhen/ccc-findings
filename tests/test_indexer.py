@@ -65,6 +65,20 @@ def test_first_index_run_finds_all_findings_and_scans_all_files(repo_copy: Path)
 
 
 @pytest.mark.integration
+def test_index_repo_reports_progress_messages(repo_copy: Path) -> None:
+    messages: list[str] = []
+
+    with Store(repo_copy) as store:
+        index_repo(repo_copy, make_config(), store, FakeEmbedder(), progress=messages.append)
+
+    assert any("inventaire des fichiers" in message for message in messages)
+    assert any("delta calculé" in message for message in messages)
+    assert any("scan Semgrep" in message for message in messages)
+    assert any("écriture des résultats" in message for message in messages)
+    assert any("embedding" in message for message in messages)
+
+
+@pytest.mark.integration
 def test_default_include_indexes_root_files(repo_copy: Path) -> None:
     (repo_copy / "root_vuln.py").write_text(
         "import sqlite3\n\n"

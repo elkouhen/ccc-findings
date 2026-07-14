@@ -104,6 +104,9 @@ BACKLOG-11 A1).
   `metadata.category: endpoint-inventory`) — each ends up in the proper table
   without colliding (see `docs/SPEC-TECH.md`, §3). Endpoint inventory rules are
   not filtered by `min_severity`.
+- The CLI prints stage progress during indexing: repository file inventory,
+  delta computation, Semgrep scan, persistence of findings/endpoints, and
+  embedding passes (plus code chunks in `cocoindex` mode).
 - One-line output:
   `scanned=<N> skipped=<N> +findings=<N> -findings=<N> +endpoints=<N> -endpoints=<N>`
   - `scanned`: number of files (re)scanned.
@@ -160,17 +163,33 @@ severity boost only affects ordering.
 Degraded modes:
 - **Experimental code index absent**: normal behavior; fallback to
   `ccc search`.
+- **`ccc` code index absent** (`.cocoindex_code/target_sqlite.db`, no local
+  `--engine cocoindex` index, and no `--refresh`) : explicit error
+  `ccc code index absent (.cocoindex_code/target_sqlite.db). Run first: ccc index`,
+  exit code 2 / MCP `ToolError`, instead of waiting for `ccc search` to
+  block indefinitely.
 - **`ccc` unavailable** (missing from PATH, or failing): explicit error,
   stderr keeps the cause (`ccc not found in PATH...` or return code/stderr from
   `ccc`), exit code 2. In this case `cccr` does not return a successful
   findings-only-shaped result.
+- **`ccc search` timeout**: explicit error `ccc search timed out after Ns`
+  (N = `CCCR_CCC_SEARCH_TIMEOUT_S`, default 20), exit code 2 / MCP `ToolError`.
 - **Findings index absent** (but `ccc` available): raw code results, preceded
   by the warning `findings index absent (run: cccr index): results without findings`,
   exit code 0.
 
 ### `cccr findings "<query>" [options]`
-Natural-language search in indexed findings **only** (no code search) — the old
-`cccr search`, renamed when `search` became the superset of `ccc search`.
+Hybrid natural-language search in indexed findings **only** (no code search) —
+the old `cccr search`, renamed when `search` became the superset of `ccc search`.
+The ranking now combines:
+- semantic similarity on stored embeddings (`sqlite-vec`);
+- lexical/exact matches on `rule_id`, `message`, `path`, `CWE`/`OWASP`, and
+  snippet text;
+- reciprocal-rank fusion of both rankings.
+
+Practical effect: requests like `sql injection` still work semantically, but
+`custom.subprocess-shell-true`, `CWE-89`, or a path fragment can surface the
+right finding even when the embedding alone would be weak.
 
 | Option | Effect |
 |---|---|
@@ -282,10 +301,12 @@ lives in the same database as `findings`.
 ### `cccr graph [--workspace ROOT] [--json] [--drawio FILE]`
 *Java/Spring microservices extension — beta.*
 
-Likely blocking points built from indexed endpoints (BACKLOG-10 K12).
-Always included: synchronous REST calls detected inside a Kafka consumer
-handler **of the current project** (same file, call site inside the handler's
-line range).
+Inter-service graph built from indexed endpoints: microservices linked by
+HTTP endpoints (`call` -> `serve`) and Kafka topics (`produce` -> `consume`),
+plus likely blocking points derived from that graph (BACKLOG-10 K12). Always
+included: synchronous REST calls detected inside a Kafka consumer handler
+**of the current project** (same file, call site inside the handler's line
+range).
 
 For inter-service cycles/hotspots, two sources are possible, tried in this
 order:
@@ -300,6 +321,9 @@ order:
    live in genuinely separate repos.
 
 Both sources feed the same algorithm (`graph.build_graph`) and report:
+- **services**: service/module names participating in the inter-service graph;
+- **edges**: REST and Kafka edges with both sites (`from_site` / `to_site`)
+  and their topic/route labels;
 - **cycles**: simple cycles containing at least one synchronous REST edge
   (a `WebClient` edge, non-blocking by nature, does not count — K11), with the
   sites (file:lines) of each edge;
@@ -313,6 +337,12 @@ saying so (see ADR-27) rather than making the absence of a result ambiguous.
 `--json` rendering:
 ```json
 {
+  "services": ["service-x", "service-y", "service-z"],
+  "edges": [
+    {"kind": "rest", "from_service": "service-x", "to_service": "service-y",
+     "from_site": {"path": "...", "start_line": 13, "end_line": 13, "topic": "GET /y-status"},
+     "to_site": {"path": "...", "start_line": 9, "end_line": 11, "topic": "GET /y-status"}}
+  ],
   "outbound_calls_in_consumers": [
     {"consumer": {"path": "...", "start_line": 15, "end_line": 25, "topic": "orders.created"},
      "call": {"path": "...", "start_line": 20, "end_line": 20, "topic": "POST /payments"}}
@@ -335,7 +365,8 @@ saying so (see ADR-27) rather than making the absence of a result ambiguous.
 `--workspace`) produced a result without warning; otherwise it concatenates the
 applicable warnings, whether they come from federation (`service` not indexed,
 incompatible database) or from a stale endpoint inventory on the current
-project.
+project. Without inter-module data, `services` and `edges` stay empty just like
+`cycles`/`hotspots`.
 
 Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `endpoints` lives in the same database as `findings` (`.cccr/findings.db`).
@@ -476,7 +507,7 @@ the **Java/Spring microservices extension**.
 
 | Tool | Return type | Role | Notes |
 |---|---|---|---|
-| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Natural-language search — same contract as `cccr findings --json` | No pagination (`offset`) on the MCP side |
+| `search_findings(query, severity=None, rule=None, path_glob=None, limit=5, include_context=False)` | `list[FindingHit]` | Hybrid findings search — same contract as `cccr findings --json` | No pagination (`offset`) on the MCP side |
 | `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with the findings overlapping each result — same tool name, same parameters, and same behavior as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Uses the experimental code index if present, otherwise `ccc` |

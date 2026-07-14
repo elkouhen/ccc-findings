@@ -37,6 +37,7 @@ from ccc_radar.render import (
     render_fallback_findings_text,
     render_flow_json,
     render_flow_text,
+    render_graph_d2,
     render_graph_drawio,
     render_graph_json,
     render_graph_text,
@@ -46,6 +47,7 @@ from ccc_radar.render import (
     render_summary_text,
     render_workspace_json,
     render_workspace_text,
+    write_graph_d2,
 )
 from ccc_radar.scanner import SemgrepError
 from ccc_radar.search import SearchError, search_findings
@@ -71,6 +73,10 @@ def _current_repo_endpoint_warning(store: Store) -> str | None:
     return endpoint_inventory_warning(
         store.get_meta("endpoint_inventory_signature"), scope="ce projet"
     )
+
+
+def _echo_index_progress(message: str) -> None:
+    typer.echo(message)
 
 
 @app.callback()
@@ -198,10 +204,12 @@ def index_cmd(
         with Store(repo_root) as store:
             if engine == "cocoindex":
                 report = index_repo_with_cocoindex(
-                    repo_root, config, store, embedder, full=full
+                    repo_root, config, store, embedder, full=full, progress=_echo_index_progress
                 )
             else:
-                report = index_repo(repo_root, config, store, embedder, full=full)
+                report = index_repo(
+                    repo_root, config, store, embedder, full=full, progress=_echo_index_progress
+                )
                 store.set_meta("index_engine", "manual")
     except (SemgrepError, EmbeddingError) as exc:
         typer.echo(str(exc), err=True)
@@ -348,29 +356,45 @@ def graph_cmd(
         None,
         "--workspace",
         help="Répertoire parent Maven à fédérer (BACKLOG-11 A2) pour les "
-        "cycles/hotspots inter-services.",
+        "arêtes, cycles et hotspots inter-services.",
     ),
     json_output: bool = typer.Option(False, "--json"),
     drawio: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--drawio",
-        help="Écrit le graphe d'interactions services <-> services en "
+        help="Écrit le graphe d'interactions microservices + topics Kafka en "
         ".drawio (mxGraph, diagrams.net) à ce chemin, plutôt que le rendu "
         "JSON/texte (BACKLOG-14 G1).",
     ),
+    d2: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--d2",
+        help="Écrit le graphe en D2 : source `.d2` si l'extension vaut `.d2`, "
+        "sinon rendu généré par la CLI D2 (`.svg`, etc.).",
+    ),
+    d2_layout: Literal["dagre", "elk"] = typer.Option(
+        "elk",
+        "--d2-layout",
+        help="Moteur de layout D2 utilisé pour un rendu non-`.d2`.",
+    ),
 ) -> None:
-    """Points de blocage probables à partir des endpoints indexés (BACKLOG-10
-    K12) : appels REST synchrones détectés dans un handler de consommation
-    Kafka du projet courant. Sans `--workspace`, si l'index couvre un
-    répertoire multi-modules Maven (`cccr index` lancé au parent, BACKLOG-13),
-    les endpoints/findings attribués à un module sont automatiquement
-    groupés pour rapporter de vrais cycles/hotspots inter-modules — pas
-    besoin de fédération pour un monorepo. Avec `--workspace <root>`, fédère
-    en plus les autres microservices indexés séparément (BACKLOG-11 A2,
-    lecture seule).
+    """Graphe dérivé des endpoints indexés : nœuds = microservices + topics
+    Kafka ; arêtes = appel HTTP, production Kafka, consommation Kafka, avec
+    en plus les signaux de blocage probables (BACKLOG-10 K12) : appels REST
+    synchrones détectés dans un handler de consommation Kafka du projet
+    courant. Sans `--workspace`, si l'index couvre un répertoire
+    multi-modules Maven (`cccr index` lancé au parent, BACKLOG-13), les
+    endpoints/findings attribués à un module sont automatiquement groupés
+    pour rapporter de vraies arêtes/cycles/hotspots inter-modules — pas
+    besoin de fédération pour un monorepo. Avec `--workspace <root>`,
+    fédère en plus les autres microservices indexés séparément
+    (BACKLOG-11 A2, lecture seule).
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
+    if drawio is not None and d2 is not None:
+        typer.echo("Choisissez soit --drawio, soit --d2.", err=True)
+        raise typer.Exit(code=2)
 
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
@@ -405,6 +429,8 @@ def graph_cmd(
             cross_module_data_available = True
 
     result = render_graph_json(
+        list(services_by_name),
+        edges,
         outbound_calls,
         cycles=cycles,
         hotspots=hotspots,
@@ -414,9 +440,20 @@ def graph_cmd(
 
     if drawio is not None:
         drawio.write_text(
-            render_graph_drawio(list(services_by_name), edges, cycles), encoding="utf-8"
+            render_graph_drawio(services_by_name, edges, cycles), encoding="utf-8"
         )
         typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
+        if result["note"]:
+            typer.echo(result["note"])
+        return
+
+    if d2 is not None:
+        try:
+            write_graph_d2(d2, render_graph_d2(services_by_name, edges, cycles), layout=d2_layout)
+        except RuntimeError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo(f"Graphe écrit dans {d2} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
             typer.echo(result["note"])
         return
@@ -427,9 +464,12 @@ def graph_cmd(
         typer.echo(render_graph_text(result))
 
 
-@app.command(name="workspace")
-def workspace_cmd(
-    root: Path = typer.Argument(..., help="Répertoire parent à explorer (multi-modules Maven)."),
+@app.command(name="microservices")
+def microservices_cmd(
+    root: Optional[Path] = typer.Argument(  # noqa: UP007
+        None,
+        help="Répertoire parent à explorer (multi-modules Maven). Défaut : répertoire courant.",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Découvre les modules Maven sous `root` (BACKLOG-11 A2) : un module par
@@ -440,6 +480,7 @@ def workspace_cmd(
     Un module non indexé ou dont la base est incompatible est signalé en
     avertissement, sans faire échouer la commande.
     """
+    root = root or Path.cwd()
     services = discover_maven_services(root)
     federation = load_federation(services)
     result = render_workspace_json(services, federation)
@@ -448,8 +489,6 @@ def workspace_cmd(
         typer.echo(json.dumps(result))
     else:
         typer.echo(render_workspace_text(result))
-
-
 @app.command(name="flow")
 def flow_cmd(
     query: str,

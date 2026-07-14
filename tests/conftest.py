@@ -38,6 +38,10 @@ echo "File: app/db.py:6-6 [python]"
 echo "ARGS:$*"
 """
 
+FAKE_CCC_HANGING_SCRIPT = """#!/bin/sh
+sleep 5
+"""
+
 
 def install_fake_ccc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_content: str
@@ -49,6 +53,9 @@ def install_fake_ccc(
     script.write_text(script_content)
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    index_path = tmp_path / ".cocoindex_code" / "target_sqlite.db"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text("")
     return bin_dir
 
 
@@ -72,6 +79,11 @@ def fake_ccc_args_recording_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     """Faux `ccc` qui renvoie les arguments reçus dans le contenu du résultat
     (`ARGS:...`), pour vérifier que les flags sont transmis tels quels."""
     return install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_ARGS_RECORDING_SCRIPT)
+
+
+@pytest.fixture
+def fake_ccc_hanging_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    return install_fake_ccc(tmp_path, monkeypatch, FAKE_CCC_HANGING_SCRIPT)
 
 
 @pytest.fixture

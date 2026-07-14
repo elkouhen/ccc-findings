@@ -247,6 +247,24 @@ def test_search_code_without_ccc_raises_unavailable(
         search_code(tmp_path, "injection sql")
 
 
+def test_search_code_without_ccc_index_raises_unavailable(
+    fake_ccc_on_path: Path, tmp_path: Path
+) -> None:
+    (tmp_path / ".cocoindex_code" / "target_sqlite.db").unlink()
+
+    with pytest.raises(CccUnavailable, match="index code ccc absent"):
+        search_code(tmp_path, "injection sql")
+
+
+def test_search_code_timeout_raises_unavailable(
+    fake_ccc_hanging_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CCCR_CCC_SEARCH_TIMEOUT_S", "1")
+
+    with pytest.raises(CccUnavailable, match="ccc search a expiré après 1s"):
+        search_code(tmp_path, "injection sql")
+
+
 def test_mcp_tool_raises_when_ccc_returns_error(
     fake_ccc_error_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -254,6 +272,9 @@ def test_mcp_tool_raises_when_ccc_returns_error(
     shutil.copytree(VULN_REPO, dest)
     monkeypatch.chdir(dest)
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    index_path = dest / ".cocoindex_code" / "target_sqlite.db"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text("")
 
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     runner.invoke(app, ["index"])

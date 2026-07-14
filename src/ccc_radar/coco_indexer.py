@@ -7,6 +7,7 @@ models findings and code chunks as target state produced from files, then lets
 """
 
 from pathlib import Path
+from typing import Callable
 
 from ccc_radar.config import Config
 from ccc_radar.indexer import EmbedderLike, IndexReport, index_repo
@@ -21,6 +22,7 @@ def index_repo_with_cocoindex(
     store: Store,
     embedder: EmbedderLike,
     full: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> IndexReport:
     """Index findings plus code chunks using the experimental target-state path."""
     report = index_repo(
@@ -30,6 +32,7 @@ def index_repo_with_cocoindex(
         embedder,
         full=full,
         index_code_chunks=True,
+        progress=progress,
     )
     store.set_meta("index_engine", ENGINE_META_VALUE)
     return report

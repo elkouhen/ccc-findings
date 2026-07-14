@@ -134,9 +134,10 @@ uv tool upgrade --all       # upgrades all tools installed via uv (including coc
 
 ```bash
 cccr init                       # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
-cccr index                      # incremental Semgrep scan + embeddings
+cccr index                      # incremental scan + progress + embeddings
+ccc index                       # required for cccr search fallback unless you use --engine cocoindex
 cccr search "user auth flow"    # code search (via ccc) + findings that overlap it
-cccr findings "sql injection"   # natural-language search in findings only
+cccr findings "sql injection"   # hybrid search in findings (semantic + exact keyword/rule/CWE matches)
 cccr summary                    # aggregated view (severities, top rules, top directories)
 ```
 
@@ -144,14 +145,17 @@ The `p/security-audit` fallback is enough for the **core product** (findings).
 For the microservices extension, `cccr init` must be able to copy the skill
 packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`); otherwise
 `cccr endpoints` / `graph` / `flow` have no usable inventory.
+During `cccr index`, the CLI prints stage progress (file inventory, delta,
+Semgrep scan, persistence, embedding) before the final
+`scanned=... skipped=... +findings=...` summary line.
 
 ### Java/Spring microservices extension
 
 ```bash
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr endpoints                  # indexed REST/Kafka inventory
-cccr graph                      # cycles/hotspots and outbound REST calls inside Kafka handlers
-cccr workspace /path/root       # discovery of indexed Maven services
+cccr graph                      # inter-service REST/Kafka graph + cycles/hotspots
+cccr microservices              # discovery of indexed Maven services from current dir
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
 ```
 
@@ -165,7 +169,11 @@ For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `--offset`, `--lang`, `--path`, `--refresh`), same results, same format, each
 result enriched with overlapping Semgrep findings and ranked while taking their
 severity into account. On the MCP side, the tool has the same name as `ccc`'s
-(`search`) and takes the same parameters.
+(`search`) and takes the same parameters. When `cccr` falls back to the `ccc`
+bridge, a ready `ccc` index (`.cocoindex_code/target_sqlite.db`, usually built
+via `ccc index`) must already exist; otherwise `cccr search` now fails
+immediately with an explicit message instead of hanging until the MCP request
+times out.
 
 Example with explicit rules and a full scan:
 

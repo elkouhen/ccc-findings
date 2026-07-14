@@ -46,6 +46,8 @@ def test_graph_workspace_reports_the_three_service_rest_cycle_with_sites(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
+    assert set(data["services"]) == {"service-x", "service-y", "service-z"}
+    assert len(data["edges"]) == 3
     assert len(data["cycles"]) == 1
     cycle = data["cycles"][0]
     assert set(cycle["services"][:-1]) == {"service-x", "service-y", "service-z"}
@@ -101,6 +103,8 @@ def test_graph_without_workspace_still_reports_the_no_workspace_note(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
+    assert data["services"] == []
+    assert data["edges"] == []
     assert data["cycles"] == []
     assert data["hotspots"] == []
     assert "--workspace" in data["note"]
@@ -126,10 +130,16 @@ def test_graph_drawio_writes_a_valid_mxgraph_file_with_the_cycle_highlighted(
 
     root = ET.fromstring(out_file.read_text(encoding="utf-8"))
     node_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
-    assert node_values == {"service-x", "service-y", "service-z"}
+    assert len(node_values) == 3
+    assert node_values == {"<b>service-x</b>", "<b>service-y</b>", "<b>service-z</b>"}
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
     assert len(edge_cells) >= 3
     assert all("strokeColor=#d32f2f" in cell.get("style", "") for cell in edge_cells)
+    assert {cell.get("value") for cell in edge_cells} == {
+        "GET /x-status",
+        "GET /y-status",
+        "GET /z-status",
+    }
 
 
 def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_note(

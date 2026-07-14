@@ -171,17 +171,19 @@ def list_endpoints(
 
 @mcp.tool()
 def graph(workspace_root: str | None = None) -> GraphResult:
-    """Points de blocage probables à partir des endpoints indexés
-    (BACKLOG-10 K12) : appels REST synchrones dans un handler de
-    consommation Kafka du projet courant. Utiliser pour localiser les
-    endroits d'une architecture distribuée susceptibles de causer un
-    verrouillage intermittent. Sans `workspace_root`, si l'index couvre un
-    répertoire multi-modules Maven (`cccr index` lancé au parent,
-    BACKLOG-13), les endpoints/findings attribués à un module sont
-    automatiquement groupés pour rapporter de vrais cycles/hotspots
-    inter-modules. Avec `workspace_root`, fédère en plus les autres
-    microservices indexés séparément (BACKLOG-11 A2, lecture seule) — sinon
-    `cycles`/`hotspots` restent vides, voir `note`.
+    """Graphe dérivé des endpoints indexés : nœuds = microservices + topics
+    Kafka ; arêtes = appel HTTP, production Kafka, consommation Kafka, plus
+    points de blocage probables (BACKLOG-10 K12) : appels REST synchrones
+    dans un handler de consommation Kafka du projet courant. Utiliser pour
+    visualiser la topologie distribuée ET localiser les endroits
+    susceptibles de causer un verrouillage intermittent. Sans
+    `workspace_root`, si l'index couvre un répertoire multi-modules Maven
+    (`cccr index` lancé au parent, BACKLOG-13), les endpoints/findings
+    attribués à un module sont automatiquement groupés pour rapporter de
+    vraies arêtes/cycles/hotspots inter-modules. Avec `workspace_root`,
+    fédère en plus les autres microservices indexés séparément (BACKLOG-11
+    A2, lecture seule) — sinon `services`/`nodes`/`edges`/`cycles`/`hotspots`
+    restent vides, voir `note`.
     """
     repo_root = _repo_root()
     _require_index(repo_root)
@@ -195,6 +197,8 @@ def graph(workspace_root: str | None = None) -> GraphResult:
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if not grouped_endpoints:
             return render_graph_json(
+                [],
+                [],
                 outbound_calls,
                 warnings=[repo_warning] if repo_warning else None,
             )
@@ -203,6 +207,8 @@ def graph(workspace_root: str | None = None) -> GraphResult:
         grouped_findings = group_findings_by_module(findings)
         hotspots = rank_hotspots(find_hotspots(cycles, grouped_findings))
         return render_graph_json(
+            list(grouped_endpoints),
+            edges,
             outbound_calls,
             cycles=cycles,
             hotspots=hotspots,
@@ -216,6 +222,8 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     cycles = find_cycles(edges)
     hotspots = rank_hotspots(find_hotspots(cycles, federation.findings_by_service))
     return render_graph_json(
+        list(federation.endpoints_by_service),
+        edges,
         outbound_calls,
         cycles=cycles,
         hotspots=hotspots,

@@ -49,6 +49,13 @@ def test_search_findings_tool_returns_expected_json(indexed_repo: Path) -> None:
 
 
 @pytest.mark.integration
+def test_search_findings_tool_hybrid_matches_exact_rule_id(indexed_repo: Path) -> None:
+    result = search_findings("custom.subprocess-shell-true")
+
+    assert result[0]["rule_id"].endswith("custom.subprocess-shell-true")
+
+
+@pytest.mark.integration
 def test_search_findings_tool_rejects_invalid_severity(indexed_repo: Path) -> None:
     """BACKLOG-16 P4 : côté MCP aussi, une sévérité invalide doit lever une
     erreur métier propre (`SearchError`), pas un `ValueError` non géré."""
@@ -181,6 +188,8 @@ def test_graph_tool_returns_outbound_calls_in_kafka_consumer_handlers(
 
     result = graph()
 
+    assert result["services"] == []
+    assert result["edges"] == []
     assert len(result["outbound_calls_in_consumers"]) == 1
     assert result["outbound_calls_in_consumers"][0]["call"]["topic"] == "POST /payments"
     assert result["cycles"] == []
@@ -280,6 +289,8 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_cycle(
     monkeypatch.chdir(dest / "service-x")
     result = graph(workspace_root=str(dest))
 
+    assert set(result["services"]) == {"service-x", "service-y", "service-z"}
+    assert len(result["edges"]) == 3
     assert len(result["cycles"]) == 1
     assert set(result["cycles"][0]["services"][:-1]) == {
         "service-x",

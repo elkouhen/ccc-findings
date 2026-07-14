@@ -1,4 +1,6 @@
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +28,8 @@ _SEVERITY_BOOST: dict[str | None, float] = {
 # boost. Over-fetch, boost, re-sort, then truncate to the caller's limit.
 _OVERFETCH_FACTOR = 3
 _OVERFETCH_CAP = 50
+_CCC_INDEX_PATH = Path(".cocoindex_code") / "target_sqlite.db"
+_DEFAULT_CCC_SEARCH_TIMEOUT_S = 20
 
 
 class FindingRef(TypedDict):
@@ -76,6 +80,17 @@ class CodeHit:
     language: str
     score: float
     content: str
+
+
+def _ccc_search_timeout_s() -> int:
+    raw = os.environ.get("CCCR_CCC_SEARCH_TIMEOUT_S")
+    if raw is None:
+        return _DEFAULT_CCC_SEARCH_TIMEOUT_S
+    try:
+        timeout_s = int(raw)
+    except ValueError:
+        return _DEFAULT_CCC_SEARCH_TIMEOUT_S
+    return timeout_s if timeout_s > 0 else _DEFAULT_CCC_SEARCH_TIMEOUT_S
 
 
 def _parse_ccc_search_output(raw: str) -> list[CodeHit]:
@@ -129,6 +144,14 @@ def search_code(
     if refresh:
         cmd.append("--refresh")
 
+    if shutil.which("ccc") is None:
+        raise CccUnavailable("ccc introuvable dans le PATH")
+    if not refresh and not (repo_root / _CCC_INDEX_PATH).is_file():
+        raise CccUnavailable(
+            "index code ccc absent (.cocoindex_code/target_sqlite.db). "
+            "Lancez d'abord: ccc index"
+        )
+
     try:
         proc = subprocess.run(
             cmd,
@@ -136,9 +159,12 @@ def search_code(
             capture_output=True,
             text=True,
             check=False,
+            timeout=_ccc_search_timeout_s(),
         )
-    except FileNotFoundError as exc:
-        raise CccUnavailable("ccc introuvable dans le PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CccUnavailable(
+            f"ccc search a expiré après {_ccc_search_timeout_s()}s"
+        ) from exc
 
     if proc.returncode != 0:
         raise CccUnavailable(

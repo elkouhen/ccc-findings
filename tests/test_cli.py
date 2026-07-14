@@ -1,11 +1,13 @@
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 import ccc_radar.embedder as embedder_module
+import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_RULE_PACKS, app
 from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
@@ -39,6 +41,7 @@ def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     result = runner.invoke(app, ["init"])
 
@@ -100,6 +103,7 @@ def test_index_with_default_registry_pack_succeeds_end_to_end(
     index_result = runner.invoke(app, ["index"])
 
     assert index_result.exit_code == 0
+    assert "→ Indexation :" in index_result.output
     assert "scanned=" in index_result.output
 
 
@@ -143,6 +147,7 @@ def test_init_with_rules_then_index_reports_correctly(
     index_result = runner.invoke(app, ["index"])
 
     assert index_result.exit_code == 0
+    assert "→ Indexation :" in index_result.output
     assert "scanned=" in index_result.output
     assert "+findings=4" in index_result.output
     assert "-findings=0" in index_result.output
@@ -233,6 +238,21 @@ def test_findings_context_includes_offending_source_line(
 
     hits = json.loads(result.output)
     assert "cursor.execute" in hits[0]["context"]
+
+
+@pytest.mark.integration
+def test_findings_hybrid_query_can_match_exact_rule_id(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
+    runner.invoke(app, ["index"])
+
+    result = runner.invoke(app, ["findings", "custom.subprocess-shell-true", "--json"])
+
+    assert result.exit_code == 0
+    hits = json.loads(result.output)
+    assert hits[0]["rule_id"].endswith("custom.subprocess-shell-true")
 
 
 def test_search_renders_ccc_format_with_findings_blocks(
@@ -334,6 +354,19 @@ def test_search_without_ccc_nor_index_fails_with_message_and_code_2(
     assert "ccc introuvable dans le PATH" in result.output
 
 
+def test_search_without_ccc_code_index_fails_fast(
+    fake_ccc_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cocoindex_code" / "target_sqlite.db").unlink()
+
+    result = runner.invoke(app, ["search", "auth"])
+
+    assert result.exit_code == 2
+    assert "index code ccc absent" in result.output
+    assert "ccc index" in result.output
+
+
 def test_search_forwards_offset_lang_path_refresh_flags_to_ccc(
     fake_ccc_args_recording_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -363,6 +396,18 @@ def test_search_returns_error_when_ccc_returns_error(
     assert result.exit_code == 2
     assert "ccc a échoué (code 42)" in result.output
     assert "ccc service failed" in result.output
+
+
+def test_search_returns_error_when_ccc_times_out(
+    fake_ccc_hanging_on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CCCR_CCC_SEARCH_TIMEOUT_S", "1")
+
+    result = runner.invoke(app, ["search", "auth"])
+
+    assert result.exit_code == 2
+    assert "ccc search a expiré après 1s" in result.output
 
 
 @pytest.mark.integration
@@ -428,6 +473,8 @@ def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
+    assert data["services"] == []
+    assert data["edges"] == []
     assert len(data["outbound_calls_in_consumers"]) == 1
     hit = data["outbound_calls_in_consumers"][0]
     assert hit["call"]["topic"] == "POST /payments"
@@ -448,6 +495,74 @@ def test_graph_text_reports_no_outbound_calls_when_none_found(
 
     assert result.exit_code == 0
     assert "Aucun appel REST détecté dans un handler Kafka." in result.output
+
+
+def test_graph_d2_writes_source_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    consume = _make_endpoint(
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(
+            ["order-service/Producer.java", "payment-service/Consumer.java"],
+            [produce, consume],
+        )
+    out_file = tmp_path / "graph.d2"
+
+    result = runner.invoke(app, ["graph", "--d2", str(out_file)])
+
+    assert result.exit_code == 0
+    assert out_file.is_file()
+    content = out_file.read_text(encoding="utf-8")
+    assert "label: |md" in content
+    assert "  **order-service**" in content
+    assert 'label: "orders.created"' in content
+
+
+def test_graph_d2_renders_svg_via_d2_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    consume = _make_endpoint(
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(
+            ["order-service/Producer.java", "payment-service/Consumer.java"],
+            [produce, consume],
+        )
+    out_file = tmp_path / "graph.svg"
+
+    def fake_run(*args, **kwargs):
+        out_file.write_text("<svg />", encoding="utf-8")
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(render_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(app, ["graph", "--d2", str(out_file)])
+
+    assert result.exit_code == 0
+    assert out_file.read_text(encoding="utf-8") == "<svg />"
+
+
+def test_graph_rejects_drawio_and_d2_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+
+    result = runner.invoke(
+        app,
+        ["graph", "--drawio", str(tmp_path / "graph.drawio"), "--d2", str(tmp_path / "graph.d2")],
+    )
+
+    assert result.exit_code == 2
+    assert "soit --drawio, soit --d2" in result.output
 
 
 def test_endpoints_without_index_exits_with_code_2(
@@ -554,6 +669,8 @@ def test_graph_and_endpoints_reflect_a_real_cccr_index_run(
     graph_result = runner.invoke(app, ["graph", "--json"])
     assert graph_result.exit_code == 0
     data = json.loads(graph_result.output)
+    assert data["services"] == []
+    assert data["edges"] == []
     assert len(data["outbound_calls_in_consumers"]) == 1
     hit = data["outbound_calls_in_consumers"][0]
     assert hit["consumer"]["topic"] == "orders.created"
@@ -567,7 +684,7 @@ def test_graph_and_endpoints_reflect_a_real_cccr_index_run(
     assert sum(json.loads(summary_result.output)["by_severity"].values()) == 1
 
 
-def test_workspace_discovers_maven_modules_and_flags_unindexed(
+def test_microservices_discovers_maven_modules_and_flags_unindexed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dest = tmp_path / "maven_workspace"
@@ -575,7 +692,7 @@ def test_workspace_discovers_maven_modules_and_flags_unindexed(
     with Store(dest / "service-a"):
         pass  # crée .cccr/findings.db, vide
 
-    result = runner.invoke(app, ["workspace", str(dest), "--json"])
+    result = runner.invoke(app, ["microservices", str(dest), "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -586,16 +703,44 @@ def test_workspace_discovers_maven_modules_and_flags_unindexed(
     assert any("payment-service" in w for w in data["warnings"])
 
 
-def test_workspace_text_reports_no_modules_for_empty_directory(
+def test_microservices_text_reports_no_modules_for_empty_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
 
-    result = runner.invoke(app, ["workspace", str(empty)])
+    result = runner.invoke(app, ["microservices", str(empty)])
 
     assert result.exit_code == 0
     assert "Aucun module Maven découvert" in result.output
+
+
+def test_microservices_defaults_to_current_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "maven_workspace"
+    shutil.copytree(MAVEN_WORKSPACE, dest)
+    monkeypatch.chdir(dest)
+    with Store(dest / "service-a"):
+        pass
+
+    result = runner.invoke(app, ["microservices", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    by_name = {s["name"]: s for s in data["services"]}
+    assert by_name["order-service"]["kind"] == "microservice"
+
+
+def test_workspace_command_is_no_longer_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["workspace"])
+
+    assert result.exit_code != 0
+    assert "No such command 'workspace'" in result.output
 
 
 def test_index_falls_back_to_local_default_model_when_config_uses_remote_identifier(

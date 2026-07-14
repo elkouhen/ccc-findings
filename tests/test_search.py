@@ -94,6 +94,30 @@ def test_search_findings_filters_by_severity_and_path_glob(tmp_path: Path) -> No
     assert [hit.finding.id for hit in shell_only] == [SHELL_FINDING.id]
 
 
+def test_search_findings_hybrid_matches_exact_rule_id_and_cwe(tmp_path: Path) -> None:
+    embedder = BagOfWordsFakeEmbedder()
+
+    with Store(tmp_path) as store:
+        seed_store(store, embedder)
+
+        by_rule = search_findings(store, embedder, "custom.subprocess-shell-true")
+        by_cwe = search_findings(store, embedder, "CWE-89")
+
+    assert by_rule[0].finding.id == SHELL_FINDING.id
+    assert by_cwe[0].finding.id == SQL_FINDING.id
+
+
+def test_search_findings_can_fall_back_to_keyword_only_when_vectors_are_absent(
+    tmp_path: Path,
+) -> None:
+    with Store(tmp_path) as store:
+        store.replace_findings_for_files(["app/db.py"], [SQL_FINDING])
+
+        hits = search_findings(store, BagOfWordsFakeEmbedder(), "custom.sql-fstring")
+
+    assert [hit.finding.id for hit in hits] == [SQL_FINDING.id]
+
+
 def test_summary_has_exact_counts(tmp_path: Path) -> None:
     embedder = BagOfWordsFakeEmbedder()
 

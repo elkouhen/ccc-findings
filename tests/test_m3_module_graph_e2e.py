@@ -44,6 +44,8 @@ def test_graph_without_workspace_reports_cross_module_cycle_from_a_single_parent
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
+    assert set(data["services"]) == {"service-x", "service-y", "service-z"}
+    assert len(data["edges"]) == 3
     assert len(data["cycles"]) == 1
     cycle = data["cycles"][0]
     assert set(cycle["services"][:-1]) == {"service-x", "service-y", "service-z"}
@@ -68,6 +70,8 @@ def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
+    assert data["services"] == []
+    assert data["edges"] == []
     assert data["cycles"] == []
     assert data["hotspots"] == []
     assert "--workspace" in data["note"]
