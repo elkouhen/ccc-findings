@@ -1,0 +1,100 @@
+direction: down
+
+svc_0: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **customer**
+    - `DELETE /api/v1/customers/{customer-id}`
+    - `GET /api/v1/customers`
+    - `GET /api/v1/customers/exists/{customer-id}`
+    - `GET /api/v1/customers/{customer-id}`
+    - `POST /api/v1/customers`
+    - `PUT /api/v1/customers`
+  |
+}
+
+svc_1: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **notification**
+  |
+}
+
+svc_2: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **order**
+    - `GET /api/v1/order-lines/order/{order-id}`
+    - `GET /api/v1/orders`
+    - `GET /api/v1/orders/{order-id}`
+    - `POST /api/v1/orders`
+  |
+}
+
+svc_3: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **payment**
+    - `POST /api/v1/payments`
+  |
+}
+
+svc_4: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **product**
+    - `GET /api/v1/products`
+    - `GET /api/v1/products/{product-id}`
+    - `POST /api/v1/products`
+    - `POST /api/v1/products/purchase`
+  |
+}
+
+topic_0: {
+  label: "order-topic"
+  shape: rectangle
+  style.fill: "#ffe6cc"
+  style.stroke: "#d79b00"
+}
+
+topic_1: {
+  label: "payment-topic"
+  shape: rectangle
+  style.fill: "#ffe6cc"
+  style.stroke: "#d79b00"
+}
+
+svc_2 -> svc_0: "GET /api/v1/customers/{customer-id}" {
+}
+
+svc_2 -> svc_3: "POST /api/v1/payments" {
+}
+
+svc_2 -> svc_4: "POST /api/v1/products/purchase" {
+}
+
+svc_2 -> topic_0: "order-topic" {
+  style.stroke-dash: 3
+}
+
+topic_0 -> svc_1: "order-topic" {
+  style.stroke-dash: 3
+}
+
+svc_3 -> topic_1: "payment-topic" {
+  style.stroke-dash: 3
+}
+
+topic_1 -> svc_1: "payment-topic" {
+  style.stroke-dash: 3
+}

@@ -1,0 +1,95 @@
+direction: down
+
+svc_0: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-accounting-service**
+    - `GET /accounts/{accountId}`
+  |
+}
+
+svc_1: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-api-gateway**
+  |
+}
+
+svc_2: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-consumer-service**
+    - `GET /consumers/{consumerId}`
+    - `POST /consumers`
+  |
+}
+
+svc_3: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-delivery-service**
+    - `GET /deliveries/{deliveryId}`
+    - `POST /couriers/{courierId}/availability`
+  |
+}
+
+svc_4: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-kitchen-service**
+    - `GET /restaurants/{restaurantId}`
+    - `POST /tickets/{ticketId}/accept`
+  |
+}
+
+svc_5: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-order-history-service**
+    - `GET /orders/consumerId`
+    - `GET /orders/{orderId}`
+  |
+}
+
+svc_6: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-order-service**
+    - `GET /orders/{orderId}`
+    - `GET /restaurants/{restaurantId}`
+    - `POST /orders`
+    - `POST /orders/{orderId}/cancel`
+    - `POST /orders/{orderId}/revise`
+  |
+}
+
+svc_7: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **ftgo-restaurant-service**
+    - `GET /restaurants/{restaurantId}`
+    - `POST /restaurants`
+  |
+}
+
+svc_1 -> svc_5: "GET /orders/{orderId}" {
+}
+
+svc_1 -> svc_6: "GET /orders/{orderId}" {
+}

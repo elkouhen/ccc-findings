@@ -1,0 +1,80 @@
+direction: down
+
+svc_0: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **order-service**
+    - `GET /orders/orders`
+    - `POST /orders/generate`
+    - `POST /orders/orders`
+  |
+}
+
+svc_1: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **payment-service**
+  |
+}
+
+svc_2: {
+  shape: rectangle
+  style.fill: "#dae8fc"
+  style.stroke: "#6c8ebf"
+  label: |md
+    **stock-service**
+  |
+}
+
+topic_0: {
+  label: "orders"
+  shape: rectangle
+  style.fill: "#ffe6cc"
+  style.stroke: "#d79b00"
+}
+
+topic_1: {
+  label: "payment-orders"
+  shape: rectangle
+  style.fill: "#ffe6cc"
+  style.stroke: "#d79b00"
+}
+
+topic_2: {
+  label: "stock-orders"
+  shape: rectangle
+  style.fill: "#ffe6cc"
+  style.stroke: "#d79b00"
+}
+
+svc_0 -> topic_0: "orders" {
+  style.stroke-dash: 3
+}
+
+topic_0 -> svc_1: "orders" {
+  style.stroke-dash: 3
+}
+
+topic_0 -> svc_2: "orders" {
+  style.stroke-dash: 3
+}
+
+svc_1 -> topic_1: "payment-orders" {
+  style.stroke-dash: 3
+}
+
+topic_1 -> svc_0: "payment-orders" {
+  style.stroke-dash: 3
+}
+
+svc_2 -> topic_2: "stock-orders" {
+  style.stroke-dash: 3
+}
+
+topic_2 -> svc_0: "stock-orders" {
+  style.stroke-dash: 3
+}
