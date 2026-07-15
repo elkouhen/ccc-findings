@@ -312,10 +312,10 @@ def test_render_graph_drawio_uses_affinity_seed_positions_for_kafka_graph() -> N
             int(float(geometry.get("height", "0"))),
         )
 
-    assert _rectangle_gap(rectangles["orders.created"], rectangles["orders"]) < 96
-    assert _rectangle_gap(rectangles["orders.created"], rectangles["payments"]) < 96
-    assert _rectangle_gap(rectangles["payments.completed"], rectangles["payments"]) < 96
-    assert _rectangle_gap(rectangles["payments.completed"], rectangles["notifications"]) < 96
+    assert _rectangle_gap(rectangles["orders.created"], rectangles["orders"]) < 150
+    assert _rectangle_gap(rectangles["orders.created"], rectangles["payments"]) < 150
+    assert _rectangle_gap(rectangles["payments.completed"], rectangles["payments"]) < 150
+    assert _rectangle_gap(rectangles["payments.completed"], rectangles["notifications"]) < 150
 
 
 def test_render_graph_drawio_separates_overlapping_nodes() -> None:

@@ -720,7 +720,7 @@ def _drawio_initial_positions(
     # layout. Graph exports are generated off-line, so spending a few seconds
     # finding a stable placement is preferable to exporting a dense, unreadable
     # diagram. Distances are measured between rectangle borders, not centers.
-    linked_node_gap = 28.0
+    linked_node_gap = 60.0
     repulsion_strength = 65_000.0
     center_strength = 0.008
     alpha = 1.0
@@ -728,7 +728,7 @@ def _drawio_initial_positions(
     alpha_decay = 1 - alpha_min ** (1 / 5_000)
     velocity_decay = 0.32
     max_iterations = 6_000
-    node_margin = 20.0
+    node_margin = 44.0
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
