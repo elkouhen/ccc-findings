@@ -881,6 +881,12 @@ def _drawio_initial_positions(
     _separate_overlapping_drawio_nodes(
         simulated_nodes, positions_f, node_dimensions, margin=node_margin, max_passes=1_000
     )
+    _reduce_drawio_edge_crossings(
+        simulated_nodes, edge_pairs, positions_f, node_dimensions, margin=node_margin
+    )
+    _separate_overlapping_drawio_nodes(
+        simulated_nodes, positions_f, node_dimensions, margin=node_margin, max_passes=1_000
+    )
     _pack_isolated_drawio_nodes(
         isolated_nodes, positions_f, node_dimensions, margin=node_margin
     )
@@ -932,6 +938,139 @@ def _pack_isolated_drawio_nodes(
             start_x + column * (max_width + margin) + width / 2,
             start_y + row * (max_height + margin) + height / 2,
         )
+
+
+def _reduce_drawio_edge_crossings(
+    ordered_nodes: list[tuple[str, str]],
+    edge_pairs: list[tuple[tuple[str, str], tuple[str, str]]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    margin: float,
+) -> None:
+    """Use deterministic local swaps to remove crossings left by the springs.
+
+    The force simulation optimises proximity but does not know that two drawn
+    connectors cross. For larger graphs, this bounded refinement considers a
+    handful of positions near each node's neighbour barycentre and keeps a swap
+    only when it improves crossing count without sacrificing local affinity.
+    """
+    if len(ordered_nodes) < 40 or len(edge_pairs) < 40:
+        return
+
+    edges_by_node: dict[tuple[str, str], list[int]] = {node: [] for node in ordered_nodes}
+    for index, (source, target) in enumerate(edge_pairs):
+        edges_by_node[source].append(index)
+        edges_by_node[target].append(index)
+
+    for _pass in range(3):
+        improved = False
+        for source in ordered_nodes:
+            source_edges = edges_by_node[source]
+            if not source_edges:
+                continue
+            neighbors = [
+                edge_pairs[index][1] if edge_pairs[index][0] == source else edge_pairs[index][0]
+                for index in source_edges
+            ]
+            barycenter = (
+                sum(positions[node][0] for node in neighbors) / len(neighbors),
+                sum(positions[node][1] for node in neighbors) / len(neighbors),
+            )
+            candidates = sorted(
+                (
+                    node
+                    for node in ordered_nodes
+                    if node > source and node[0] == source[0] and edges_by_node[node]
+                ),
+                key=lambda node: math.dist(positions[node], barycenter),
+            )[:6]
+            for target in candidates:
+                if not _drawio_swap_is_clear(
+                    source, target, ordered_nodes, positions, node_dimensions, margin=margin
+                ):
+                    continue
+                affected_edges = set(source_edges) | set(edges_by_node[target])
+                before = _drawio_swap_cost(affected_edges, edge_pairs, positions)
+                positions[source], positions[target] = positions[target], positions[source]
+                after = _drawio_swap_cost(affected_edges, edge_pairs, positions)
+                if after < before:
+                    improved = True
+                    break
+                positions[source], positions[target] = positions[target], positions[source]
+        if not improved:
+            break
+
+
+def _drawio_swap_is_clear(
+    source: tuple[str, str],
+    target: tuple[str, str],
+    ordered_nodes: list[tuple[str, str]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    margin: float,
+) -> bool:
+    """Return whether swapping two boxes keeps both target positions clear."""
+    source_position = positions[source]
+    target_position = positions[target]
+    positions[source], positions[target] = target_position, source_position
+    try:
+        for node in (source, target):
+            nx, ny = positions[node]
+            nw, nh = node_dimensions[node]
+            for other in ordered_nodes:
+                if other == node or other in {source, target}:
+                    continue
+                ox, oy = positions[other]
+                ow, oh = node_dimensions[other]
+                if abs(nx - ox) < (nw + ow) / 2 + margin and abs(ny - oy) < (nh + oh) / 2 + margin:
+                    return False
+        return True
+    finally:
+        positions[source], positions[target] = source_position, target_position
+
+
+def _drawio_swap_cost(
+    affected_edges: set[int],
+    edge_pairs: list[tuple[tuple[str, str], tuple[str, str]]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+) -> float:
+    """Score the local edge lengths and crossings affected by a position swap."""
+    edge_length = 0.0
+    crossings = 0
+    for edge_index in affected_edges:
+        source, target = edge_pairs[edge_index]
+        edge_length += math.dist(positions[source], positions[target])
+        for other_index, (other_source, other_target) in enumerate(edge_pairs):
+            if other_index == edge_index or {source, target} & {other_source, other_target}:
+                continue
+            if _drawio_segments_cross(
+                positions[source], positions[target], positions[other_source], positions[other_target]
+            ):
+                crossings += 1
+    return edge_length + crossings * 2_500.0
+
+
+def _drawio_segments_cross(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    other_start: tuple[float, float],
+    other_end: tuple[float, float],
+) -> bool:
+    """Return whether two non-collinear line segments cross in their interiors."""
+    def orientation(
+        first: tuple[float, float], second: tuple[float, float], third: tuple[float, float]
+    ) -> float:
+        return (second[0] - first[0]) * (third[1] - first[1]) - (
+            second[1] - first[1]
+        ) * (third[0] - first[0])
+
+    start_side = orientation(start, end, other_start)
+    end_side = orientation(start, end, other_end)
+    other_start_side = orientation(other_start, other_end, start)
+    other_end_side = orientation(other_start, other_end, end)
+    return start_side * end_side < 0 and other_start_side * other_end_side < 0
 
 
 def _drawio_link_distance(
