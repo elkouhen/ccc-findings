@@ -1,7 +1,10 @@
 """Inventaire de tous les modules Maven et Gradle d'un workspace."""
 
 import hashlib
+import os
 import re
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -114,9 +117,18 @@ _FIRST_STRING_RE = re.compile(r"\(\s*[\"']([^\"']+)[\"']")
 
 
 def _java_parser() -> Parser:
+    _trace("java_parser.begin")
     parser = Parser()
     parser.language = Language(tree_sitter_java.language())
+    _trace("java_parser.end")
     return parser
+
+
+def _trace(stage: str, **fields: object) -> None:
+    if os.environ.get("CCCR_TRACE") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
 def _starts_application(module_dir: Path) -> SourceEvidence | None:
@@ -129,14 +141,18 @@ def _starts_application(module_dir: Path) -> SourceEvidence | None:
     source_roots = sorted(module_dir.glob("**/src/main/java"))
     if not source_roots:
         return None
+    _trace("module.entrypoint.parser.begin", module=module_dir)
     parser = _java_parser()
+    _trace("module.entrypoint.parser.end", module=module_dir, roots=len(source_roots))
     for source_root in source_roots:
         for path in source_root.rglob("*.java"):
             try:
                 source = path.read_bytes()
             except OSError:
                 continue
+            _trace("module.entrypoint.parse.begin", module=module_dir, path=path)
             tree = parser.parse(source)
+            _trace("module.entrypoint.parse.end", module=module_dir, path=path)
             if tree.root_node.has_error:
                 continue
             for node in _walk(tree.root_node):
@@ -280,7 +296,9 @@ def _extract_java_architecture(
     resolution remains out of scope, so each extracted method retains its receiver and
     an optional collection only when a literal is statically present.
     """
+    _trace("module.architecture.parser.begin", module=module_dir)
     parser = _java_parser()
+    _trace("module.architecture.parser.end", module=module_dir)
     java_files = list(_module_files(module_dir, module_roots, "*.java"))
     production_files: list[tuple[Path, str, bytes]] = []
     collections: set[str] = set()
@@ -316,7 +334,9 @@ def _extract_java_architecture(
     blocking_points: set[BlockingPoint] = set()
     for path, rel, source in production_files:
         source_text = source.decode("utf-8", errors="replace")
+        _trace("module.architecture.parse.begin", module=module_dir, path=rel)
         tree = parser.parse(source)
+        _trace("module.architecture.parse.end", module=module_dir, path=rel)
         if tree.root_node.has_error:
             continue
         repository_receivers: dict[str, str | None] = {}
@@ -419,12 +439,15 @@ def _discover_openapi_files(module_dir: Path, module_roots: set[Path]) -> tuple[
 
 
 def _enrich_module(module: DiscoveredModule, module_roots: set[Path]) -> DiscoveredModule:
+    _trace("module.enrich.begin", module=module.path)
     collections, methods, kafka_methods, blocking_points = _extract_java_architecture(module.path, module_roots)
-    return DiscoveredModule(
+    enriched = DiscoveredModule(
         **{**module.__dict__, "mongo_collections": collections, "mongo_methods": methods,
            "openapi_files": _discover_openapi_files(module.path, module_roots),
            "kafka_methods": kafka_methods, "blocking_points": blocking_points}
     )
+    _trace("module.enrich.end", module=module.path)
+    return enriched
 
 
 def discover_modules(root: Path) -> list[DiscoveredModule]:
@@ -433,11 +456,16 @@ def discover_modules(root: Path) -> list[DiscoveredModule]:
     modules: list[DiscoveredModule] = []
     seen_paths: set[Path] = set()
     for pom_path in sorted(root.rglob("pom.xml")):
+        if ".git" in pom_path.relative_to(root).parts:
+            continue
         module_dir = pom_path.parent.resolve()
         if not _is_module_within_depth(root, module_dir):
             continue
+        _trace("module.maven.begin", pom=pom_path)
         artifact_id, _, packaging = parse_pom(pom_path)
+        _trace("module.maven.parsed", pom=pom_path, artifact=artifact_id, packaging=packaging)
         entrypoint = _starts_application(module_dir)
+        _trace("module.maven.entrypoint.end", pom=pom_path, found=entrypoint is not None)
         kind = (
             "aggregator"
             if packaging == "pom"
@@ -481,7 +509,10 @@ def discover_modules(root: Path) -> list[DiscoveredModule]:
             )
         )
     module_roots = {module.path for module in modules}
-    return sorted(
+    _trace("modules.enrich.begin", count=len(modules))
+    enriched = sorted(
         (_enrich_module(module, module_roots) for module in modules),
         key=lambda module: str(module.path),
     )
+    _trace("modules.enrich.end", count=len(enriched))
+    return enriched
