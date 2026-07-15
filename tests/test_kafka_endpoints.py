@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from ccc_radar.config import Config
-from ccc_radar.scanner import resolve_spring_property, run_semgrep_endpoints
+from ccc_radar.scanner import (
+    infer_markdown_topic_manifest_endpoints,
+    resolve_spring_property,
+    run_semgrep_endpoints,
+)
 
 # Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/kafka/), pas dans ce repo (ADR-24). Cible d'analyse : Java + Spring
@@ -250,6 +254,32 @@ def test_kafka_pack_runs_standalone_without_other_backlog_tasks() -> None:
     assert len(endpoints) == 18
     assert {e.role for e in endpoints} == {"consume", "produce"}
     assert {e.system for e in endpoints} == {"kafka"}
+
+
+def test_markdown_topic_manifest_declares_producers_and_consumers(tmp_path: Path) -> None:
+    manifest = tmp_path / "TOPICS.md"
+    manifest.write_text(
+        "### module-a\n\n"
+        "**Producer**\n\n"
+        "| Topic | Nom physique |\n"
+        "|---|---|\n"
+        "| `flux1` | `FLUX1` |\n\n"
+        "**Consumer**\n\n"
+        "| Topic | Nom physique |\n"
+        "|---|---|\n"
+        "| `flux2` | `FLUX2` |\n",
+        encoding="utf-8",
+    )
+
+    endpoints = infer_markdown_topic_manifest_endpoints(tmp_path)
+
+    assert [(e.role, e.topic, e.module) for e in endpoints] == [
+        ("produce", "FLUX1", "module-a"),
+        ("consume", "FLUX2", "module-a"),
+    ]
+    assert {e.source for e in endpoints} == {"manifest"}
+    assert {e.framework for e in endpoints} == {"markdown-topic-manifest"}
+    assert {e.topic_dynamic for e in endpoints} == {False}
 
 
 # -- resolve_spring_property (unitaire, sans Semgrep) --

@@ -303,6 +303,35 @@ _ROUTER_FUNCTION_AND_ROUTE_RE = re.compile(
     r"\.andRoute\(\s*(?:RequestPredicates\.)?([A-Z]+)\(\s*\"([^\"]+)\"\s*\)",
     re.DOTALL,
 )
+_MARKDOWN_MODULE_HEADING_RE = re.compile(r"^\s*###\s+(.+?)\s*$")
+_MARKDOWN_BOLD_SECTION_RE = re.compile(r"^\s*\*\*(Producer|Consumer)\*\*\s*$", re.IGNORECASE)
+_MARKDOWN_CODE_RE = re.compile(r"^`(.*)`$")
+
+
+def _clean_markdown_table_cell(value: str) -> str:
+    cleaned = value.strip()
+    code = _MARKDOWN_CODE_RE.match(cleaned)
+    if code is not None:
+        return code.group(1).strip()
+    return cleaned
+
+
+def _normalize_markdown_header(value: str) -> str:
+    normalized = _clean_markdown_table_cell(value).lower()
+    normalized = normalized.replace("é", "e").replace("è", "e").replace("ê", "e")
+    return " ".join(normalized.split())
+
+
+def _split_markdown_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    cells = [_clean_markdown_table_cell(cell) for cell in stripped.strip("|").split("|")]
+    return cells
+
+
+def _is_markdown_separator_row(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
 
 
 def _mapping_args_have_only_non_path_attrs(args: str) -> bool:
@@ -1377,6 +1406,114 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
     return list(inferred.values())
 
 
+def _build_markdown_topic_manifest_endpoint(
+    rel_path: str,
+    line_no: int,
+    line: str,
+    module: str | None,
+    role: str,
+    topic: str,
+) -> MessageEndpoint:
+    return MessageEndpoint(
+        id=compute_endpoint_id(role, topic, rel_path, line_no, line_no),
+        role=role,
+        system="kafka",
+        topic=topic,
+        topic_dynamic=False,
+        source="manifest",
+        framework="markdown-topic-manifest",
+        path=rel_path,
+        start_line=line_no,
+        end_line=line_no,
+        snippet=line.strip(),
+        module=module,
+        qualified_name=None,
+    )
+
+
+def _parse_markdown_topic_manifest(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    try:
+        lines = (repo_root / rel_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    endpoints: list[MessageEndpoint] = []
+    module: str | None = None
+    role: str | None = None
+    header: list[str] | None = None
+    topic_index: int | None = None
+    physical_index: int | None = None
+
+    for idx, line in enumerate(lines, start=1):
+        heading = _MARKDOWN_MODULE_HEADING_RE.match(line)
+        if heading is not None:
+            module = heading.group(1).strip()
+            role = None
+            header = None
+            topic_index = None
+            physical_index = None
+            continue
+
+        section = _MARKDOWN_BOLD_SECTION_RE.match(line)
+        if section is not None:
+            role = "produce" if section.group(1).lower() == "producer" else "consume"
+            header = None
+            topic_index = None
+            physical_index = None
+            continue
+
+        cells = _split_markdown_table_row(line)
+        if cells is None:
+            continue
+        if _is_markdown_separator_row(cells):
+            continue
+        if role is None:
+            continue
+
+        normalized_cells = [_normalize_markdown_header(cell) for cell in cells]
+        if "topic" in normalized_cells and "nom physique" in normalized_cells:
+            header = cells
+            topic_index = normalized_cells.index("topic")
+            physical_index = normalized_cells.index("nom physique")
+            continue
+        if header is None or topic_index is None or physical_index is None:
+            continue
+        if max(topic_index, physical_index) >= len(cells):
+            continue
+
+        physical_name = cells[physical_index].strip()
+        logical_name = cells[topic_index].strip()
+        topic = physical_name or logical_name
+        if not topic:
+            continue
+        endpoints.append(
+            _build_markdown_topic_manifest_endpoint(
+                rel_path, idx, line, module, role, topic
+            )
+        )
+
+    return endpoints
+
+
+def infer_markdown_topic_manifest_endpoints(
+    repo_root: Path, files: list[str] | None = None
+) -> list[MessageEndpoint]:
+    if files is None:
+        candidate_files = [
+            path.relative_to(repo_root).as_posix()
+            for path in repo_root.rglob("*.md")
+            if path.is_file()
+        ]
+    else:
+        candidate_files = sorted(path for path in files if path.endswith(".md"))
+
+    inferred: dict[str, MessageEndpoint] = {}
+    for rel_path in candidate_files:
+        for endpoint in _parse_markdown_topic_manifest(repo_root, rel_path):
+            inferred[endpoint.id] = endpoint
+    return list(inferred.values())
+
+
 @lru_cache(maxsize=512)
 def _load_value_annotated_fields(path_str: str) -> dict[str, str]:
     """Champs `@Value("${clé}")` d'un fichier source Java — variable ->
@@ -1584,6 +1721,7 @@ def run_semgrep_endpoints(
     raw = invoke_semgrep_raw(repo_root, config, files)
     endpoints = parse_semgrep_endpoints(raw, repo_root)
     endpoints.extend(infer_framework_endpoints(repo_root, files))
+    endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, files))
     return endpoints
 
 
