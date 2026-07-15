@@ -49,7 +49,7 @@ def _fixture() -> dict[str, list[MessageEndpoint]]:
                 "a/Client.java",
                 3,
                 3,
-                snippet="client.getServiceBServiceUrl()",
+                snippet="http://service-b",
             ),
             make_endpoint("produce", "orders.created", "a/Producer.java", 5, 5, system="kafka"),
         ],
@@ -263,10 +263,10 @@ def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
     endpoints_by_service = {
         "service-a": [
             make_endpoint(
-                "call", "GET /orders", "a/Client1.java", 5, 5, snippet="client.getServiceBServiceUrl()"
+                "call", "GET /orders", "a/Client1.java", 5, 5, snippet="http://service-b"
             ),
             make_endpoint(
-                "call", "GET /orders", "a/Client2.java", 15, 15, snippet="client.getServiceBServiceUrl()"
+                "call", "GET /orders", "a/Client2.java", 15, 15, snippet="http://service-b"
             ),
         ],
         "service-b": [make_endpoint("serve", "GET /orders", "b/Controller.java", 10, 10)],
@@ -285,10 +285,10 @@ def test_render_graph_drawio_bundles_parallel_relations_in_a_multiline_label() -
     endpoints_by_service = {
         "service-a": [
             make_endpoint(
-                "call", "GET /orders", "a/Client.java", 5, 5, snippet="client.getServiceBServiceUrl()"
+                "call", "GET /orders", "a/Client.java", 5, 5, snippet="http://service-b"
             ),
             make_endpoint(
-                "call", "POST /orders", "a/Client.java", 10, 10, snippet="client.getServiceBServiceUrl()"
+                "call", "POST /orders", "a/Client.java", 10, 10, snippet="http://service-b"
             ),
         ],
         "service-b": [

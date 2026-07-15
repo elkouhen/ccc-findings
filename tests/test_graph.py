@@ -43,19 +43,19 @@ def _three_service_fixture() -> dict[str, list[MessageEndpoint]]:
     service_a = [
         make_endpoint("serve", "GET /a-status", "a/Controller.java", 10, 10),
         make_endpoint(
-            "call", "GET /b-status", "a/Client.java", 5, 5, snippet="client.getBServiceUrl()"
+            "call", "GET /b-status", "a/Client.java", 5, 5, snippet="http://service-b"
         ),
     ]
     service_b = [
         make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10),
         make_endpoint(
-            "call", "GET /c-status", "b/Client.java", 5, 5, snippet="client.getCServiceUrl()"
+            "call", "GET /c-status", "b/Client.java", 5, 5, snippet="http://service-c"
         ),
     ]
     service_c = [
         make_endpoint("serve", "GET /c-status", "c/Controller.java", 10, 10),
         make_endpoint(
-            "call", "GET /a-status", "c/Client.java", 5, 5, snippet="client.getAServiceUrl()"
+            "call", "GET /a-status", "c/Client.java", 5, 5, snippet="http://service-a"
         ),
     ]
     return {"service-a": service_a, "service-b": service_b, "service-c": service_c}
@@ -201,7 +201,7 @@ def test_build_graph_uses_manifest_kafka_endpoints_as_service_authority() -> Non
 
 def test_build_graph_deduplicates_duplicate_edges() -> None:
     call = make_endpoint(
-        "call", "GET /b-status", "a/Client.java", 5, 5, snippet="client.getBServiceUrl()"
+        "call", "GET /b-status", "a/Client.java", 5, 5, snippet="http://service-b"
     )
     serve = make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10)
 

@@ -69,8 +69,8 @@ def _segment_matches(call_segment: str, serve_segment: str) -> bool:
 
 
 _SERVICE_URL_GETTER_RE = re.compile(r"\.get([A-Z][A-Za-z0-9]*)ServiceUrl\(")
-_SERVICE_URL_HOST_RE = re.compile(r'https?://([a-z0-9-]+(?:-[a-z0-9-]+)*-service)\b', re.IGNORECASE)
-_LOAD_BALANCED_URI_RE = re.compile(r"lb://([a-z0-9-]+(?:-[a-z0-9-]+)*-service)\b", re.IGNORECASE)
+_SERVICE_URL_HOST_RE = re.compile(r"https?://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
+_LOAD_BALANCED_URI_RE = re.compile(r"lb://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
 
 
 def _camel_to_kebab(name: str) -> str:

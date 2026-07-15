@@ -895,7 +895,7 @@ def test_microservices_service_subcommands_render_endpoints_flows_and_properties
     call = MessageEndpoint(
         id="call", role="call", system="rest", topic="GET /payments", topic_dynamic=False,
         source="code", framework="resttemplate", path="OrderClient.java", start_line=10,
-        end_line=10, snippet="", module="order-service",
+            end_line=10, snippet="restTemplate.getForObject(\"http://payment-service/payments\")", module="order-service",
     )
     serve = MessageEndpoint(
         id="serve", role="serve", system="rest", topic="GET /payments", topic_dynamic=False,
