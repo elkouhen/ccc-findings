@@ -25,19 +25,20 @@ qu'ils ne sont pas annoncés comme pris en charge.
 
 ## Règles de travail
 
-1. Ne modifie jamais le code source, les fichiers de build ou l'index `.cccr`
-   d'un dépôt sous `~/examples`. Préserve également toute modification locale
-   préexistante.
-2. Les commandes de consultation doivent être non mutatives. Si un index
-   historique exige une migration, travaille sur une copie temporaire ou note
-   explicitement l'incompatibilité ; ne contourne pas la règle 1.
+1. Ne modifie jamais le code source ni les fichiers de build d'un dépôt sous
+   `~/examples`. La suppression et la recréation de l'index `.cccr` sont
+   autorisées directement dans ces dépôts ; ne crée aucun commit.
+2. Les commandes de consultation doivent être non mutatives. Une migration ou
+   une régénération de l'index `.cccr` est autorisée lorsqu'elle est nécessaire
+   à l'analyse ; note explicitement toute incompatibilité rencontrée.
 3. Avant une indexation, exécute `cccr doctor` et vérifie les règles actives.
    En cas d'échec de Semgrep, conserve stderr et classe le problème comme
    prérequis/outillage : ne conclus pas que le dépôt ne contient aucun endpoint.
-   Exécute ensuite `cccr index` sur chaque module avant toute analyse ou
-   comparaison avec l'inventaire `cccr`. Pour les dépôts sous `~/examples`,
-   cette indexation doit obligatoirement être effectuée sur une copie temporaire
-   afin de ne jamais modifier leur index `.cccr`.
+   Sur chaque module, supprimer d'abord le répertoire `.cccr`, puis le recréer
+   avec `cccr init` avant d'exécuter `cccr index` et toute analyse ou comparaison
+   avec l'inventaire `cccr`. Pour les dépôts sous `~/examples`, effectuer ces
+   opérations directement dans le dépôt, sans modifier le code ni les fichiers
+   de build.
 4. N'utilise pas les résultats de `cccr` pendant l'analyse directe. Termine et
    enregistre cette dernière avant de comparer les deux inventaires.
 5. Analyse le code de production par défaut. Les éléments sous `src/test`,
@@ -55,9 +56,9 @@ Pour chaque dépôt :
 1. Relever le commit/branche et l'état Git sans modifier le dépôt.
 2. Vérifier `.cccr/`, la version de schéma, la fraîcheur de l'inventaire et le
    résultat de `cccr doctor`.
-3. Si l'index manque ou est périmé, indiquer la commande de régénération. Ne
-   l'exécuter sur une copie temporaire que si les règles et Semgrep sont
-   opérationnels.
+3. Dans chaque module, supprimer le répertoire `.cccr`, exécuter `cccr init`
+   pour le recréer, puis lancer `cccr index`. Ne réaliser cette régénération que
+   si les règles et Semgrep sont opérationnels.
 4. Consigner les versions de `cccr`, Semgrep et les règles actives afin que le
    rapport soit reproductible.
 
@@ -155,9 +156,9 @@ compatibles et résolus.
    exemples. Ajouter le test de non-régression avant ou avec la correction.
 4. Exécuter les tests ciblés puis la suite pertinente. Si un prérequis externe
    bloque les tests, distinguer clairement cet échec des régressions du code.
-5. Réindexer une copie temporaire du dépôt révélateur et refaire les étapes 1
-   à 3. Arrêter lorsqu'il ne reste que des écarts documentés, hors périmètre ou
-   non reproductibles.
+5. Réindexer directement le dépôt révélateur et refaire les étapes 1 à 3.
+   Arrêter lorsqu'il ne reste que des écarts documentés, hors périmètre ou non
+   reproductibles.
 
 ## Sorties attendues
 
