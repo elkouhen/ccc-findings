@@ -15,6 +15,7 @@ import tree_sitter_java
 from ccc_radar.gradle import discover_gradle_modules
 from ccc_radar.maven import parse_pom, pom_version
 from ccc_radar.configuration import service_configuration_example
+from ccc_radar.topic_expressions import spring_topic_reference
 
 
 @dataclass(frozen=True)
@@ -112,8 +113,8 @@ _OPENAPI_FILENAMES = (
     "openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json",
 )
 _MAX_NESTED_MODULE_DEPTH = 5
-_KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*[\"']([^\"']+)[\"']")
-_FIRST_STRING_RE = re.compile(r"\(\s*[\"']([^\"']+)[\"']")
+_KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*([\"'])(.*?)\1")
+_FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
 _JAVA_LANGUAGE: Language | None = None
 _JAVA_PARSER: Parser | None = None
 
@@ -203,6 +204,16 @@ def _source_evidence(source: bytes, node, rel_path: str) -> SourceEvidence:
     )
 
 
+def _kafka_topic_literal(match: re.Match[str] | None) -> str | None:
+    if match is None:
+        return None
+    literal = match.group(2)
+    reference = spring_topic_reference(literal)
+    if reference is not None:
+        return reference.display_name
+    return literal
+
+
 def _module_relative(module_dir: Path, path: Path) -> str:
     return path.relative_to(module_dir).as_posix()
 
@@ -252,7 +263,7 @@ class KafkaArchitectureExtension:
                         methods.add(KafkaMethod(
                             role="receive", mechanism="spring-kafka-listener", method=method_name,
                             path=rel, line=method_node.start_point.row + 1,
-                            topic=topic_match.group(1) if topic_match else None,
+                            topic=_kafka_topic_literal(topic_match),
                             evidence=_source_evidence(source, annotation_node, rel),
                         ))
                     if "@SendTo" in annotation:
@@ -260,7 +271,7 @@ class KafkaArchitectureExtension:
                         methods.add(KafkaMethod(
                             role="send", mechanism="spring-kafka-send-to", method=method_name,
                             path=rel, line=method_node.start_point.row + 1,
-                            topic=topic_match.group(1) if topic_match else None,
+                            topic=_kafka_topic_literal(topic_match),
                             evidence=_source_evidence(source, annotation_node, rel),
                         ))
                 for invocation in _walk(method_node):
@@ -272,7 +283,7 @@ class KafkaArchitectureExtension:
                         continue
                     receiver, operation = call_match.groups()
                     topic_match = _FIRST_STRING_RE.search(invocation_text)
-                    topic = topic_match.group(1) if topic_match else None
+                    topic = _kafka_topic_literal(topic_match)
                     mechanism: str | None = None
                     role: str | None = None
                     if operation in {"send", "sendDefault"} and (

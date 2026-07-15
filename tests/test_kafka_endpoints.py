@@ -73,7 +73,7 @@ def test_kafka_consume_keeps_placeholder_dynamic_when_unresolved() -> None:
     # topics = "${app.kafka.topics.missing}" : ni dans application.yml, ni
     # de défaut Spring — jamais résolu au hasard.
     unresolved = by_line[19]
-    assert unresolved.topic == "${app.kafka.topics.missing}"
+    assert unresolved.topic == "app.kafka.topics.missing"
     assert unresolved.topic_dynamic is True
 
 

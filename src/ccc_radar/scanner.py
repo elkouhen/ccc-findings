@@ -16,6 +16,7 @@ from ccc_radar import maven as maven_module
 from ccc_radar.gradle import gradle_service_for_path
 from ccc_radar.maven import module_name_for_path
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
+from ccc_radar.topic_expressions import spring_topic_reference
 
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 
@@ -179,7 +180,7 @@ def parse_semgrep_json(raw: str, repo_root: Path) -> list[Finding]:
 # de la règle (fixes par construction, une règle = une méthode), le
 # topic/chemin vient d'une extraction best-effort sur le snippet
 # (métavariables Semgrep indisponibles sans compte connecté, voir ADR-26).
-_QUOTED_STRING_RE = re.compile(r"f?[\"']([^\"']*)[\"']")
+_QUOTED_STRING_RE = re.compile(r"f?([\"'])(.*?)\1")
 _PROPERTY_PLACEHOLDER_RE = re.compile(r"^\$\{([^}]+)\}$")
 _MULTI_SLASH_RE = re.compile(r"/{2,}")
 
@@ -236,7 +237,7 @@ def _find_first_literal(snippet: str) -> tuple[str | None, bool]:
     for line in snippet.splitlines():
         match = _QUOTED_STRING_RE.search(line)
         if match is not None:
-            literal = match.group(1)
+            literal = match.group(2)
             remainder = line[match.end() :].lstrip()
             return literal, remainder.startswith("+")
     return None, True
@@ -1265,12 +1266,12 @@ def _resolve_topic_expression(
     expr = expr.strip()
     if len(expr) >= 2 and expr[0] == expr[-1] == '"':
         literal = expr[1:-1]
-        placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
-        if placeholder is not None:
-            resolved = resolve_spring_property(repo_root, placeholder.group(1), source_path)
+        reference = spring_topic_reference(literal)
+        if reference is not None:
+            resolved = resolve_spring_property(repo_root, reference.property_key, source_path)
             if resolved is not None:
                 return resolved, False
-            return literal, True
+            return reference.display_name, True
         return literal, False
     if re.fullmatch(r"[A-Za-z_]\w*", expr):
         resolved = _resolve_value_annotated_variable(repo_root, source_path, expr)
@@ -1434,12 +1435,12 @@ def _extract_kafka_topic(
                     return resolved, False
         return "<dynamic>", True
 
-    placeholder = _PROPERTY_PLACEHOLDER_RE.match(literal)
-    if placeholder is not None:
-        resolved = resolve_spring_property(repo_root, placeholder.group(1), source_path)
+    reference = spring_topic_reference(literal)
+    if reference is not None:
+        resolved = resolve_spring_property(repo_root, reference.property_key, source_path)
         if resolved is not None:
             return resolved, False
-        return literal, True
+        return reference.display_name, True
 
     return literal, dynamic
 

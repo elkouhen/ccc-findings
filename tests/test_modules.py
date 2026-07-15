@@ -234,6 +234,36 @@ class OrderMessaging {
     ]
 
 
+def test_modules_unwrap_spring_kafka_topic_expressions_from_java_ast(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderMessaging.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.messaging.handler.annotation.SendTo;
+class OrderMessaging {
+  KafkaTemplate<String, String> kafkaTemplate;
+  @KafkaListener(topics = "${kafka.topic}") @SendTo("#{kafka.topic}")
+  void consumePlaceholder(String payload) {}
+  @KafkaListener(topics = "#{kafka.topic}")
+  void consumeSpel(String payload) {}
+  void publish(String payload) { kafkaTemplate.send("#{'${kafka.topic}'}", payload); }
+}
+"""
+    )
+
+    module_info = discover_modules(tmp_path)[0]
+
+    assert [(item.role, item.mechanism, item.method, item.topic) for item in module_info.kafka_methods] == [
+        ("receive", "spring-kafka-listener", "consumePlaceholder", "kafka.topic"),
+        ("send", "spring-kafka-send-to", "consumePlaceholder", "kafka.topic"),
+        ("receive", "spring-kafka-listener", "consumeSpel", "kafka.topic"),
+        ("send", "spring-kafka-template", "publish", "kafka.topic"),
+    ]
+
+
 def test_modules_can_disable_tree_sitter_architecture_enrichment(tmp_path: Path) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "OrderMessaging.java"

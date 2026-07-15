@@ -236,6 +236,49 @@ def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_pa
     assert endpoints[0].framework == "spring-kafka"
 
 
+def test_parse_semgrep_kafka_endpoint_unwraps_spring_topic_expressions(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "OrderListener.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        '@KafkaListener(topics = "${kafka.topic}")\n'
+        '@KafkaListener(topics = "#{kafka.topic}")\n'
+        '@KafkaListener(topics = "#{\'${kafka.topic}\'}")\n'
+    )
+    raw = """
+    {"results": [
+      {
+        "check_id": "rules.cccr.kafka.java.consume-listener",
+        "path": "src/main/java/OrderListener.java",
+        "start": {"line": 1}, "end": {"line": 1},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "system": "kafka", "role": "consume",
+                                "framework": "spring-kafka"}}
+      },
+      {
+        "check_id": "rules.cccr.kafka.java.consume-listener",
+        "path": "src/main/java/OrderListener.java",
+        "start": {"line": 2}, "end": {"line": 2},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "system": "kafka", "role": "consume",
+                                "framework": "spring-kafka"}}
+      },
+      {
+        "check_id": "rules.cccr.kafka.java.consume-listener",
+        "path": "src/main/java/OrderListener.java",
+        "start": {"line": 3}, "end": {"line": 3},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "system": "kafka", "role": "consume",
+                                "framework": "spring-kafka"}}
+      }
+    ]}
+    """
+
+    endpoints = parse_semgrep_endpoints(raw, tmp_path)
+
+    assert [endpoint.topic for endpoint in endpoints] == ["kafka.topic", "kafka.topic", "kafka.topic"]
+    assert [endpoint.topic_dynamic for endpoint in endpoints] == [True, True, True]
+
+
 def test_spring_cloud_gateway_yaml_routes_are_inferred(tmp_path: Path) -> None:
     config = tmp_path / "src" / "main" / "resources" / "application.yml"
     config.parent.mkdir(parents=True)
