@@ -497,7 +497,7 @@ def render_graph_html(
                 if shown_resources
                 else f"{name}\nAucune API exposée",
                 "width": 320,
-                "height": 72 + 16 * max(1, len(shown_resources)),
+                "height": 76 + 18 * max(1, len(shown_resources)),
             }
         )
     nodes += [
@@ -538,11 +538,19 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
     #graph { display: block; width: 100vw; height: 100vh; background: #f8fafc; }
+    #graph { touch-action: none; }
     .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
     .toolbar input { width: 220px; height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
     .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
+    .service-card { width: 100%; height: 100%; overflow: hidden; border: 1.5px solid #4f79b5; border-radius: 6px; background: #ffffff; box-shadow: 0 2px 7px rgba(28, 59, 102, .14); color: #172033; pointer-events: none; }
+    .service-title { padding: 8px 10px 6px; border-bottom: 1px solid #d7e3f4; background: #eaf2ff; color: #183b66; font-size: 13px; font-weight: 700; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .service-count { padding: 4px 10px; color: #59708d; font-size: 10px; font-weight: 650; }
+    .service-api { display: flex; align-items: center; gap: 7px; min-height: 18px; padding: 1px 10px; color: #183b66; font-size: 10px; line-height: 15px; }
+    .service-api span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .method { flex: 0 0 42px; padding: 1px 3px; border-radius: 3px; font-size: 9px; font-weight: 750; text-align: center; }
+    .method-get { background: #dbeafe; color: #1d4ed8; }.method-post { background: #dcfce7; color: #15803d; }.method-put { background: #f3e8ff; color: #7e22ce; }.method-patch { background: #fef3c7; color: #b45309; }.method-delete { background: #fee2e2; color: #b91c1c; }.method-other { background: #e5e7eb; color: #4b5563; }
     .link { fill: none; stroke-width: 1.4px; stroke-opacity: .24; }
     .link.kafka { stroke: #d18b20; stroke-dasharray: 5 4; }
     .link.rest { stroke: #4f79b5; }
@@ -566,6 +574,7 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
     <input id="search" type="search" placeholder="Rechercher un nœud" autocomplete="off" aria-label="Rechercher un nœud">
     <button id="zoom-out" type="button" aria-label="Dézoomer" title="Dézoomer">−</button>
     <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
+    <button id="fit-view" type="button" aria-label="Ajuster à l'écran" title="Ajuster à l'écran">□</button>
     <button id="reset" type="button" aria-label="Réinitialiser la sélection" title="Réinitialiser">×</button>
   </div>
   <div id="details">Sélectionnez un nœud pour isoler ses relations.</div>
@@ -691,6 +700,24 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
 
     const graphData = JSON.parse(document.getElementById("graph-data").textContent);
+    const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[character]);
+    const serviceCard = datum => {
+      const { name, resources, width, height } = datum.data;
+      const visibleResources = resources.slice(0, 4);
+      const rows = visibleResources.length
+        ? visibleResources.map(resource => {
+          const [method, ...pathParts] = resource.split(" ");
+          const methodClass = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)
+            ? `method-${method.toLowerCase()}` : "method-other";
+          return `<div class="service-api"><span class="method ${methodClass}">${escapeHtml(method)}</span><span>${escapeHtml(pathParts.join(" "))}</span></div>`;
+        }).join("")
+        : '<div class="service-api"><span>Aucune API exposée</span></div>';
+      const remaining = resources.length - visibleResources.length;
+      const summary = resources.length ? `${resources.length} API${resources.length > 1 ? "s" : ""} exposée${resources.length > 1 ? "s" : ""}` : "Aucune API exposée";
+      return `<div class="service-card" style="width:${width}px;height:${height}px"><div class="service-title">${escapeHtml(name)}</div><div class="service-count">${summary}</div>${rows}${remaining ? `<div class="service-api"><span>+ ${remaining} API</span></div>` : ""}</div>`;
+    };
     const data = {
       nodes: graphData.nodes.map(node => ({
         id: node.id,
@@ -713,14 +740,17 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
       zoomRange: [.15, 4],
       animation: false,
       node: {
-        type: "rect",
+        type: datum => datum.data.kind === "microservice" ? "html" : "rect",
         style: {
           size: datum => [datum.data.width, datum.data.height],
+          dx: datum => -datum.data.width / 2,
+          dy: datum => -datum.data.height / 2,
+          innerHTML: datum => datum.data.kind === "microservice" ? serviceCard(datum) : "",
           fill: datum => datum.data.kind === "kafka_topic" ? "#fff3df" : "#eaf2ff",
           stroke: datum => datum.data.kind === "kafka_topic" ? "#d18b20" : "#4f79b5",
           radius: datum => datum.data.kind === "kafka_topic" ? 21 : 6,
-          label: true,
-          labelText: datum => datum.data.label,
+          label: datum => datum.data.kind === "kafka_topic",
+          labelText: datum => datum.data.kind === "kafka_topic" ? datum.data.label : "",
           labelFill: datum => datum.data.kind === "kafka_topic" ? "#744a0b" : "#172033",
           labelFontSize: datum => datum.data.kind === "kafka_topic" ? 11 : 12,
           labelFontWeight: datum => datum.data.kind === "kafka_topic" ? 600 : 500,
@@ -802,6 +832,7 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("zoom-out").addEventListener("click", () => {
       graph.zoomBy(.8, true, graph.getCanvasCenter());
     });
+    document.getElementById("fit-view").addEventListener("click", () => graph.fitView());
     document.getElementById("reset").addEventListener("click", reset);
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
