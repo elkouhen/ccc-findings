@@ -280,6 +280,18 @@ def index_repo(
     # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
     # pas tels qu'un `cccr index` précédent les avait mémorisés.
     clear_analysis_caches()
+    discovered_modules = []
+    if "properties" not in disabled:
+        _report_progress(progress, "→ Indexation : découverte des modules Maven/Gradle...")
+        discovered_modules = discover_modules(repo_root)
+        if discovered_modules:
+            for module in discovered_modules:
+                _report_progress(
+                    progress,
+                    f"  • [{module.build_system}/{module.kind}] {module.name}  {module.path}",
+                )
+        else:
+            _report_progress(progress, "  • aucun module Maven/Gradle détecté ; scan de la racine.")
     endpoint_signature = current_endpoint_inventory_signature()
     if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
         full = True
@@ -371,7 +383,7 @@ def index_repo(
     # repository state, not a partially failed scan.
     if "properties" not in disabled:
         _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
-        store.replace_modules(discover_modules(repo_root))
+        store.replace_modules(discovered_modules)
     else:
         _report_progress(progress, "→ Indexation : propriétés et inventaire des modules désactivés, snapshot conservé.")
 

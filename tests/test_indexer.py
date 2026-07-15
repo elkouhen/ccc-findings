@@ -72,10 +72,14 @@ def test_index_repo_reports_progress_messages(repo_copy: Path) -> None:
         index_repo(repo_copy, make_config(), store, FakeEmbedder(), progress=messages.append)
 
     assert any("inventaire des fichiers" in message for message in messages)
+    assert any("découverte des modules" in message for message in messages)
     assert any("delta calculé" in message for message in messages)
     assert any("scan Semgrep" in message for message in messages)
     assert any("écriture des résultats" in message for message in messages)
     assert any("embedding" in message for message in messages)
+    assert next(i for i, message in enumerate(messages) if "découverte des modules" in message) < next(
+        i for i, message in enumerate(messages) if "inventaire des fichiers" in message
+    )
 
 
 def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypatch: pytest.MonkeyPatch) -> None:
