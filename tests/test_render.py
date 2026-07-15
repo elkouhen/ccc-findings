@@ -346,6 +346,43 @@ def test_render_graph_drawio_separates_overlapping_nodes() -> None:
             assert not _rectangles_overlap(first, second)
 
 
+def test_render_graph_drawio_keeps_50_nodes_and_450_edges_separate() -> None:
+    endpoints_by_service: dict[str, list[MessageEndpoint]] = {}
+    for service_index in range(25):
+        service = f"service-{service_index:02d}"
+        endpoints = [
+            make_endpoint(
+                "produce",
+                f"topic-{service_index:02d}",
+                f"{service}/Producer.java",
+                system="kafka",
+            )
+        ]
+        endpoints.extend(
+            make_endpoint(
+                "consume",
+                f"topic-{(service_index + offset) % 25:02d}",
+                f"{service}/Listener{offset}.java",
+                start_line=offset,
+                end_line=offset,
+                system="kafka",
+            )
+            for offset in range(1, 18)
+        )
+        endpoints_by_service[service] = endpoints
+
+    document = render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service))
+    root = ET.fromstring(document)
+    rectangles = _vertex_rectangles(root)
+    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
+
+    assert len(rectangles) == 50
+    assert len(edge_cells) == 450
+    for i, first in enumerate(rectangles):
+        for second in rectangles[i + 1 :]:
+            assert not _rectangles_overlap(first, second)
+
+
 def test_render_graph_drawio_does_not_encode_layer_or_port_constraints() -> None:
     endpoints_by_service = _fixture()
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))

@@ -716,17 +716,19 @@ def _drawio_initial_positions(
     if not ordered_nodes:
         return {}
 
-    service_topic_distance = 165.0
-    default_link_distance = 280.0
-    charge_strength = -4200.0
-    collision_strength = 0.9
-    center_strength = 0.025
+    # The simulation is intentionally more patient than an interactive D3
+    # layout. Graph exports are generated off-line, so spending a few seconds
+    # finding a stable placement is preferable to exporting a dense, unreadable
+    # diagram. Distances are measured between rectangle borders, not centers.
+    linked_node_gap = 28.0
+    repulsion_strength = 65_000.0
+    center_strength = 0.008
     alpha = 1.0
-    alpha_min = 0.001
-    alpha_decay = 1 - alpha_min ** (1 / 1200)
-    velocity_decay = 0.38
-    max_iterations = 1800
-    node_margin = 32.0
+    alpha_min = 0.002
+    alpha_decay = 1 - alpha_min ** (1 / 5_000)
+    velocity_decay = 0.32
+    max_iterations = 6_000
+    node_margin = 20.0
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
@@ -782,11 +784,7 @@ def _drawio_initial_positions(
 
     velocities = {node: (0.0, 0.0) for node in ordered_nodes}
     degrees = {node: max(1, len(adjacency[node])) for node in ordered_nodes}
-    collision_radii = {
-        node: math.hypot(node_dimensions[node][0], node_dimensions[node][1]) / 2 + node_margin
-        for node in ordered_nodes
-    }
-    for _iteration in range(max_iterations):
+    for iteration in range(max_iterations):
         if alpha < alpha_min:
             break
 
@@ -796,8 +794,12 @@ def _drawio_initial_positions(
             dx = tx - sx
             dy = ty - sy
             distance = max(1.0, math.hypot(dx, dy))
-            desired = service_topic_distance if source[0] != target[0] else default_link_distance
-            strength = alpha * 0.42 / min(degrees[source], degrees[target])
+            desired = _drawio_link_distance(
+                source, target, dx, dy, node_dimensions, gap=linked_node_gap
+            )
+            # A high-degree topic must not turn into a massive rigid hub. The
+            # spring contribution is shared across its incident edges.
+            strength = alpha * 0.20 / math.sqrt(degrees[source] * degrees[target])
             force = (distance - desired) / distance * strength
             fx = dx * force
             fy = dy * force
@@ -813,32 +815,16 @@ def _drawio_initial_positions(
                 dx = sx - tx
                 dy = sy - ty
                 distance = max(1.0, math.hypot(dx, dy))
-                force = charge_strength * alpha / (distance * distance)
+                # `dx` points from target to source, therefore a positive force
+                # pushes the two nodes apart. The former implementation used a
+                # negative value here, which made the supposed charge attractive.
+                force = repulsion_strength * alpha / (distance * distance + 2_500.0)
                 fx = dx / distance * force
                 fy = dy / distance * force
                 svx, svy = velocities[source]
                 tvx, tvy = velocities[target]
                 velocities[source] = (svx + fx, svy + fy)
                 velocities[target] = (tvx - fx, tvy - fy)
-
-        for _collision_pass in range(3):
-            for i, source in enumerate(ordered_nodes):
-                sx, sy = positions_f[source]
-                for target in ordered_nodes[i + 1 :]:
-                    tx, ty = positions_f[target]
-                    dx = tx - sx
-                    dy = ty - sy
-                    distance = max(1.0, math.hypot(dx, dy))
-                    desired = collision_radii[source] + collision_radii[target]
-                    if distance >= desired:
-                        continue
-                    force = (desired - distance) / distance * collision_strength * alpha
-                    fx = dx * force * 0.5
-                    fy = dy * force * 0.5
-                    svx, svy = velocities[source]
-                    tvx, tvy = velocities[target]
-                    velocities[source] = (svx - fx, svy - fy)
-                    velocities[target] = (tvx + fx, tvy + fy)
 
         for node in ordered_nodes:
             vx, vy = velocities[node]
@@ -851,18 +837,21 @@ def _drawio_initial_positions(
             x, y = positions_f[node]
             positions_f[node] = (x + vx, y + vy)
             velocities[node] = (vx, vy)
+
+        # Rectangle collision is enforced throughout the cooling process. This
+        # is stricter than circular collision and guarantees that the Draw.io
+        # boxes cannot overlap when the simulation settles.
+        _separate_overlapping_drawio_nodes(
+            ordered_nodes,
+            positions_f,
+            node_dimensions,
+            margin=node_margin,
+            max_passes=2 if iteration < max_iterations - 600 else 6,
+        )
         alpha += (0.0 - alpha) * alpha_decay
 
     _separate_overlapping_drawio_nodes(
-        ordered_nodes, positions_f, node_dimensions, margin=node_margin
-    )
-    _compact_drawio_edges_without_overlap(
-        edge_pairs,
-        positions_f,
-        node_dimensions,
-        service_topic_distance=service_topic_distance,
-        default_link_distance=default_link_distance,
-        margin=node_margin,
+        ordered_nodes, positions_f, node_dimensions, margin=node_margin, max_passes=1_000
     )
 
     min_x = min(x - node_dimensions[node][0] / 2 for node, (x, _y) in positions_f.items())
@@ -876,15 +865,40 @@ def _drawio_initial_positions(
     }
 
 
+def _drawio_link_distance(
+    source: tuple[str, str],
+    target: tuple[str, str],
+    dx: float,
+    dy: float,
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    gap: float,
+) -> float:
+    """Return the desired center distance for a spring between two boxes."""
+    distance = math.hypot(dx, dy)
+    if distance < 0.001:
+        # The exact direction does not matter for a coincident pair: collision
+        # resolution will immediately make it non-coincident.
+        return sum(node_dimensions[source]) / 2 + sum(node_dimensions[target]) / 2 + gap
+
+    ux = abs(dx) / distance
+    uy = abs(dy) / distance
+    source_width, source_height = node_dimensions[source]
+    target_width, target_height = node_dimensions[target]
+    source_extent = source_width / 2 * ux + source_height / 2 * uy
+    target_extent = target_width / 2 * ux + target_height / 2 * uy
+    return source_extent + target_extent + gap
+
+
 def _separate_overlapping_drawio_nodes(
     ordered_nodes: list[tuple[str, str]],
     positions: dict[tuple[str, str], tuple[float, float]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
     *,
     margin: float,
+    max_passes: int = 160,
 ) -> None:
     """Resolve rectangle overlaps in-place after the elastic solver settles."""
-    max_passes = 160
     for _pass in range(max_passes):
         moved = False
         for i, source in enumerate(ordered_nodes):
@@ -915,46 +929,6 @@ def _separate_overlapping_drawio_nodes(
                 positions[source] = (sx, sy)
                 positions[target] = (tx, ty)
         if not moved:
-            break
-
-
-def _compact_drawio_edges_without_overlap(
-    edge_pairs: list[tuple[tuple[str, str], tuple[str, str]]],
-    positions: dict[tuple[str, str], tuple[float, float]],
-    node_dimensions: dict[tuple[str, str], tuple[int, int]],
-    *,
-    service_topic_distance: float,
-    default_link_distance: float,
-    margin: float,
-) -> None:
-    """Shorten stretched graph edges, resolving overlaps after each pass."""
-    if not edge_pairs:
-        return
-
-    ordered_nodes = list(positions)
-    for _pass in range(100):
-        max_excess = 0.0
-        for source, target in edge_pairs:
-            sx, sy = positions[source]
-            tx, ty = positions[target]
-            dx = tx - sx
-            dy = ty - sy
-            distance = max(1.0, math.hypot(dx, dy))
-            desired = service_topic_distance if source[0] != target[0] else default_link_distance
-            excess = distance - desired
-            if excess <= 0:
-                continue
-            max_excess = max(max_excess, excess)
-            shift = min(excess * 0.24, 24.0)
-            ux = dx / distance
-            uy = dy / distance
-            positions[source] = (sx + ux * shift, sy + uy * shift)
-            positions[target] = (tx - ux * shift, ty - uy * shift)
-
-        _separate_overlapping_drawio_nodes(
-            ordered_nodes, positions, node_dimensions, margin=margin
-        )
-        if max_excess < 8.0:
             break
 
 
