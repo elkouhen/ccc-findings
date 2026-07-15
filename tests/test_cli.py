@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 import ccc_radar.embedder as embedder_module
 import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_RULE_PACKS, app
+from ccc_radar.indexer import IndexReport
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
 
@@ -60,6 +61,53 @@ def test_index_rejects_an_unknown_disabled_type(tmp_path: Path, monkeypatch: pyt
     assert "Type d'indexation inconnu" in result.output
     assert "module-architecture" in result.output
     assert "module-tree-sitter" in result.output
+
+
+def test_index_accepts_markdown_manifest_as_positional_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules.yml']\n")
+    (tmp_path / "TOPICS.md").write_text("### module-a\n")
+    captured: dict[str, object] = {}
+
+    def fake_index_repo(*args: object, **kwargs: object) -> IndexReport:
+        captured["extra_files"] = kwargs["extra_files"]
+        return IndexReport(1, 0, 0, 0, 0, 0, 0)
+
+    monkeypatch.setattr("ccc_radar.cli.resolve_embedding_model", lambda model: (model, None))
+    monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
+    monkeypatch.setattr("ccc_radar.cli.index_repo", fake_index_repo)
+
+    result = runner.invoke(app, ["index", "TOPICS.md"])
+
+    assert result.exit_code == 0
+    assert captured["extra_files"] == ["TOPICS.md"]
+
+
+def test_index_accepts_markdown_manifest_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules.yml']\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "topics.md").write_text("### module-a\n")
+    captured: dict[str, object] = {}
+
+    def fake_index_repo(*args: object, **kwargs: object) -> IndexReport:
+        captured["extra_files"] = kwargs["extra_files"]
+        return IndexReport(1, 0, 0, 0, 0, 0, 0)
+
+    monkeypatch.setattr("ccc_radar.cli.resolve_embedding_model", lambda model: (model, None))
+    monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
+    monkeypatch.setattr("ccc_radar.cli.index_repo", fake_index_repo)
+
+    result = runner.invoke(app, ["index", "--manifest", "docs/topics.md"])
+
+    assert result.exit_code == 0
+    assert captured["extra_files"] == ["docs/topics.md"]
 
 
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(

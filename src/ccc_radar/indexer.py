@@ -297,6 +297,7 @@ def index_repo(
     full: bool = False,
     index_code_chunks: bool = False,
     disabled: frozenset[str] = frozenset(),
+    extra_files: list[str] | None = None,
     progress: ProgressCallback | None = None,
 ) -> IndexReport:
     # BACKLOG-16 P2 : purge les lru_cache d'analyse best-effort (package
@@ -334,6 +335,10 @@ def index_repo(
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     _trace("files.begin")
     current_hashes = _list_repo_files(repo_root, config)
+    for rel_path in extra_files or []:
+        candidate = repo_root / rel_path
+        if candidate.is_file():
+            current_hashes[rel_path] = _sha256_file(candidate)
     previous_hashes = store.get_file_hashes()
     _trace("files.end", current=len(current_hashes), previous=len(previous_hashes))
 

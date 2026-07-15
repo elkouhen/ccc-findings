@@ -92,6 +92,29 @@ def _trace_index(stage: str, **fields: object) -> None:
     print(f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
+def _manifest_rel_paths(repo_root: Path, paths: list[Path]) -> list[str]:
+    manifests: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        path = raw_path.expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        try:
+            rel_path = path.resolve().relative_to(repo_root.resolve()).as_posix()
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"Le manifeste doit être dans le dépôt indexé : {raw_path}"
+            ) from exc
+        if not path.is_file():
+            raise typer.BadParameter(f"Manifeste introuvable : {raw_path}")
+        if path.suffix.lower() != ".md":
+            raise typer.BadParameter(f"Le manifeste doit être un fichier Markdown .md : {raw_path}")
+        if rel_path not in seen:
+            seen.add(rel_path)
+            manifests.append(rel_path)
+    return manifests
+
+
 @app.callback()
 def main() -> None:
     """ccc-radar: indexe findings, code associé et signaux d'architecture."""
@@ -240,7 +263,13 @@ def init(
 
 @app.command(name="index")
 def index_cmd(
+    manifest_args: Optional[list[Path]] = typer.Argument(  # noqa: UP007
+        None, help="Manifeste(s) Markdown de topics Kafka à indexer explicitement."
+    ),
     full: bool = typer.Option(False, "--full", help="Force un scan complet."),
+    manifests: Optional[list[Path]] = typer.Option(  # noqa: UP007
+        None, "--manifest", help="Manifeste Markdown de topics Kafka (répétable)."
+    ),
     engine: Literal["manual", "cocoindex"] = typer.Option(
         "manual",
         "--engine",
@@ -258,6 +287,7 @@ def index_cmd(
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
     _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
+    explicit_manifests = _manifest_rel_paths(repo_root, list(manifest_args or []) + list(manifests or []))
     disabled = frozenset(disable or [])
     known_disabled = {"semgrep", "properties", "module-architecture", "module-tree-sitter"}
     unknown = disabled - known_disabled
@@ -287,6 +317,12 @@ def index_cmd(
         with Store(repo_root) as store:
             _trace_index("store.open.end")
             if engine == "cocoindex":
+                if explicit_manifests:
+                    typer.echo(
+                        "--manifest n'est pas supporté avec --engine cocoindex ; utilisez --engine manual.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
                 report = index_repo_with_cocoindex(
                     repo_root, config, store, embedder, full=full,
                     progress=_echo_index_progress, disabled=disabled,
@@ -294,7 +330,7 @@ def index_cmd(
             else:
                 report = index_repo(
                     repo_root, config, store, embedder, full=full, progress=_echo_index_progress,
-                    disabled=disabled,
+                    disabled=disabled, extra_files=explicit_manifests,
                 )
                 store.set_meta("index_engine", "manual")
             _trace_index("store.close.begin")
