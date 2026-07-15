@@ -707,12 +707,14 @@ mxGraph XML (native diagrams.net/drawio format):
   label contains a sorted, distinct exposed REST resource table: count,
   verb-colored badge, and aligned route (or an explicit empty-state message).
   Card height reserves enough rows for the longest list;
-- a deterministic elastic/force-directed placement. It uses graph edges as
-  springs to keep Kafka topics close to the services that produce or consume
-  them, while repulsion separates unrelated nodes. The solver iterates until
-  node displacement stabilizes, then runs a rectangle-overlap separation pass
-  before writing coordinates. The process has bounded iteration counts. It does
-  not encode layer constraints, topological ordering, fixed ports, or waypoints;
+- a deterministic elastic/force-directed placement inspired by D3 force
+  simulation: link springs keep Kafka topics close to the services that produce
+  or consume them, many-body repulsion separates unrelated nodes, collision
+  forces reserve node space, and a weak component center force keeps disconnected
+  groups coherent. The simulation cools until alpha convergence, then runs a
+  rectangle-overlap separation pass before writing coordinates. The process has
+  bounded iteration counts. It does not encode layer constraints, topological
+  ordering, fixed ports, or waypoints;
 - one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
   Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
   Kafka segments are orange and dashed. All edges use orthogonal routing,

@@ -716,15 +716,16 @@ def _drawio_initial_positions(
     if not ordered_nodes:
         return {}
 
-    ideal_edge = 230.0
-    repulsion = 36000.0
-    spring_strength = 0.09
-    damping = 0.82
-    max_step = 42.0
-    min_iterations = 80
-    max_iterations = 800
-    convergence_epsilon = 0.08
-    stable_iterations_required = 12
+    service_topic_distance = 165.0
+    default_link_distance = 280.0
+    charge_strength = -4200.0
+    collision_strength = 0.9
+    center_strength = 0.025
+    alpha = 1.0
+    alpha_min = 0.001
+    alpha_decay = 1 - alpha_min ** (1 / 1200)
+    velocity_decay = 0.38
+    max_iterations = 1800
     node_margin = 32.0
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
@@ -761,45 +762,33 @@ def _drawio_initial_positions(
         components.append(component)
 
     positions_f: dict[tuple[str, str], tuple[float, float]] = {}
+    component_centers: dict[tuple[str, str], tuple[float, float]] = {}
     x_offset = 0.0
+    golden_angle = math.pi * (3 - math.sqrt(5))
     for component in components:
-        radius = max(ideal_edge, len(component) * 56.0)
-        center_x = x_offset + radius
-        center_y = radius
+        component_span = max(720.0, math.sqrt(len(component)) * 460.0)
+        center_x = x_offset + component_span / 2
+        center_y = component_span / 2
         for slot, node in enumerate(component):
-            angle = 2 * math.pi * slot / max(1, len(component))
-            kind_bias = -0.35 if node[0] == "microservice" else 0.35
+            angle = slot * golden_angle
+            radius = 120.0 * math.sqrt(slot + 1)
+            kind_bias = -0.18 if node[0] == "microservice" else 0.18
             positions_f[node] = (
                 center_x + math.cos(angle + kind_bias) * radius,
                 center_y + math.sin(angle + kind_bias) * radius,
             )
-        x_offset += radius * 2 + ideal_edge * 1.8
+            component_centers[node] = (center_x, center_y)
+        x_offset += component_span + 260.0
 
     velocities = {node: (0.0, 0.0) for node in ordered_nodes}
-    stable_iterations = 0
-    for iteration in range(max_iterations):
-        forces = {node: (0.0, 0.0) for node in ordered_nodes}
-        temperature = max(2.0, max_step * (1.0 - iteration / max_iterations))
-
-        for i, source in enumerate(ordered_nodes):
-            sx, sy = positions_f[source]
-            sw, sh = node_dimensions[source]
-            for target in ordered_nodes[i + 1 :]:
-                tx, ty = positions_f[target]
-                tw, th = node_dimensions[target]
-                dx = sx - tx
-                dy = sy - ty
-                distance = max(20.0, math.hypot(dx, dy))
-                min_distance = (sw + tw + sh + th) / 4 + 40.0
-                strength = repulsion / (distance * distance)
-                if distance < min_distance:
-                    strength *= 2.5
-                fx = dx / distance * strength
-                fy = dy / distance * strength
-                sfx, sfy = forces[source]
-                tfx, tfy = forces[target]
-                forces[source] = (sfx + fx, sfy + fy)
-                forces[target] = (tfx - fx, tfy - fy)
+    degrees = {node: max(1, len(adjacency[node])) for node in ordered_nodes}
+    collision_radii = {
+        node: math.hypot(node_dimensions[node][0], node_dimensions[node][1]) / 2 + node_margin
+        for node in ordered_nodes
+    }
+    for _iteration in range(max_iterations):
+        if alpha < alpha_min:
+            break
 
         for source, target in edge_pairs:
             sx, sy = positions_f[source]
@@ -807,50 +796,73 @@ def _drawio_initial_positions(
             dx = tx - sx
             dy = ty - sy
             distance = max(1.0, math.hypot(dx, dy))
-            desired = ideal_edge
-            edge_strength = spring_strength
-            if source[0] != target[0]:
-                desired -= 55.0
-                edge_strength *= 1.8
-            strength = (distance - desired) * edge_strength
-            fx = dx / distance * strength
-            fy = dy / distance * strength
-            sfx, sfy = forces[source]
-            tfx, tfy = forces[target]
-            forces[source] = (sfx + fx, sfy + fy)
-            forces[target] = (tfx - fx, tfy - fy)
+            desired = service_topic_distance if source[0] != target[0] else default_link_distance
+            strength = alpha * 0.42 / min(degrees[source], degrees[target])
+            force = (distance - desired) / distance * strength
+            fx = dx * force
+            fy = dy * force
+            svx, svy = velocities[source]
+            tvx, tvy = velocities[target]
+            velocities[source] = (svx + fx, svy + fy)
+            velocities[target] = (tvx - fx, tvy - fy)
 
-        total_step = 0.0
-        max_displacement = 0.0
+        for i, source in enumerate(ordered_nodes):
+            sx, sy = positions_f[source]
+            for target in ordered_nodes[i + 1 :]:
+                tx, ty = positions_f[target]
+                dx = sx - tx
+                dy = sy - ty
+                distance = max(1.0, math.hypot(dx, dy))
+                force = charge_strength * alpha / (distance * distance)
+                fx = dx / distance * force
+                fy = dy / distance * force
+                svx, svy = velocities[source]
+                tvx, tvy = velocities[target]
+                velocities[source] = (svx + fx, svy + fy)
+                velocities[target] = (tvx - fx, tvy - fy)
+
+        for _collision_pass in range(3):
+            for i, source in enumerate(ordered_nodes):
+                sx, sy = positions_f[source]
+                for target in ordered_nodes[i + 1 :]:
+                    tx, ty = positions_f[target]
+                    dx = tx - sx
+                    dy = ty - sy
+                    distance = max(1.0, math.hypot(dx, dy))
+                    desired = collision_radii[source] + collision_radii[target]
+                    if distance >= desired:
+                        continue
+                    force = (desired - distance) / distance * collision_strength * alpha
+                    fx = dx * force * 0.5
+                    fy = dy * force * 0.5
+                    svx, svy = velocities[source]
+                    tvx, tvy = velocities[target]
+                    velocities[source] = (svx - fx, svy - fy)
+                    velocities[target] = (tvx + fx, tvy + fy)
+
         for node in ordered_nodes:
             vx, vy = velocities[node]
-            fx, fy = forces[node]
-            vx = (vx + fx) * damping
-            vy = (vy + fy) * damping
-            speed = max(1.0, math.hypot(vx, vy))
-            step = min(speed, temperature)
-            vx = vx / speed * step
-            vy = vy / speed * step
+            x, y = positions_f[node]
+            cx, cy = component_centers[node]
+            vx += (cx - x) * center_strength * alpha
+            vy += (cy - y) * center_strength * alpha
+            vx *= 1 - velocity_decay
+            vy *= 1 - velocity_decay
             x, y = positions_f[node]
             positions_f[node] = (x + vx, y + vy)
             velocities[node] = (vx, vy)
-            displacement = math.hypot(vx, vy)
-            total_step += displacement
-            max_displacement = max(max_displacement, displacement)
-
-        mean_displacement = total_step / len(ordered_nodes)
-        if iteration >= min_iterations and mean_displacement < convergence_epsilon and max_displacement < convergence_epsilon * 4:
-            stable_iterations += 1
-            if stable_iterations >= stable_iterations_required:
-                break
-        else:
-            stable_iterations = 0
+        alpha += (0.0 - alpha) * alpha_decay
 
     _separate_overlapping_drawio_nodes(
         ordered_nodes, positions_f, node_dimensions, margin=node_margin
     )
     _compact_drawio_edges_without_overlap(
-        edge_pairs, positions_f, node_dimensions, ideal_distance=ideal_edge, margin=node_margin
+        edge_pairs,
+        positions_f,
+        node_dimensions,
+        service_topic_distance=service_topic_distance,
+        default_link_distance=default_link_distance,
+        margin=node_margin,
     )
 
     min_x = min(x - node_dimensions[node][0] / 2 for node, (x, _y) in positions_f.items())
@@ -911,7 +923,8 @@ def _compact_drawio_edges_without_overlap(
     positions: dict[tuple[str, str], tuple[float, float]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
     *,
-    ideal_distance: float,
+    service_topic_distance: float,
+    default_link_distance: float,
     margin: float,
 ) -> None:
     """Shorten stretched graph edges, resolving overlaps after each pass."""
@@ -927,12 +940,12 @@ def _compact_drawio_edges_without_overlap(
             dx = tx - sx
             dy = ty - sy
             distance = max(1.0, math.hypot(dx, dy))
-            desired = ideal_distance - 55.0 if source[0] != target[0] else ideal_distance
+            desired = service_topic_distance if source[0] != target[0] else default_link_distance
             excess = distance - desired
             if excess <= 0:
                 continue
             max_excess = max(max_excess, excess)
-            shift = min(excess * 0.18, 18.0)
+            shift = min(excess * 0.24, 24.0)
             ux = dx / distance
             uy = dy / distance
             positions[source] = (sx + ux * shift, sy + uy * shift)
