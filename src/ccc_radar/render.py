@@ -1016,6 +1016,14 @@ def _drawio_swap_is_clear(
     target_position = positions[target]
     positions[source], positions[target] = target_position, source_position
     try:
+        source_width, source_height = node_dimensions[source]
+        target_width, target_height = node_dimensions[target]
+        if (
+            abs(positions[source][0] - positions[target][0]) < (source_width + target_width) / 2 + margin
+            and abs(positions[source][1] - positions[target][1])
+            < (source_height + target_height) / 2 + margin
+        ):
+            return False
         for node in (source, target):
             nx, ny = positions[node]
             nw, nh = node_dimensions[node]
