@@ -78,6 +78,30 @@ def test_index_repo_reports_progress_messages(repo_copy: Path) -> None:
     assert any("embedding" in message for message in messages)
 
 
+def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ccc_radar.indexer.invoke_semgrep_raw",
+        lambda *_args, **_kwargs: pytest.fail("Semgrep ne doit pas être invoqué"),
+    )
+    monkeypatch.setattr(
+        "ccc_radar.indexer.discover_modules",
+        lambda *_args, **_kwargs: pytest.fail("Les propriétés ne doivent pas être inventoriées"),
+    )
+    messages: list[str] = []
+
+    with Store(repo_copy) as store:
+        report = index_repo(
+            repo_copy, make_config(), store, FakeEmbedder(),
+            disabled=frozenset({"semgrep", "properties"}), progress=messages.append,
+        )
+        assert store.all_findings() == []
+        assert store.all_modules() == []
+
+    assert report.findings_added == 0
+    assert any("Semgrep désactivé" in message for message in messages)
+    assert any("propriétés et inventaire" in message for message in messages)
+
+
 @pytest.mark.integration
 def test_default_include_indexes_root_files(repo_copy: Path) -> None:
     (repo_copy / "root_vuln.py").write_text(

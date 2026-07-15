@@ -243,6 +243,7 @@ def index_repo(
     embedder: EmbedderLike,
     full: bool = False,
     index_code_chunks: bool = False,
+    disabled: frozenset[str] = frozenset(),
     progress: ProgressCallback | None = None,
 ) -> IndexReport:
     # BACKLOG-16 P2 : purge les lru_cache d'analyse best-effort (package
@@ -288,15 +289,18 @@ def index_repo(
         f"{len(deleted)} supprimé(s)).",
     )
 
-    findings_removed = store.count_findings_for_paths(deleted)
-    endpoints_removed = store.count_endpoints_for_paths(deleted)
-    store.remove_files(deleted)  # purge aussi les endpoints (K1)
+    findings_removed = 0
+    endpoints_removed = 0
+    if "semgrep" not in disabled:
+        findings_removed = store.count_findings_for_paths(deleted)
+        endpoints_removed = store.count_endpoints_for_paths(deleted)
+        store.remove_files(deleted)  # purge aussi les endpoints (K1)
 
     findings_added = 0
     endpoints_added = 0
     findings: list[Finding] = []
     endpoints: list[MessageEndpoint] = []
-    if changed:
+    if changed and "semgrep" not in disabled:
         _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
         findings_removed += store.count_findings_for_paths(changed)
         endpoints_removed += store.count_endpoints_for_paths(changed)
@@ -327,15 +331,21 @@ def index_repo(
 
         for path in changed:
             store.set_file_hash(path, current_hashes[path])
+    elif changed:
+        _report_progress(progress, "→ Indexation : Semgrep désactivé, findings et endpoints conservés.")
 
-    store.set_meta("endpoint_inventory_signature", endpoint_signature)
+    if "semgrep" not in disabled:
+        store.set_meta("endpoint_inventory_signature", endpoint_signature)
     store.set_meta("analysis_inputs_signature", analysis_inputs_signature)
 
     # Persist only after the scan path has completed.  The inventory remains
     # transactional with the rest of the index and represents the audited
     # repository state, not a partially failed scan.
-    _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
-    store.replace_modules(discover_modules(repo_root))
+    if "properties" not in disabled:
+        _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
+        store.replace_modules(discover_modules(repo_root))
+    else:
+        _report_progress(progress, "→ Indexation : propriétés et inventaire des modules désactivés, snapshot conservé.")
 
     if index_code_chunks:
         chunk_paths = changed

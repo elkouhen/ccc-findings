@@ -237,9 +237,17 @@ def index_cmd(
         "--engine",
         help="Moteur d'indexation : manual (défaut) ou cocoindex (expérimental).",
     ),
+    disable: list[str] = typer.Option(
+        None, "--disable", help="Type à désactiver : semgrep ou properties. Répétable."
+    ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
+    disabled = frozenset(disable or [])
+    unknown = disabled - {"semgrep", "properties"}
+    if unknown:
+        typer.echo(f"Type d'indexation inconnu : {', '.join(sorted(unknown))}. Valeurs : semgrep, properties.", err=True)
+        raise typer.Exit(code=2)
 
     try:
         config = load_config(repo_root)
@@ -256,11 +264,13 @@ def index_cmd(
         with Store(repo_root) as store:
             if engine == "cocoindex":
                 report = index_repo_with_cocoindex(
-                    repo_root, config, store, embedder, full=full, progress=_echo_index_progress
+                    repo_root, config, store, embedder, full=full,
+                    progress=_echo_index_progress, disabled=disabled,
                 )
             else:
                 report = index_repo(
-                    repo_root, config, store, embedder, full=full, progress=_echo_index_progress
+                    repo_root, config, store, embedder, full=full, progress=_echo_index_progress,
+                    disabled=disabled,
                 )
                 store.set_meta("index_engine", "manual")
     except (SemgrepError, EmbeddingError) as exc:
@@ -530,9 +540,13 @@ def audit_cmd(
 
 @app.command(name="microservices")
 def microservices_cmd(
-    root: Optional[Path] = typer.Argument(  # noqa: UP007
+    arguments: list[str] = typer.Argument(
         None,
-        help="Répertoire parent à explorer (workspace Maven/Gradle). Défaut : répertoire courant.",
+        help="Sous-commande et microservice, ou anciennement la racine du workspace.",
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--root", help="Répertoire parent à explorer. Défaut : répertoire courant.",
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -542,10 +556,31 @@ def microservices_cmd(
     (`cccr index`) pour compter endpoints/findings par service — n'écrit
     jamais dans leurs bases. Un service non indexé ou dont la base est
     incompatible est signalé en avertissement, sans faire échouer la
-    commande.
+    commande. Sous-commandes : `endpoints <service>`, `flow <service>`,
+    `properties <service>` et `openapi <service>`, avec `--root <workspace>`.
     """
-    root = root or Path.cwd()
-    services = discover_maven_services(root)
+    arguments = arguments or []
+    commands = {"endpoints", "flow", "properties", "openapi"}
+    if arguments and arguments[0] in commands:
+        if len(arguments) != 2:
+            typer.echo(f"`microservices {arguments[0]}` requiert un nom de microservice.", err=True)
+            raise typer.Exit(code=2)
+        service = arguments[1]
+        workspace_root = (root or Path.cwd()).resolve()
+        if arguments[0] == "endpoints":
+            _render_microservice_endpoints(service, workspace_root, json_output)
+        elif arguments[0] == "flow":
+            _render_microservice_flow(service, workspace_root, json_output)
+        elif arguments[0] == "properties":
+            _render_microservice_properties(service, workspace_root, json_output)
+        else:
+            _render_microservice_openapi(service, workspace_root, json_output)
+        return
+    if len(arguments) > 1:
+        typer.echo("Usage : `cccr microservices [root]` ou `cccr microservices <endpoints|flow|properties|openapi> <service> --root <root>`.", err=True)
+        raise typer.Exit(code=2)
+    workspace_root = Path(arguments[0]) if arguments else (root or Path.cwd())
+    services = discover_maven_services(workspace_root)
     federation = load_federation(services)
     result = render_workspace_json(services, federation)
 
@@ -555,28 +590,129 @@ def microservices_cmd(
         typer.echo(render_workspace_text(result))
 
 
+def _selected_microservice(name: str, root: Path):
+    services = discover_maven_services(root)
+    matches = [service for service in services if service.name == name and service.kind == "microservice"]
+    if not matches:
+        typer.echo(f"Microservice introuvable : {name}", err=True)
+        raise typer.Exit(code=2)
+    if len(matches) > 1:
+        paths = ", ".join(str(service.path) for service in matches)
+        typer.echo(f"Microservice ambigu : {name} ({paths})", err=True)
+        raise typer.Exit(code=2)
+    return matches[0], load_federation(services)
+
+
+def _render_microservice_endpoints(service: str, root: Path, json_output: bool) -> None:
+    """Liste les endpoints indexés d'un microservice du workspace."""
+    _, federation = _selected_microservice(service, root)
+    endpoints = federation.endpoints_by_service.get(service, [])
+    typer.echo(
+        json.dumps(render_endpoints_json(endpoints))
+        if json_output
+        else render_endpoints_text(endpoints, federation.warnings)
+    )
+
+
+def _render_microservice_flow(service: str, root: Path, json_output: bool) -> None:
+    """Affiche les flux HTTP/Kafka entrants et sortants d'un microservice."""
+    _, federation = _selected_microservice(service, root)
+    edges = [
+        edge for edge in build_graph(dict(federation.endpoints_by_service))
+        if edge.from_service == service or edge.to_service == service
+    ]
+    involved_services = sorted({service} | {edge.from_service for edge in edges} | {edge.to_service for edge in edges})
+    result = render_graph_json(
+        involved_services, edges, [], warnings=federation.warnings,
+        cross_module_data_available=True,
+    )
+    typer.echo(json.dumps(result) if json_output else render_graph_text(result))
+
+
+def _render_microservice_properties(service: str, root: Path, json_output: bool) -> None:
+    """Affiche l'exemple YAML de propriétés Spring d'un microservice."""
+    selected, _ = _selected_microservice(service, root)
+    from ccc_radar.configuration import service_configuration_example
+
+    properties = service_configuration_example(selected.path)
+    result = {"name": selected.name, "properties_example": properties}
+    typer.echo(json.dumps(result) if json_output else properties.rstrip())
+
+
+def _render_microservice_openapi(service: str, root: Path, json_output: bool) -> None:
+    """Affiche les contrats OpenAPI/Swagger locaux d'un microservice."""
+    selected, _ = _selected_microservice(service, root)
+    _render_openapi_contracts(selected.name, selected.path, json_output)
+
+
+def _render_openapi_contracts(name: str, root: Path, json_output: bool) -> None:
+    """Rend les contrats OpenAPI/Swagger d'un module ou microservice."""
+    names = {"openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json"}
+    contracts = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name.casefold() not in names:
+            continue
+        relative = path.relative_to(root)
+        if any(part in {".git", ".cccr", "target", "build", "test"} for part in relative.parts):
+            continue
+        contracts.append({
+            "path": relative.as_posix(),
+            "content": path.read_text(encoding="utf-8", errors="replace"),
+        })
+    result = {"name": name, "contracts": contracts}
+    if json_output:
+        typer.echo(json.dumps(result))
+    elif not contracts:
+        typer.echo("Aucun contrat OpenAPI/Swagger local détecté.")
+    else:
+        typer.echo("\n\n".join(f"# {contract['path']}\n{contract['content'].rstrip()}" for contract in contracts))
+
+
 @app.command(name="modules")
 def modules_cmd(
-    module: Optional[str] = typer.Argument(
-        None, help="Nom d'artifact/projet d'un module. Omettre pour les lister."
-    ),
-    root: Optional[Path] = typer.Option(
-        None, "--root", help="Racine déjà indexée. Défaut : répertoire courant."
-    ),
-    properties: bool = typer.Option(
-        False, "--properties", help="Affiche uniquement l'exemple YAML du module demandé."
+    arguments: list[str] = typer.Argument(
+        None, help="Sous-commande et module, ou nom de module à détailler."
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Liste les modules indexés ou détaille l'un d'eux.
 
-    `cccr modules` liste. `cccr modules <module>` détaille. Ajouter
-    `--properties` pour ne retourner que le modèle YAML synthétique.
+    `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
+    `endpoints`, `flow`, `properties` et `openapi` prennent un module dans le
+    répertoire courant déjà indexé.
     """
-    if properties and module is None:
-        typer.echo("`--properties` requiert le nom d'un module.", err=True)
+    arguments = arguments or []
+    commands = {"endpoints", "flow", "properties", "openapi"}
+    if arguments and arguments[0] in commands:
+        if len(arguments) != 2:
+            typer.echo(f"`modules {arguments[0]}` requiert un nom de module.", err=True)
+            raise typer.Exit(code=2)
+        repo_root = Path.cwd().resolve()
+        selected = _selected_indexed_module(arguments[1], repo_root)
+        with Store(repo_root, readonly=True) as store:
+            if arguments[0] == "endpoints":
+                endpoints = [endpoint for endpoint in store.all_endpoints() if endpoint.module == selected.name]
+                typer.echo(json.dumps(render_endpoints_json(endpoints)) if json_output else render_endpoints_text(endpoints))
+            elif arguments[0] == "flow":
+                endpoints_by_module = group_endpoints_by_module(store.all_endpoints())
+                edges = [
+                    edge for edge in build_graph(endpoints_by_module)
+                    if edge.from_service == selected.name or edge.to_service == selected.name
+                ]
+                involved = sorted({selected.name} | {edge.from_service for edge in edges} | {edge.to_service for edge in edges})
+                result = render_graph_json(involved, edges, [], cross_module_data_available=True)
+                typer.echo(json.dumps(result) if json_output else render_graph_text(result))
+            elif arguments[0] == "properties":
+                result = {"name": selected.name, "properties_example": selected.configuration_example}
+                typer.echo(json.dumps(result) if json_output else selected.configuration_example.rstrip())
+            else:
+                _render_openapi_contracts(selected.name, selected.path, json_output)
+        return
+    if len(arguments) > 1:
+        typer.echo("Usage : `cccr modules [module]` ou `cccr modules <endpoints|flow|properties|openapi> <module>`.", err=True)
         raise typer.Exit(code=2)
-    repo_root = (root or Path.cwd()).resolve()
+    module = arguments[0] if arguments else None
+    repo_root = Path.cwd().resolve()
     if not db_path(repo_root).is_file():
         typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
         raise typer.Exit(code=2)
@@ -599,14 +735,28 @@ def modules_cmd(
         typer.echo(f"Module ambigu : {module} ({paths})", err=True)
         raise typer.Exit(code=2)
     selected = matches[0]
-    if properties:
-        result = {"name": selected.name, "properties_example": selected.configuration_example}
-        typer.echo(
-            json.dumps(result) if json_output else selected.configuration_example.rstrip()
-        )
-        return
     result = render_module_detail_json(selected)
     typer.echo(json.dumps(result) if json_output else render_module_detail_text(result))
+
+
+def _selected_indexed_module(name: str, repo_root: Path):
+    if not db_path(repo_root).is_file():
+        typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        with Store(repo_root, readonly=True) as store:
+            matches = [item for item in store.all_modules() if item.name == name]
+    except StoreError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if not matches:
+        typer.echo(f"Module introuvable : {name}", err=True)
+        raise typer.Exit(code=2)
+    if len(matches) > 1:
+        paths = ", ".join(str(item.path) for item in matches)
+        typer.echo(f"Module ambigu : {name} ({paths})", err=True)
+        raise typer.Exit(code=2)
+    return matches[0]
 @app.command(name="flow")
 def flow_cmd(
     query: str,

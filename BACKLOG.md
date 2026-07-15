@@ -41,7 +41,12 @@ migration ont été faites sur des copies temporaires.
 
 ## Priorité P2 — élargir la couverture de protocoles et la qualité de rapport
 
-- [ ] **P2 — Rapprocher les opérations Mongo des repositories injectés.** `spring-boot-project-example` expose `customer` et `apiLog`, mais les appels `findAll`, `findById` et `save` ne sont pas encore reliés aux receivers Mongo dans `cccr modules`. Fichiers pressentis : `src/ccc_radar/modules.py`, `tests/test_modules.py`. Critère d'acceptation : les appels sur un champ typé `MongoRepository` apparaissent avec opération, fichier, ligne et collection lorsque celle-ci est résoluble.
+- [x] **P2 — Rapprocher les opérations Mongo des repositories injectés.**
+  `spring-boot-project-example` emploie des champs typés par des interfaces de
+  repository locales, pas directement par `MongoRepository`. Corrigé dans
+  `src/ccc_radar/modules.py`, avec régression dans `tests/test_modules.py`.
+  Critère vérifié : après réindexation, `cccr modules` expose les 7 opérations
+  avec receiver, fichier, ligne et collection résolue (`customer` ou `apiLog`).
 - [ ] **P2 — Ajouter RabbitMQ/AMQP.** Booking emploie `RabbitmqConfiguration` et des échanges/queues : son index historique ne rapporte qu'un producteur Kafka et aucune arête, alors que le code contient une messagerie RabbitMQ structurante. Introduire des endpoints et arêtes AMQP ou annoncer explicitement ce protocole comme hors périmètre.
 - [ ] **P2 — Ajouter gRPC.** Booking utilise des stubs gRPC bloquants (par exemple l'appel de réservation vers Flight). Le graphe HTTP/Kafka ne peut pas représenter ces dépendances synchrones ; modéliser `grpc_call`/`grpc_serve` et les intégrer aux signaux de blocage.
 - [ ] **P2 — Distinguer le code de production des tests dans l'analyse directe et les règles.** `microservices-kafka-mq` contient un `@KafkaListener` de test en plus du consommateur de production. Les rapports doivent exclure ces signaux par défaut et permettre de les inclure explicitement.

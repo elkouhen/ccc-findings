@@ -462,10 +462,10 @@ absent from the counts. An indexed module whose
 warning. No Maven module found → informational message, exit code 0 (not an
 error — `root` may legitimately not be a Maven directory).
 
-### `cccr modules [<module>] [--root ROOT] [--properties] [--json]`
+### `cccr modules [<module>] [--json]`
 
-Reads the **module inventory materialized by `cccr index`** at `--root` (current
-directory by default), including libraries and aggregators, unlike
+Reads the **module inventory materialized by `cccr index`** in the current
+directory, including libraries and aggregators, unlike
 `microservices` which is focused on runtime services. It never re-reads the
 workspace to reconstruct this view; a missing/incompatible index is a blocking
 error.
@@ -474,8 +474,9 @@ error.
   project/archive name, declared version (or `null`), build system,
   classification (`microservice`, `library`, `aggregator`) and absolute path.
 - `cccr modules <module>` returns the detailed record for one exact module name.
-- `cccr modules <module> --properties` returns only its synthetic YAML
-  configuration example. `--properties` without a module is an error.
+- `cccr modules endpoints|flow|properties|openapi <module>` returns the targeted
+  inventory, interaction graph, synthetic configuration example, or local API
+  contracts for that module.
 
 The configuration example is generated during that indexation and follows
 the same no-real-values policy as `microservices.configuration_examples`.

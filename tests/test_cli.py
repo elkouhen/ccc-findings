@@ -51,6 +51,15 @@ def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
     assert "p/security-audit" in config_content
 
 
+def test_index_rejects_an_unknown_disabled_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["index", "--disable", "unknown"])
+
+    assert result.exit_code == 2
+    assert "Type d'indexation inconnu" in result.output
+
+
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -784,6 +793,62 @@ public class BillingServiceMain {
             "endpoint_count": 0,
             "finding_count": 0,
         }
+    ]
+
+
+def test_microservices_service_subcommands_render_endpoints_flows_and_properties(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    service_a = workspace / "service-a"
+    service_b = workspace / "service-b"
+    for service, artifact, class_name in (
+        (service_a, "order-service", "OrderApplication"),
+        (service_b, "payment-service", "PaymentApplication"),
+    ):
+        (service / "src" / "main" / "java").mkdir(parents=True)
+        (service / "pom.xml").write_text(
+            f"<project><artifactId>{artifact}</artifactId></project>"
+        )
+        (service / "src" / "main" / "java" / f"{class_name}.java").write_text(
+            "import org.springframework.boot.SpringApplication;\n"
+            f"class {class_name} {{ static void main(String[] args) {{ "
+            f"SpringApplication.run({class_name}.class, args); }} }}\n"
+        )
+    (service_a / "src" / "main" / "resources").mkdir(parents=True)
+    (service_a / "src" / "main" / "resources" / "application.yml").write_text("server:\n  port: 8081\n")
+    (service_a / "src" / "main" / "resources" / "openapi.yml").write_text("openapi: 3.0.0\npaths: {}\n")
+    call = MessageEndpoint(
+        id="call", role="call", system="rest", topic="GET /payments", topic_dynamic=False,
+        source="code", framework="resttemplate", path="OrderClient.java", start_line=10,
+        end_line=10, snippet="", module="order-service",
+    )
+    serve = MessageEndpoint(
+        id="serve", role="serve", system="rest", topic="GET /payments", topic_dynamic=False,
+        source="code", framework="spring", path="PaymentController.java", start_line=5,
+        end_line=5, snippet="", module="payment-service",
+    )
+    with Store(service_a) as store:
+        store.replace_endpoints_for_files([call.path], [call])
+    with Store(service_b) as store:
+        store.replace_endpoints_for_files([serve.path], [serve])
+
+    endpoints = runner.invoke(app, ["microservices", "endpoints", "order-service", "--root", str(workspace), "--json"])
+    assert endpoints.exit_code == 0
+    assert json.loads(endpoints.output)[0]["topic"] == "GET /payments"
+
+    flow = runner.invoke(app, ["microservices", "flow", "order-service", "--root", str(workspace), "--json"])
+    assert flow.exit_code == 0
+    assert json.loads(flow.output)["edges"][0]["to_node"] == "payment-service"
+
+    properties = runner.invoke(app, ["microservices", "properties", "order-service", "--root", str(workspace), "--json"])
+    assert properties.exit_code == 0
+    assert "Aucune propriété Spring détectée" in json.loads(properties.output)["properties_example"]
+
+    openapi = runner.invoke(app, ["microservices", "openapi", "order-service", "--root", str(workspace), "--json"])
+    assert openapi.exit_code == 0
+    assert json.loads(openapi.output)["contracts"] == [
+        {"path": "src/main/resources/openapi.yml", "content": "openapi: 3.0.0\npaths: {}\n"}
     ]
 
 

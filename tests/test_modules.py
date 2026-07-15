@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from ccc_radar.cli import app
 from ccc_radar.config import Config
 from ccc_radar.indexer import index_repo
+from ccc_radar.models import MessageEndpoint
 from ccc_radar.modules import discover_modules
 from ccc_radar.store import Store
 
@@ -64,7 +65,7 @@ class OrdersApplication {
     assert modules[0].application_entrypoint.snippet.startswith("SpringApplication.run")
 
 
-def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: Path) -> None:
+def test_modules_cli_lists_then_returns_module_detail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "App.java"
     source.parent.mkdir(parents=True)
@@ -72,8 +73,9 @@ def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: P
     source.write_text('@Value("${server.port}") class App {}\n')
     with Store(tmp_path) as store:
         store.replace_modules(discover_modules(tmp_path))
+    monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["modules", "--root", str(tmp_path), "--json"])
+    result = runner.invoke(app, ["modules", "--json"])
 
     assert result.exit_code == 0
     modules = json.loads(result.output)
@@ -93,15 +95,9 @@ def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: P
         }
     ]
 
-    detail = runner.invoke(app, ["modules", "orders-api", "--root", str(tmp_path), "--json"])
+    detail = runner.invoke(app, ["modules", "orders-api", "--json"])
     assert detail.exit_code == 0
     assert json.loads(detail.output)["configuration_example"] == "server:\n  port: 0\n"
-
-    properties = runner.invoke(
-        app, ["modules", "orders-api", "--root", str(tmp_path), "--properties"]
-    )
-    assert properties.exit_code == 0
-    assert properties.output == "server:\n  port: 0\n"
 
 
 def test_modules_index_mongo_facts_and_openapi_files_from_java_ast(tmp_path: Path) -> None:
@@ -117,13 +113,14 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 @Document(collection = \"orders\") class Order {}
 class OrderStore {
   MongoTemplate mongoTemplate;
-  MongoRepository<Order, String> orderRepository;
+  OrderRepository orderRepository;
   void save(Order order) {
     mongoTemplate.save(order);
     mongoTemplate.getCollection(\"audit\");
     orderRepository.findById(\"id\");
   }
 }
+interface OrderRepository extends MongoRepository<Order, String> {}
 """
     )
     contract = module / "src" / "main" / "resources" / "openapi.yaml"
@@ -138,7 +135,7 @@ class OrderStore {
     assert [(item.operation, item.receiver, item.collection) for item in indexed.mongo_methods] == [
         ("save", "mongoTemplate", None),
         ("getCollection", "mongoTemplate", "audit"),
-        ("findById", "orderRepository", None),
+        ("findById", "orderRepository", "orders"),
     ]
     assert indexed.openapi_files == ("src/main/resources/openapi.yaml",)
     proof = indexed.mongo_methods[0].evidence
@@ -146,6 +143,30 @@ class OrderStore {
     assert proof.start_line == 10
     assert proof.snippet == "mongoTemplate.save(order)"
     assert proof.source_hash.startswith("sha256:")
+
+
+def test_modules_resolve_injected_repository_collection_and_this_receiver(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderStore.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        "import org.springframework.data.mongodb.core.mapping.Document;\n"
+        "import org.springframework.data.mongodb.repository.MongoRepository;\n"
+        "@Document(collection = \"orders\") class Order {}\n"
+        "interface OrderRepository extends MongoRepository<Order, String> {}\n"
+        "class OrderStore {\n"
+        "  private final OrderRepository orderRepository;\n"
+        "  OrderStore(OrderRepository orderRepository) { this.orderRepository = orderRepository; }\n"
+        "  void load() { this.orderRepository.findById(\"id\"); }\n"
+        "}\n"
+    )
+
+    methods = discover_modules(tmp_path)[0].mongo_methods
+
+    assert [(item.operation, item.receiver, item.collection, item.line) for item in methods] == [
+        ("findById", "orderRepository", "orders", 8),
+    ]
 
 
 def test_modules_index_kafka_send_and_receive_methods_from_java_ast(tmp_path: Path) -> None:
@@ -201,18 +222,51 @@ class OrderLock {
     ]
 
 
-def test_modules_cli_requires_an_index(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["modules", "--root", str(tmp_path), "--json"])
+def test_modules_cli_requires_an_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["modules", "--json"])
 
     assert result.exit_code == 2
     assert "Index absent" in result.output
 
 
-def test_modules_cli_rejects_properties_without_module(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["modules", "--root", str(tmp_path), "--properties"])
+def test_modules_cli_rejects_removed_root_and_properties_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["modules", "--root", str(tmp_path)])
 
     assert result.exit_code == 2
-    assert "requiert le nom" in result.output
+    assert "No such option: --root" in result.output
+    properties = runner.invoke(app, ["modules", "--properties"])
+    assert properties.exit_code == 2
+    assert "No such option: --properties" in properties.output
+
+
+def test_modules_cli_subcommands_render_endpoints_flow_properties_and_openapi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    orders = tmp_path / "orders"
+    payments = tmp_path / "payments"
+    for module, artifact in ((orders, "orders-api"), (payments, "payments-api")):
+        (module / "src" / "main" / "resources").mkdir(parents=True)
+        _write_pom(module / "pom.xml", artifact, "3.1.0")
+    (orders / "src" / "main" / "resources" / "openapi.yml").write_text("openapi: 3.0.0\npaths: {}\n")
+    call = MessageEndpoint("call", "call", "rest", "GET /payments", False, "code", "resttemplate", "OrderClient.java", 1, 1, "", "orders-api")
+    serve = MessageEndpoint("serve", "serve", "rest", "GET /payments", False, "code", "spring", "PaymentController.java", 1, 1, "", "payments-api")
+    with Store(tmp_path) as store:
+        store.replace_modules(discover_modules(tmp_path))
+        store.replace_endpoints_for_files([call.path, serve.path], [call, serve])
+    monkeypatch.chdir(tmp_path)
+
+    endpoints = runner.invoke(app, ["modules", "endpoints", "orders-api", "--json"])
+    assert endpoints.exit_code == 0
+    assert json.loads(endpoints.output)[0]["topic"] == "GET /payments"
+    flow = runner.invoke(app, ["modules", "flow", "orders-api", "--json"])
+    assert flow.exit_code == 0
+    assert json.loads(flow.output)["edges"][0]["to_node"] == "payments-api"
+    properties = runner.invoke(app, ["modules", "properties", "orders-api", "--json"])
+    assert properties.exit_code == 0
+    assert properties.output
+    openapi = runner.invoke(app, ["modules", "openapi", "orders-api", "--json"])
+    assert openapi.exit_code == 0
+    assert json.loads(openapi.output)["contracts"][0]["path"] == "src/main/resources/openapi.yml"
 
 
 def test_modules_are_read_from_the_persisted_index_snapshot(tmp_path: Path) -> None:
