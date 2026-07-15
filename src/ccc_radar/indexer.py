@@ -83,6 +83,15 @@ def _is_test_source(rel_path: str) -> bool:
     )
 
 
+def _is_git_metadata(rel_path: str) -> bool:
+    """Git metadata is never source input, even when config omits `.git/**`.
+
+    This is intentionally a segment check rather than a glob so a source file
+    merely containing the characters ``.git`` in its name remains indexable.
+    """
+    return ".git" in rel_path.split("/")
+
+
 def _nested_build_roots(repo_root: Path) -> tuple[Path, ...]:
     """Return the outermost Maven/Gradle modules below a container root.
 
@@ -100,6 +109,7 @@ def _nested_build_roots(repo_root: Path) -> tuple[Path, ...]:
         path.parent
         for descriptor in descriptors
         for path in repo_root.rglob(descriptor)
+        if not _is_git_metadata(path.relative_to(repo_root).as_posix())
         if len(path.parent.relative_to(repo_root).parts) <= 5
     }
     return tuple(
@@ -118,6 +128,8 @@ def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
         if nested_roots and not any(root == path.parent or root in path.parents for root in nested_roots):
             continue
         rel_path = path.relative_to(repo_root).as_posix()
+        if _is_git_metadata(rel_path):
+            continue
         if _is_test_source(rel_path):
             continue
         if config.exclude and _matches_any(rel_path, config.exclude):

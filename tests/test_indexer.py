@@ -126,6 +126,18 @@ def test_container_root_scans_only_nested_maven_or_gradle_modules(tmp_path: Path
     }
 
 
+def test_list_repo_files_always_ignores_git_metadata(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.java").write_text("class App {}\n")
+    (tmp_path / ".git" / "objects").mkdir(parents=True)
+    (tmp_path / ".git" / "objects" / "object").write_text("not source\n")
+    (tmp_path / ".git" / "pom.xml").write_text("<project/>\n")
+
+    files = _list_repo_files(tmp_path, Config(rules=[]))
+
+    assert set(files) == {"src/App.java"}
+
+
 @pytest.mark.integration
 def test_default_include_indexes_root_files(repo_copy: Path) -> None:
     (repo_copy / "root_vuln.py").write_text(
