@@ -1,3 +1,4 @@
+import math
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -275,12 +276,10 @@ def test_render_graph_drawio_uses_affinity_seed_positions_for_kafka_graph() -> N
             int(float(geometry.get("y", "0"))),
         )
 
-    service_x_values = {positions[name][0] for name in ("orders", "payments", "notifications")}
-    assert len(service_x_values) == 1
-    assert positions["orders.created"][0] > max(service_x_values)
-    assert positions["payments.completed"][0] > max(service_x_values)
-    assert positions["notifications"][1] <= positions["payments.completed"][1] <= positions["payments"][1]
-    assert positions["orders"][1] <= positions["orders.created"][1] <= positions["payments"][1]
+    assert math.dist(positions["orders.created"], positions["orders"]) < 260
+    assert math.dist(positions["orders.created"], positions["payments"]) < 260
+    assert math.dist(positions["payments.completed"], positions["payments"]) < 260
+    assert math.dist(positions["payments.completed"], positions["notifications"]) < 260
 
 
 def test_render_graph_drawio_does_not_encode_layer_or_port_constraints() -> None:
@@ -303,18 +302,26 @@ def test_render_graph_drawio_seed_positions_keep_topic_near_related_services() -
 
     service_a = _vertex_for_service(root, "service-a")
     service_b = _vertex_for_service(root, "service-b")
-    service_a_y = int(float(service_a.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
-    service_b_y = int(float(service_b.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
+    service_a_position = (
+        int(float(service_a.find("mxGeometry").get("x", "0"))),  # type: ignore[union-attr]
+        int(float(service_a.find("mxGeometry").get("y", "0"))),  # type: ignore[union-attr]
+    )
+    service_b_position = (
+        int(float(service_b.find("mxGeometry").get("x", "0"))),  # type: ignore[union-attr]
+        int(float(service_b.find("mxGeometry").get("y", "0"))),  # type: ignore[union-attr]
+    )
     topic = next(
         cell
         for cell in root.iter("mxCell")
         if cell.get("vertex") == "1" and cell.get("value") == "<b>orders.created</b>"
     )
-    topic_x = int(float(topic.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
-    topic_y = int(float(topic.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
+    topic_position = (
+        int(float(topic.find("mxGeometry").get("x", "0"))),  # type: ignore[union-attr]
+        int(float(topic.find("mxGeometry").get("y", "0"))),  # type: ignore[union-attr]
+    )
 
-    assert topic_x > int(float(service_a.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
-    assert service_a_y <= topic_y <= service_b_y
+    assert math.dist(topic_position, service_a_position) < 320
+    assert math.dist(topic_position, service_b_position) < 320
 
 
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
@@ -334,7 +341,7 @@ def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     assert "style.stroke-dash: 3" in rendered
 
 
-def test_render_graph_drawio_uses_deterministic_affinity_seed() -> None:
+def test_render_graph_drawio_uses_deterministic_elastic_seed() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
 
@@ -358,11 +365,8 @@ def test_render_graph_drawio_uses_deterministic_affinity_seed() -> None:
             int(float(geometry.get("y", "0"))),
         )
 
-    assert positions["service-a"] == (24, 24)
-    assert positions["service-b"][0] == positions["service-a"][0]
-    assert positions["service-a"][1] < positions["service-b"][1]
-    assert positions["orders.created"][0] > positions["service-a"][0]
-    assert positions["service-a"][1] < positions["orders.created"][1] < positions["service-b"][1]
+    assert render_graph_drawio(endpoints_by_service, edges) == document
+    assert len(set(positions.values())) == 3
 
 
 def test_write_graph_d2_writes_raw_source_when_extension_is_d2(tmp_path) -> None:

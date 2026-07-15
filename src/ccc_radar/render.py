@@ -1,3 +1,4 @@
+import math
 import re
 import subprocess
 from html import escape as html_escape
@@ -375,11 +376,10 @@ def render_graph_drawio(
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
     portent des couleurs et des formes distinctes. Le fichier ne porte pas de
-    contraintes de couche ou de tri topologique : le placement initial rapproche
-    simplement les topics des services qui les utilisent, puis diagrams.net/ELK
-    peut recalculer librement le layout. Toute valeur dérivée du code source
-    (nom de service, route, topic) est échappée XML via `quoteattr` — jamais
-    interpolée brute."""
+    contraintes de couche ou de tri topologique : un layout élastique
+    déterministe rapproche les topics des services qui les utilisent et repousse
+    les nœuds non liés. Toute valeur dérivée du code source (nom de service,
+    route, topic) est échappée XML via `quoteattr` — jamais interpolée brute."""
     node_width = 320
 
     ordered_services = sorted(endpoints_by_service)
@@ -703,21 +703,37 @@ def _drawio_initial_positions(
     visual_edges: list[tuple[str, str, str, str, str, str]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
 ) -> dict[tuple[str, str], tuple[int, int]]:
-    """Seed positions by service/topic affinity, without layout constraints."""
+    """Elastic seed positions by service/topic affinity.
+
+    This is a deterministic force-directed layout: graph edges pull related
+    nodes together, every node repels every other node, and disconnected
+    components receive a mild horizontal offset. It writes ordinary Draw.io
+    coordinates only; no ports, waypoints, ranks, or layer constraints are
+    encoded in the XML.
+    """
     left_margin = 24
     top_margin = 24
-    column_gap = 96
-    row_gap = 48
-    component_gap = 128
-    positions: dict[tuple[str, str], tuple[int, int]] = {}
+    if not ordered_nodes:
+        return {}
+
+    ideal_edge = 230.0
+    repulsion = 36000.0
+    spring_strength = 0.09
+    damping = 0.82
+    max_step = 42.0
+    iterations = 260
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
+    edge_pairs: list[tuple[tuple[str, str], tuple[str, str]]] = []
     for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
         source = (source_kind, source_name)
         target = (target_kind, target_name)
         if source not in node_set or target not in node_set or source == target:
             continue
+        edge = (source, target) if order_index[source] < order_index[target] else (target, source)
+        if edge not in edge_pairs:
+            edge_pairs.append(edge)
         adjacency[source].add(target)
         adjacency[target].add(source)
 
@@ -740,57 +756,87 @@ def _drawio_initial_positions(
         component.sort(key=lambda item: order_index[item])
         components.append(component)
 
-    y = top_margin
+    positions_f: dict[tuple[str, str], tuple[float, float]] = {}
+    x_offset = 0.0
     for component in components:
-        services = [node for node in component if node[0] == "microservice"]
-        topics = [node for node in component if node[0] == "kafka_topic"]
-        if not services or not topics:
-            x = left_margin
-            row_height = max(node_dimensions[node][1] for node in component)
-            for node in component:
-                width, height = node_dimensions[node]
-                positions[node] = (x, y + (row_height - height) // 2)
-                x += width + column_gap
-            y += row_height + component_gap
-            continue
+        radius = max(ideal_edge, len(component) * 56.0)
+        center_x = x_offset + radius
+        center_y = radius
+        for slot, node in enumerate(component):
+            angle = 2 * math.pi * slot / max(1, len(component))
+            kind_bias = -0.35 if node[0] == "microservice" else 0.35
+            positions_f[node] = (
+                center_x + math.cos(angle + kind_bias) * radius,
+                center_y + math.sin(angle + kind_bias) * radius,
+            )
+        x_offset += radius * 2 + ideal_edge * 1.8
 
-        service_x = left_margin
-        service_y = y
-        for service in services:
-            _width, height = node_dimensions[service]
-            positions[service] = (service_x, service_y)
-            service_y += height + row_gap
-        service_column_height = service_y - y - row_gap
-        service_width = max(node_dimensions[service][0] for service in services)
-        topic_x = service_x + service_width + column_gap
-        desired_topics: list[tuple[int, tuple[str, str]]] = []
-        for topic in topics:
-            related_services = [
-                neighbor for neighbor in adjacency[topic] if neighbor[0] == "microservice" and neighbor in positions
-            ]
-            if related_services:
-                centers = [
-                    positions[service][1] + node_dimensions[service][1] // 2
-                    for service in related_services
-                ]
-                desired_y = int(round(sum(centers) / len(centers) - node_dimensions[topic][1] / 2))
-            else:
-                desired_y = y
-            desired_topics.append((desired_y, topic))
+    velocities = {node: (0.0, 0.0) for node in ordered_nodes}
+    for iteration in range(iterations):
+        forces = {node: (0.0, 0.0) for node in ordered_nodes}
+        temperature = max_step * (1.0 - iteration / iterations)
 
-        topic_y = y
-        for desired_y, topic in sorted(desired_topics, key=lambda item: (item[0], order_index[item[1]])):
-            width, height = node_dimensions[topic]
-            topic_y = max(topic_y, desired_y)
-            positions[topic] = (topic_x, topic_y)
-            topic_y += height + row_gap
+        for i, source in enumerate(ordered_nodes):
+            sx, sy = positions_f[source]
+            sw, sh = node_dimensions[source]
+            for target in ordered_nodes[i + 1 :]:
+                tx, ty = positions_f[target]
+                tw, th = node_dimensions[target]
+                dx = sx - tx
+                dy = sy - ty
+                distance = max(20.0, math.hypot(dx, dy))
+                min_distance = (sw + tw + sh + th) / 4 + 40.0
+                strength = repulsion / (distance * distance)
+                if distance < min_distance:
+                    strength *= 2.5
+                fx = dx / distance * strength
+                fy = dy / distance * strength
+                sfx, sfy = forces[source]
+                tfx, tfy = forces[target]
+                forces[source] = (sfx + fx, sfy + fy)
+                forces[target] = (tfx - fx, tfy - fy)
 
-        topic_column_height = max(
-            (positions[topic][1] - y + node_dimensions[topic][1] for topic in topics),
-            default=0,
+        for source, target in edge_pairs:
+            sx, sy = positions_f[source]
+            tx, ty = positions_f[target]
+            dx = tx - sx
+            dy = ty - sy
+            distance = max(1.0, math.hypot(dx, dy))
+            desired = ideal_edge
+            edge_strength = spring_strength
+            if source[0] != target[0]:
+                desired -= 55.0
+                edge_strength *= 1.8
+            strength = (distance - desired) * edge_strength
+            fx = dx / distance * strength
+            fy = dy / distance * strength
+            sfx, sfy = forces[source]
+            tfx, tfy = forces[target]
+            forces[source] = (sfx + fx, sfy + fy)
+            forces[target] = (tfx - fx, tfy - fy)
+
+        for node in ordered_nodes:
+            vx, vy = velocities[node]
+            fx, fy = forces[node]
+            vx = (vx + fx) * damping
+            vy = (vy + fy) * damping
+            speed = max(1.0, math.hypot(vx, vy))
+            step = min(speed, temperature)
+            vx = vx / speed * step
+            vy = vy / speed * step
+            x, y = positions_f[node]
+            positions_f[node] = (x + vx, y + vy)
+            velocities[node] = (vx, vy)
+
+    min_x = min(x for x, _y in positions_f.values())
+    min_y = min(y for _x, y in positions_f.values())
+    return {
+        node: (
+            int(round(x - min_x + left_margin)),
+            int(round(y - min_y + top_margin)),
         )
-        y += max(service_column_height, topic_column_height) + component_gap
-    return positions
+        for node, (x, y) in positions_f.items()
+    }
 
 
 class EndpointHit(TypedDict):
