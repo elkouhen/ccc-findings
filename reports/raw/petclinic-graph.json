@@ -1,0 +1,1 @@
+{"services": ["spring-petclinic-rest"], "nodes": [{"name": "spring-petclinic-rest", "kind": "microservice"}], "edges": [], "outbound_calls_in_consumers": [], "note": ""}

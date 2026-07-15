@@ -145,6 +145,23 @@ def test_framework_generated_endpoints_are_inferred() -> None:
     assert topics["GET /actuator/**"] == "spring-actuator"
 
 
+def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_path: Path) -> None:
+    contract = tmp_path / "src" / "main" / "resources" / "openapi.yml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(
+        "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+        "    post:\n      responses: {}\n  /orders/{id}:\n    delete:\n      responses: {}\n"
+    )
+
+    endpoints = infer_framework_endpoints(tmp_path, files=["src/main/resources/openapi.yml"])
+
+    assert {(endpoint.topic, endpoint.framework, endpoint.path, endpoint.start_line) for endpoint in endpoints} == {
+        ("GET /orders", "openapi", "src/main/resources/openapi.yml", 4),
+        ("POST /orders", "openapi", "src/main/resources/openapi.yml", 6),
+        ("DELETE /orders/{id}", "openapi", "src/main/resources/openapi.yml", 9),
+    }
+
+
 def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic() -> None:
     # getForObject(base + "/orders/" + id, ...) : premier littéral trouvé
     # au milieu de l'expression, toujours marqué dynamique (concaténation).

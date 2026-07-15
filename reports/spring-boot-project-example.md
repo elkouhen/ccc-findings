@@ -1,24 +1,27 @@
 # Audit — spring-boot-project-example
 
-Préflight et indexation exécutés sur `/private/tmp/ccc-radar-audit/copies/spring-boot-project-example` : Semgrep 1.169.0, `cccr` 0.1.0, packs REST/Kafka/liveness/kafka-security actifs. Sorties brutes : `/private/tmp/ccc-radar-audit/{preflight,raw}/spring-boot-project-example.*`.
+Commit analysé : `91e0d5ed5996ce5de0286605ac539c5c984dc960` (`main`, seul état non suivi : `.cccr/`). Préflight : `cccr` 0.1.0, les cinq packs actifs et `cccr doctor --json` vert. Semgrep autonome ne peut pas écrire son journal global dans ce sandbox ; l'index `cccr` utilise son journal privé et a réussi (47 fichiers, 1 finding, 7 endpoints). Sorties brutes : [`reports/raw`](raw/) (`spring-boot-project-example-*.json`).
 
-| Inventaire | HTTP servis | Kafka | Graphe |
-| --- | ---: | ---: | --- |
-| `cccr` | 7 | 0 | aucune arête |
-| lecture directe | 7 | 0 | aucune arête |
+L'analyse directe a précédé la lecture de ces sorties et exclut `src/test`. Elle confirme un module Maven Spring Boot, aucun client HTTP ou Kafka, et deux repositories Mongo.
 
-Les sept routes Spring sont présentes dans les deux inventaires : `POST /customer`, `GET /customer`, `GET /customer/{id}`, `PATCH /customer/{id}`, `PUT /customer/{id}`, `DELETE /customer/{id}` (`CustomerController.java:48–167`) et `GET /refCustomer` (`CustomerRefController.java:45`). Aucun client HTTP, producer ou consumer Kafka de production n’a été trouvé ; l’absence d’arête n’est pas une anomalie.
+| Inventaire | Services | HTTP servis | Kafka | Mongo collections | Mongo opérations | Arêtes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `cccr` | 1 | 7 | 0 | 2 | 0 | 0 |
+| lecture directe | 1 | 7 | 0 | 2 | 6 | 0 |
 
-Mongo est hors inventaire courant de `cccr`, mais la lecture directe confirme les collections `customer` (`CustomerEntity.java:22`) et `apiLog` (`ApiLogEntity.java:17`), les repositories Mongo associés, et les opérations `findAll`, `findById` et `save` dans `CustomerServiceImpl.java:61,76,96,122,141` ainsi que `ApiLogAspect.java:96`. Ceci est un manque de couverture P2, pas un écart HTTP/Kafka.
+## Diff structuré
 
-`cccr modules` réindexé expose désormais les deux collections (`customer`, `apiLog`) ; il ne matérialise toutefois pas encore les opérations de repository (compteur nul). Il s’agit donc d’un écart Mongo de précision à conserver dans le backlog, sans effet sur le graphe HTTP/Kafka. Aucun usage Kafka de production n’est observé ni inventorié.
-
-| Catégorie | Présents dans les deux | Seulement `cccr` | Seulement direct |
+| Catégorie | Présents dans les deux | Seulement `cccr` | Seulement direct / cause |
 | --- | --- | --- | --- |
-| HTTP | 7 routes ci-dessus | — | — |
-| Kafka / usage | — | — | — |
-| Mongo | — | — | collections et opérations documentées ci-dessus |
-| Arêtes | — | — | — |
+| Service/module | `spring-boot-project-example` — Maven/Spring Boot | — | — |
+| HTTP | `POST /customer:48`, `GET /customer:69`, `GET /customer/{id}:95`, `PATCH /customer/{id}:122`, `PUT /customer/{id}:145`, `DELETE /customer/{id}:167`, `GET /refCustomer:45` | — | — |
+| Kafka et usage | aucun listener, poll/subscribe, producer, Streams ou Cloud Stream | — | — |
+| Collections Mongo | `customer` (`CustomerEntity.java:22`), `apiLog` (`ApiLogEntity.java:17`) | — | — |
+| Opérations Mongo | — | — | `customerRepository.findAll:61`, `findById:76,96,122`, `save:141`; `apiLogRepository.save:96`. L'extracteur ne relie pas encore les receivers de repository aux opérations. |
+| Arêtes | aucune : aucune cible HTTP ni topic Kafka résolu | — | — |
 
-![cccr](assets/spring-boot-project-example-cccr.png)
-![direct](assets/spring-boot-project-example-direct.png)
+Note `cccr` : **4/5**. La couverture service/HTTP/Kafka/graph est complète et toutes les routes ont une preuve locale. La seule perte confirmée est l'inventaire détaillé des opérations Mongo ; elle est déjà dédoublonnée dans le backlog P2 (« Rapprocher les opérations Mongo des repositories injectés »). Aucun protocole hors périmètre n'est observé.
+
+![Graphe cccr](assets/spring-boot-project-example-cccr.png)
+
+![Graphe direct](assets/spring-boot-project-example-direct.png)

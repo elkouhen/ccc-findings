@@ -271,6 +271,7 @@ _REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]
 _FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
 _NAMED_STRING_ARG_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
 _ENABLE_SWAGGER2_RE = re.compile(r"@EnableSwagger2\b")
+_OPENAPI_HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _METHOD_DECL_RE = re.compile(
     r"^\s*(?:public|private|protected)?(?:\s+static)?(?:\s+final)?[\w<>\[\], ?]+\s+\w+\s*\([^;]*\)\s*\{?"
 )
@@ -862,6 +863,52 @@ def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpo
     return []
 
 
+def _infer_openapi_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    """Inventory literal operations declared by a production OpenAPI contract.
+
+    Some Spring projects generate their controller interfaces from OpenAPI and
+    only implement those interfaces in ``src/main``.  In that layout there is
+    no method-level Spring annotation to scan in the checked-in Java sources,
+    while the contract remains the authoritative local evidence.  Keep the
+    contract file and the operation line as evidence rather than attributing
+    the route to an implementation method that does not declare it.
+    """
+    path = repo_root / rel_path
+    if path.name not in {"openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json"}:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        document = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+    except (OSError, ValueError, yaml.YAMLError):
+        return []
+    if not isinstance(document, dict) or not isinstance(document.get("paths"), dict):
+        return []
+
+    endpoints: list[MessageEndpoint] = []
+    lines = text.splitlines()
+    for raw_route, operations in document["paths"].items():
+        if not isinstance(raw_route, str) or not isinstance(operations, dict):
+            continue
+        route = _normalize_rest_path(raw_route)
+        route_line = next((index + 1 for index, line in enumerate(lines) if line.lstrip().startswith(f"{raw_route}:")), 1)
+        for raw_method in operations:
+            method = str(raw_method).lower()
+            if method not in _OPENAPI_HTTP_METHODS:
+                continue
+            method_line = next(
+                (index + 1 for index in range(route_line, len(lines)) if lines[index].strip() == f"{method}:"),
+                route_line,
+            )
+            snippet = _read_snippet(repo_root, rel_path, method_line, method_line)
+            endpoints.append(
+                _build_endpoint(
+                    repo_root, rel_path, method_line, method_line, "serve", "rest",
+                    f"{method.upper()} {route}", "openapi", snippet,
+                )
+            )
+    return endpoints
+
+
 def _infer_actuator_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
     path = repo_root / rel_path
     try:
@@ -1320,8 +1367,10 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith((".properties", ".yml", ".yaml")):
-            for endpoint in _infer_actuator_endpoint(repo_root, rel_path) + _infer_spring_cloud_gateway_yaml_routes(
-                repo_root, rel_path
+            for endpoint in (
+                _infer_actuator_endpoint(repo_root, rel_path)
+                + _infer_spring_cloud_gateway_yaml_routes(repo_root, rel_path)
+                + _infer_openapi_endpoints(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint
     return list(inferred.values())

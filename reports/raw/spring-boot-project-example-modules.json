@@ -1,0 +1,1 @@
+[{"name": "spring-boot-project-example", "path": "/Users/m.el-kouhen/examples/spring-boot-project-example", "build_system": "maven", "version": "1.0.0", "kind": "library", "starts_application": true, "mongo_collections": ["apiLog", "customer"], "mongo_method_count": 0, "kafka_method_count": 0, "blocking_point_count": 0, "openapi_files": []}]

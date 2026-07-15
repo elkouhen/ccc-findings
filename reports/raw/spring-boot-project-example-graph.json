@@ -1,0 +1,1 @@
+{"services": ["spring-boot-project-example"], "nodes": [{"name": "spring-boot-project-example", "kind": "microservice"}], "edges": [], "outbound_calls_in_consumers": [], "note": ""}

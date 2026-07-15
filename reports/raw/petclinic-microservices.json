@@ -1,0 +1,1 @@
+{"services": [{"name": "spring-petclinic-rest", "path": "/Users/m.el-kouhen/examples/spring-petclinic-rest", "kind": "microservice", "indexed": true, "endpoint_count": 38, "finding_count": 7}], "configuration_examples": {"spring-petclinic-rest": "petclinic:\n  security:\n    enable: false\n"}, "warnings": []}

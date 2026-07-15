@@ -1,26 +1,28 @@
 # Audit — spring-petclinic-rest
 
-Préflight sur copie temporaire : Semgrep 1.169.0, `cccr` 0.1.0 et les cinq packs actifs. La copie a été indexée sans toucher au dépôt source ; sorties reproductibles : `/private/tmp/ccc-radar-audit/{preflight,raw}/spring-petclinic-rest.*`.
+Commit analysé : `c7b5f5e9e90af2e5b94a40dd77b2a53dc33f67bd` (`master`, seul état non suivi : `.cccr/`). Préflight : `cccr version` 0.1.0, packs `default`, `rest`, `kafka`, `liveness` et `kafka-security` actifs ; `cccr doctor --json` est vert. Semgrep autonome échoue dans ce sandbox en tentant d'écrire `~/.semgrep/semgrep.log`, mais `cccr` lui fournit `SEMGREP_LOG_FILE` privé et l'indexation complète a réussi (125 fichiers, 7 findings).
 
-| Inventaire | HTTP production | Kafka | Mongo |
-| --- | ---: | ---: | --- |
-| `cccr` | 1 (`ANY /`) | 0 | non inventorié |
-| lecture directe | 1 route Spring déclarée localement ; contrats HTTP hérités des interfaces non résolus | 0 | non observé |
+Les sorties JSON fraîches sont dans [`reports/raw`](raw/) : `petclinic-{microservices,modules,endpoints,graph,audit}.json`. Après suppression/recréation autorisée de `.cccr`, le premier index n'extrayait que `ANY /`; l'analyse directe avait été terminée avant cette consultation : les implémentations Java réalisent des interfaces générées et le contrat de production `src/main/resources/openapi.yml` porte les verbes et chemins. Ce faux négatif a été corrigé puis l'exemple a été réindexé.
 
-Les contrôleurs portent principalement le seul préfixe `@RequestMapping("/api")` et implémentent des contrats API générés/externes : aucun verbe ni chemin de méthode n’est localement prouvable dans ces classes. Le seul endpoint local complet est `ANY /` dans `RootRestControllerV1.java:42`; il est présent dans les deux inventaires. Il n’y a donc pas de faux négatif confirmé sur une route HTTP résolue, ni d’arête HTTP/Kafka à former.
+| Inventaire final | Services | HTTP servis production | Kafka | Mongo | Arêtes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `cccr` | 1 | 38 | 0 | 0 (JPA, pas Mongo) | 0 |
+| lecture directe | 1 | 38 | 0 | 0 | 0 |
+
+## Inventaire et diff
 
 | Catégorie | Présents dans les deux | Seulement `cccr` | Seulement direct |
 | --- | --- | --- | --- |
-| HTTP | `ANY /` | — | — |
-| Kafka / usage | — | — | — |
-| Mongo collections/opérations | — | — | — |
-| Arêtes | — | — | — |
+| Service/module | `spring-petclinic-rest` — Maven, `PetClinicApplication` démarre Spring | — | — |
+| HTTP | `ANY /` (`RootRestControllerV1.java:42`) et 37 opérations OpenAPI (`openapi.yml`, lignes 34–1848) | — | — |
+| Kafka et usage | aucun producer, consumer, listener, poll, Streams ou Cloud Stream | — | — |
+| Mongo collections/opérations | aucune ; les `findById`/`findAll`/`save` sont des repositories JPA | — | — |
+| Arêtes HTTP/Kafka | aucune : pas de client HTTP ni de Kafka détectable | — | — |
 
-Limite documentée : la résolution des annotations héritées depuis un contrat OpenAPI/généré est une amélioration P2 si les sources du contrat sont placées dans le périmètre d’indexation ; elle ne doit pas inventer de verbes à partir des implémentations.
+Les 37 opérations contractuelles ont les clés normalisées `MÉTHODE chemin` et une preuve ligne par ligne dans `openapi.yml` (par exemple `GET /oops:34`, `POST /owners:66`, `DELETE /vets/{vetId}:1794`). Le préfixe `/api` porté par les contrôleurs est un préfixe de déploiement de leurs implémentations ; le contrat décrit les chemins d'API, donc aucun rapprochement artificiel n'a été fait. Il n'y a ni protocole complémentaire observé ni route dynamique non résolue.
 
-## Kafka et Mongo
+Note `cccr` finale : **5/5**. Avant correctif : 1/38 routes (faux négatif P1 reproductible). Après le correctif OpenAPI et réindexation : couverture complète des services, HTTP, Kafka, Mongo et arêtes applicables.
 
-Le contrat `src/main/resources/openapi.yml` est identifié par `cccr modules`, mais aucun Kafka ou Mongo n’est observé. Les appels `findById`, `findAll` et `save` de `ClinicServiceImpl.java` sont des repositories JPA ; l’annotation `@Documented` de validation n’est pas une annotation Mongo. Les inventaires Kafka et Mongo restent donc vides des deux côtés.
+![Graphe cccr](assets/spring-petclinic-rest-cccr.png)
 
-![cccr](assets/spring-petclinic-rest-cccr.png)
-![direct](assets/spring-petclinic-rest-direct.png)
+![Graphe direct](assets/spring-petclinic-rest-direct.png)

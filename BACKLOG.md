@@ -22,6 +22,15 @@ migration ont été faites sur des copies temporaires.
 
 ## Priorité P1 — fiabiliser l'inventaire et le graphe HTTP/Kafka
 
+- [x] **P1 — Inventorier les opérations d'un contrat OpenAPI local.**
+  `spring-petclinic-rest` implémente des interfaces générées : les contrôleurs
+  ne portent pas les verbes des routes, mais `src/main/resources/openapi.yml`
+  est la preuve de production. Corrigé dans `src/ccc_radar/scanner.py` avec
+  `tests/test_rest_endpoints.py::test_openapi_contract_operations_are_inferred`.
+  Critère vérifié : après réindexation, les 37 opérations contractuelles et la
+  route Spring `ANY /` sont présentes avec fichier et ligne ; aucune arête n'est
+  inventée.
+
 - [ ] **P1 — Inventorier les collections Mongo implicites.** `fully-completed-microservices-Java-Springboot` emploie `@Document` sans `collection` dans Customer et Notification ; l'analyse directe les confirme, tandis que `cccr modules` retourne une liste vide. Fichiers pressentis : `src/ccc_radar/modules.py`, `tests/test_modules.py`. Critère d'acceptation : une annotation `@Document` sans argument produit une collection explicitement marquée comme issue de la convention Spring, avec fichier et ligne de preuve.
 - [ ] **P1 — Résoudre les appels et topics configurés.** Couvrir les propriétés, constantes et configurations multi-modules pour les clients HTTP et topics Kafka, tout en conservant l'indication dynamique lorsque la résolution échoue. Les appels métier Booking doivent devenir des arêtes lorsque la cible est résoluble, sans relier les appels de test à une API de production.
 - [ ] **P1 — Réindexer les cinq exemples dès que Semgrep est exécutable, puis produire le diff automatique contre l'inventaire direct.** Les anciennes bases signalent explicitement un inventaire obsolète pour `microservices-kafka-mq` (v7), `sample-spring-kafka-microservices` (v7) et `fully-completed-microservices-Java-Springboot` (v6). Sans cette étape, les écarts ne peuvent pas être attribués de manière fiable à l'analyseur.

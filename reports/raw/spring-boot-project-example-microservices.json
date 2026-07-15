@@ -1,0 +1,1 @@
+{"services": [{"name": "spring-boot-project-example", "path": "/Users/m.el-kouhen/examples/spring-boot-project-example", "kind": "microservice", "indexed": true, "endpoint_count": 7, "finding_count": 1}], "configuration_examples": {"spring-boot-project-example": "# Aucune propri\u00e9t\u00e9 Spring d\u00e9tect\u00e9e dans le code de production.\n"}, "warnings": []}

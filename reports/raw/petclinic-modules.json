@@ -1,0 +1,1 @@
+[{"name": "spring-petclinic-rest", "path": "/Users/m.el-kouhen/examples/spring-petclinic-rest", "build_system": "maven", "version": "4.0.2", "kind": "library", "starts_application": true, "mongo_collections": [], "mongo_method_count": 0, "kafka_method_count": 0, "blocking_point_count": 1, "openapi_files": ["src/main/resources/openapi.yml"]}]
