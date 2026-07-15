@@ -100,6 +100,7 @@ def _nested_build_roots(repo_root: Path) -> tuple[Path, ...]:
         path.parent
         for descriptor in descriptors
         for path in repo_root.rglob(descriptor)
+        if len(path.parent.relative_to(repo_root).parts) <= 5
     }
     return tuple(
         candidate

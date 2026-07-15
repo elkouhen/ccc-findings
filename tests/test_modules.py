@@ -44,6 +44,19 @@ def test_discover_modules_includes_maven_aggregators_libraries_and_gradle_projec
     ]
 
 
+def test_discover_modules_limits_nested_build_discovery_to_five_levels(tmp_path: Path) -> None:
+    at_limit = tmp_path / "one" / "two" / "three" / "four" / "five"
+    beyond_limit = at_limit / "six"
+    at_limit.mkdir(parents=True)
+    beyond_limit.mkdir()
+    _write_pom(at_limit / "pom.xml", "at-limit", "1.0.0")
+    _write_pom(beyond_limit / "pom.xml", "too-deep", "1.0.0")
+
+    modules = discover_modules(tmp_path)
+
+    assert [module.name for module in modules] == ["at-limit"]
+
+
 def test_module_start_attribute_is_detected_from_its_java_entrypoint(tmp_path: Path) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "OrdersApplication.java"

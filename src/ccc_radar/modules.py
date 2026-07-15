@@ -108,6 +108,7 @@ _REPOSITORY_OPERATIONS = re.compile(
 _OPENAPI_FILENAMES = (
     "openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json",
 )
+_MAX_NESTED_MODULE_DEPTH = 5
 _KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*[\"']([^\"']+)[\"']")
 _FIRST_STRING_RE = re.compile(r"\(\s*[\"']([^\"']+)[\"']")
 
@@ -183,6 +184,10 @@ def _module_files(module_dir: Path, module_roots: set[Path], pattern: str):
         if any(parent in module_roots and parent != module_dir for parent in path.parents):
             continue
         yield path
+
+
+def _is_module_within_depth(root: Path, module_dir: Path) -> bool:
+    return len(module_dir.relative_to(root).parts) <= _MAX_NESTED_MODULE_DEPTH
 
 
 class KafkaArchitectureExtension:
@@ -429,6 +434,8 @@ def discover_modules(root: Path) -> list[DiscoveredModule]:
     seen_paths: set[Path] = set()
     for pom_path in sorted(root.rglob("pom.xml")):
         module_dir = pom_path.parent.resolve()
+        if not _is_module_within_depth(root, module_dir):
+            continue
         artifact_id, _, packaging = parse_pom(pom_path)
         entrypoint = _starts_application(module_dir)
         kind = (

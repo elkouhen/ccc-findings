@@ -15,6 +15,11 @@ _GRADLE_ARTIFACT_SET_RE = re.compile(
 _ROOT_PROJECT_NAME_RE = re.compile(r"rootProject\.name\s*=\s*['\"]([^'\"]+)['\"]")
 _GRADLE_VERSION_RE = re.compile(r"\bversion\s*(?:=|\.set\()\s*['\"]([^'\"]+)['\"]")
 _GRADLE_BUILD_FILENAMES = ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
+_MAX_NESTED_MODULE_DEPTH = 5
+
+
+def _is_module_within_depth(root: Path, module_dir: Path) -> bool:
+    return len(module_dir.relative_to(root).parts) <= _MAX_NESTED_MODULE_DEPTH
 
 
 def _is_spring_boot_main_class(text: str) -> bool:
@@ -76,7 +81,7 @@ def _service_root_artifacts(repo_root_str: str) -> tuple[tuple[str, str], ...]:
             continue
 
         service_dir = _nearest_gradle_project(repo_root, java_file)
-        if service_dir is None:
+        if service_dir is None or not _is_module_within_depth(repo_root, service_dir):
             continue
         relative_root = "" if service_dir == repo_root else service_dir.relative_to(repo_root).as_posix()
         fallback = service_dir.name
@@ -111,6 +116,7 @@ def discover_gradle_modules(repo_root: Path) -> list[tuple[str, Path, str | None
         path.parent
         for filename in ("build.gradle", "build.gradle.kts")
         for path in root.rglob(filename)
+        if _is_module_within_depth(root, path.parent)
     }
     if any((root / filename).is_file() for filename in ("settings.gradle", "settings.gradle.kts")):
         module_dirs.add(root)
