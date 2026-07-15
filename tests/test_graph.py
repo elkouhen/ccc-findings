@@ -6,6 +6,8 @@ from ccc_radar.graph import (
     group_endpoints_by_module,
     paths_match,
 )
+from dataclasses import replace
+
 from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
 
@@ -151,6 +153,33 @@ def test_build_graph_creates_kafka_edges_on_matching_topic_only() -> None:
     assert len(edges) == 1
     assert edges[0].kind == "kafka"
     assert edges[0].to_endpoint.path == "app/consumer.py"
+
+
+def test_build_graph_uses_manifest_kafka_endpoints_as_service_authority() -> None:
+    manifest_produce = replace(
+        make_endpoint("produce", "documented.topic", "topics.md", system="kafka"),
+        source="manifest",
+    )
+    manifest_consume = replace(
+        make_endpoint("consume", "documented.topic", "topics.md", 2, 2, system="kafka"),
+        source="manifest",
+    )
+    endpoints_by_service = {
+        "producer-svc": [
+            make_endpoint("produce", "detected.but.undocumented", "producer/Code.java", system="kafka"),
+            manifest_produce,
+        ],
+        "consumer-svc": [
+            make_endpoint("consume", "detected.but.undocumented", "consumer/Code.java", system="kafka"),
+            manifest_consume,
+        ],
+    }
+
+    edges = build_graph(endpoints_by_service)
+
+    assert [(edge.from_endpoint.topic, edge.to_endpoint.topic) for edge in edges] == [
+        ("documented.topic", "documented.topic")
+    ]
 
 
 def test_build_graph_deduplicates_duplicate_edges() -> None:

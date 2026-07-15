@@ -564,6 +564,8 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div class="toolbar">
     <strong>CCC Radar</strong>
     <input id="search" type="search" placeholder="Rechercher un nœud" autocomplete="off" aria-label="Rechercher un nœud">
+    <button id="zoom-out" type="button" aria-label="Dézoomer" title="Dézoomer">−</button>
+    <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
     <button id="reset" type="button" aria-label="Réinitialiser la sélection" title="Réinitialiser">×</button>
   </div>
   <div id="details">Sélectionnez un nœud pour isoler ses relations.</div>
@@ -708,6 +710,7 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
       data,
       autoResize: true,
       autoFit: "view",
+      zoomRange: [.15, 4],
       animation: false,
       node: {
         type: "rect",
@@ -748,7 +751,11 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
         gravity: .8,
         iterations: 1_200,
       },
-      behaviors: ["drag-canvas", "zoom-canvas", "drag-element-force"],
+      behaviors: [
+        { type: "drag-canvas", key: "drag-canvas" },
+        { type: "zoom-canvas", key: "zoom-canvas", sensitivity: 1.5, preventDefault: true },
+        "drag-element-force",
+      ],
     });
     const elementData = new Map(data.nodes.map(node => [node.id, node]));
     const setOpacity = async (nodeIds, edgeIds) => {
@@ -789,6 +796,12 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
     };
     graph.on(G6.NodeEvent.CLICK, event => selectNode(event.target.id));
     graph.render();
+    document.getElementById("zoom-in").addEventListener("click", () => {
+      graph.zoomBy(1.25, true, graph.getCanvasCenter());
+    });
+    document.getElementById("zoom-out").addEventListener("click", () => {
+      graph.zoomBy(.8, true, graph.getCanvasCenter());
+    });
     document.getElementById("reset").addEventListener("click", reset);
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();

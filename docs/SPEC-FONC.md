@@ -401,6 +401,10 @@ respectively. Without
 inter-module data, it writes a valid document but with no node/edge and
 displays the same explanatory `note` as `--json` (never a silent failure).
 
+When a service has Kafka entries from an indexed Markdown manifest, those
+entries are authoritative for that service and replace its Kafka endpoints
+detected from code. Services absent from the manifest keep code detection.
+
 `--html FILE`: writes an interactive AntV G6 graph. Nodes can be zoomed, dragged,
 searched, or selected; selecting one mutes unrelated nodes and edges so dense
 hubs remain inspectable. Each microservice card shows its name and up to four

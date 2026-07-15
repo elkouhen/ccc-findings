@@ -131,7 +131,12 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     """Construit les arêtes REST (call -> serve, appariement de chemin) et
     Kafka (produce -> consume, même topic) entre services distincts. Pas
     d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
-    graphe inter-services."""
+    graphe inter-services.
+
+    Les entrées Kafka provenant d'un manifeste Markdown sont autoritatives
+    pour le service décrit : elles remplacent les détections de code de ce
+    service, qui peuvent être incomplètes ou produire des faux positifs. Les
+    services absents du manifeste conservent leurs endpoints détectés."""
 
     all_endpoints = [
         (service, endpoint)
@@ -140,8 +145,19 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     ]
     calls = [(s, e) for s, e in all_endpoints if e.system == "rest" and e.role == "call"]
     serves = [(s, e) for s, e in all_endpoints if e.system == "rest" and e.role == "serve"]
-    produces = [(s, e) for s, e in all_endpoints if e.system == "kafka" and e.role == "produce"]
-    consumes = [(s, e) for s, e in all_endpoints if e.system == "kafka" and e.role == "consume"]
+    manifest_services = {
+        service
+        for service, endpoint in all_endpoints
+        if endpoint.system == "kafka" and endpoint.source == "manifest"
+    }
+    kafka_endpoints = [
+        (service, endpoint)
+        for service, endpoint in all_endpoints
+        if endpoint.system == "kafka"
+        and (service not in manifest_services or endpoint.source == "manifest")
+    ]
+    produces = [(s, e) for s, e in kafka_endpoints if e.role == "produce"]
+    consumes = [(s, e) for s, e in kafka_endpoints if e.role == "consume"]
 
     edges: list[GraphEdge] = []
     seen: set[tuple[str, str, str, str, str]] = set()

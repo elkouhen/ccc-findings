@@ -217,6 +217,8 @@ def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
     assert "preventOverlap: true" in document
     assert "labelText: datum => datum.data.label" in document
     assert "Aucune API exposée" in document
+    assert "graph.zoomBy(1.25" in document
+    assert 'type: "zoom-canvas"' in document
     assert "<\\/script>" in document
     assert "service-</script>" not in document
 
