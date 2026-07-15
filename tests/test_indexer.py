@@ -106,6 +106,38 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
     assert any("propriétés et inventaire" in message for message in messages)
 
 
+def test_index_repo_can_disable_only_module_architecture_enrichment(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[bool] = []
+    semgrep_called = False
+
+    def fake_discover_modules(_root: Path, *, enrich_architecture: bool = True) -> list:
+        calls.append(enrich_architecture)
+        return []
+
+    def fake_semgrep(*_args: object, **_kwargs: object) -> str:
+        nonlocal semgrep_called
+        semgrep_called = True
+        return '{"results": []}'
+
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", fake_discover_modules)
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", fake_semgrep)
+
+    with Store(repo_copy) as store:
+        index_repo(
+            repo_copy,
+            make_config(),
+            store,
+            FakeEmbedder(),
+            full=True,
+            disabled=frozenset({"module-architecture"}),
+        )
+
+    assert calls == [False]
+    assert semgrep_called is True
+
+
 def test_container_root_scans_only_nested_maven_or_gradle_modules(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("workspace only\n")
     (tmp_path / "loose.java").write_text("class Loose {}\n")

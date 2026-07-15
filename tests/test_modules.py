@@ -210,6 +210,33 @@ class OrderMessaging {
     ]
 
 
+def test_modules_can_disable_tree_sitter_architecture_enrichment(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderMessaging.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+class OrderMessaging {
+  @KafkaListener(topics = "orders.created")
+  void consume(String payload) {}
+}
+"""
+    )
+    contract = module / "src" / "main" / "resources" / "openapi.yaml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("openapi: 3.1.0\ninfo: {title: Orders, version: v1}\n")
+
+    module_info = discover_modules(tmp_path, enrich_architecture=False)[0]
+
+    assert module_info.name == "orders-api"
+    assert module_info.openapi_files == ("src/main/resources/openapi.yaml",)
+    assert module_info.mongo_collections == ()
+    assert module_info.mongo_methods == ()
+    assert module_info.kafka_methods == ()
+    assert module_info.blocking_points == ()
+
+
 def test_modules_index_blocking_points_from_java_ast(tmp_path: Path) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "OrderLock.java"

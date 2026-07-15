@@ -309,7 +309,10 @@ def index_repo(
     if "properties" not in disabled:
         _report_progress(progress, "→ Indexation : découverte des modules Maven/Gradle...")
         _trace("modules.begin")
-        discovered_modules = discover_modules(repo_root)
+        discovered_modules = discover_modules(
+            repo_root,
+            enrich_architecture="module-architecture" not in disabled,
+        )
         _trace("modules.end", count=len(discovered_modules))
         if discovered_modules:
             for module in discovered_modules:

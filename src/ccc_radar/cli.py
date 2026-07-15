@@ -247,16 +247,23 @@ def index_cmd(
         help="Moteur d'indexation : manual (défaut) ou cocoindex (expérimental).",
     ),
     disable: list[str] = typer.Option(
-        None, "--disable", help="Type à désactiver : semgrep ou properties. Répétable."
+        None,
+        "--disable",
+        help="Type à désactiver : semgrep, properties ou module-architecture. Répétable.",
     ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
     _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
     disabled = frozenset(disable or [])
-    unknown = disabled - {"semgrep", "properties"}
+    known_disabled = {"semgrep", "properties", "module-architecture"}
+    unknown = disabled - known_disabled
     if unknown:
-        typer.echo(f"Type d'indexation inconnu : {', '.join(sorted(unknown))}. Valeurs : semgrep, properties.", err=True)
+        typer.echo(
+            "Type d'indexation inconnu : "
+            f"{', '.join(sorted(unknown))}. Valeurs : {', '.join(sorted(known_disabled))}.",
+            err=True,
+        )
         raise typer.Exit(code=2)
 
     try:

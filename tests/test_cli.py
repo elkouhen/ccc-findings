@@ -58,6 +58,7 @@ def test_index_rejects_an_unknown_disabled_type(tmp_path: Path, monkeypatch: pyt
 
     assert result.exit_code == 2
     assert "Type d'indexation inconnu" in result.output
+    assert "module-architecture" in result.output
 
 
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(

@@ -458,9 +458,21 @@ def _discover_openapi_files(module_dir: Path, module_roots: set[Path]) -> tuple[
     )
 
 
-def _enrich_module(module: DiscoveredModule, module_roots: set[Path]) -> DiscoveredModule:
+def _enrich_module(
+    module: DiscoveredModule,
+    module_roots: set[Path],
+    *,
+    enrich_architecture: bool = True,
+) -> DiscoveredModule:
     _trace("module.enrich.begin", module=module.path)
-    collections, methods, kafka_methods, blocking_points = _extract_java_architecture(module.path, module_roots)
+    if enrich_architecture:
+        collections, methods, kafka_methods, blocking_points = _extract_java_architecture(module.path, module_roots)
+    else:
+        _trace("module.enrich.architecture.disabled", module=module.path)
+        collections = ()
+        methods = ()
+        kafka_methods = ()
+        blocking_points = ()
     enriched = DiscoveredModule(
         **{**module.__dict__, "mongo_collections": collections, "mongo_methods": methods,
            "openapi_files": _discover_openapi_files(module.path, module_roots),
@@ -470,7 +482,7 @@ def _enrich_module(module: DiscoveredModule, module_roots: set[Path]) -> Discove
     return enriched
 
 
-def discover_modules(root: Path) -> list[DiscoveredModule]:
+def discover_modules(root: Path, *, enrich_architecture: bool = True) -> list[DiscoveredModule]:
     """Discover build modules, including libraries and aggregators."""
     root = root.resolve()
     modules: list[DiscoveredModule] = []
@@ -531,7 +543,10 @@ def discover_modules(root: Path) -> list[DiscoveredModule]:
     module_roots = {module.path for module in modules}
     _trace("modules.enrich.begin", count=len(modules))
     enriched = sorted(
-        (_enrich_module(module, module_roots) for module in modules),
+        (
+            _enrich_module(module, module_roots, enrich_architecture=enrich_architecture)
+            for module in modules
+        ),
         key=lambda module: str(module.path),
     )
     _trace("modules.enrich.end", count=len(enriched))
