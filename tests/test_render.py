@@ -215,6 +215,8 @@ def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
     assert 'src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"' in document
     assert "new G6.Graph" in document
     assert "preventOverlap: true" in document
+    assert "labelText: node.label" in document
+    assert "Aucune API exposée" in document
     assert "<\\/script>" in document
     assert "service-</script>" not in document
 

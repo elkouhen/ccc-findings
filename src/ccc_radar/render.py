@@ -481,20 +481,31 @@ def render_graph_html(
     """
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
-    nodes = [
-        {
-            "id": f"microservice:{name}",
-            "kind": "microservice",
-            "name": name,
-            "width": 250,
-            "height": 56,
-        }
-        for name in ordered_services
-    ] + [
+    nodes = []
+    for name in ordered_services:
+        resources = _rest_resources_served(endpoints_by_service.get(name, []))
+        shown_resources = resources[:4]
+        if len(resources) > len(shown_resources):
+            shown_resources.append(f"+ {len(resources) - len(shown_resources)} API")
+        nodes.append(
+            {
+                "id": f"microservice:{name}",
+                "kind": "microservice",
+                "name": name,
+                "resources": resources,
+                "label": "\n".join([name, *shown_resources])
+                if shown_resources
+                else f"{name}\nAucune API exposée",
+                "width": 320,
+                "height": 72 + 16 * max(1, len(shown_resources)),
+            }
+        )
+    nodes += [
         {
             "id": f"kafka_topic:{name}",
             "kind": "kafka_topic",
             "name": name,
+            "label": name,
             "width": 190,
             "height": 42,
         }
@@ -687,11 +698,16 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
           fill: node.kind === "kafka_topic" ? "#fff3df" : "#eaf2ff",
           stroke: node.kind === "kafka_topic" ? "#d18b20" : "#4f79b5",
           radius: node.kind === "kafka_topic" ? 21 : 6,
-          label: node.name,
+          label: true,
+          labelText: node.label,
           labelFill: node.kind === "kafka_topic" ? "#744a0b" : "#172033",
           labelFontSize: node.kind === "kafka_topic" ? 11 : 12,
+          labelFontWeight: node.kind === "kafka_topic" ? 600 : 500,
+          labelLineHeight: 16,
+          labelPlacement: "center",
           labelMaxWidth: node.width - 18,
           labelWordWrap: true,
+          labelMaxLines: node.kind === "kafka_topic" ? 2 : 6,
         },
       })),
       edges: graphData.links.map((edge, index) => ({

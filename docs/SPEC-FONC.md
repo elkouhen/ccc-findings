@@ -403,7 +403,8 @@ displays the same explanatory `note` as `--json` (never a silent failure).
 
 `--html FILE`: writes an interactive AntV G6 graph. Nodes can be zoomed, dragged,
 searched, or selected; selecting one mutes unrelated nodes and edges so dense
-hubs remain inspectable. The generated document embeds graph data locally and
+hubs remain inspectable. Each microservice card shows its name and up to four
+exposed REST APIs; extra APIs are summarized by a count. The generated document embeds graph data locally and
 loads AntV G6 from its CDN when opened.
 
 `--d2 FILE`: also replaces JSON/text rendering. With a `.d2` extension it
