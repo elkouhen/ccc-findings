@@ -115,6 +115,7 @@ _MAX_NESTED_MODULE_DEPTH = 5
 _KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*[\"']([^\"']+)[\"']")
 _FIRST_STRING_RE = re.compile(r"\(\s*[\"']([^\"']+)[\"']")
 _JAVA_LANGUAGE: Language | None = None
+_JAVA_PARSER: Parser | None = None
 
 
 def _java_language() -> Language:
@@ -126,12 +127,16 @@ def _java_language() -> Language:
     return _JAVA_LANGUAGE
 
 
-def _java_parser() -> Parser:
-    _trace("java_parser.begin")
-    parser = Parser()
-    parser.language = _java_language()
-    _trace("java_parser.end")
-    return parser
+def _java_parser(owner: str) -> Parser:
+    global _JAVA_PARSER
+    _trace("java_parser.begin", owner=owner)
+    if _JAVA_PARSER is None:
+        _trace("java_parser.create.begin", owner=owner)
+        _JAVA_PARSER = Parser()
+        _JAVA_PARSER.language = _java_language()
+        _trace("java_parser.create.end", owner=owner)
+    _trace("java_parser.end", owner=owner)
+    return _JAVA_PARSER
 
 
 def _trace(stage: str, **fields: object) -> None:
@@ -152,7 +157,7 @@ def _starts_application(module_dir: Path) -> SourceEvidence | None:
     if not source_roots:
         return None
     _trace("module.entrypoint.parser.begin", module=module_dir)
-    parser = _java_parser()
+    parser = _java_parser("entrypoint")
     _trace("module.entrypoint.parser.end", module=module_dir, roots=len(source_roots))
     for source_root in source_roots:
         for path in source_root.rglob("*.java"):
@@ -222,7 +227,7 @@ class KafkaArchitectureExtension:
     name = "kafka"
 
     def extract(self, files: list[tuple[str, bytes]]) -> tuple[KafkaMethod, ...]:
-        parser = _java_parser()
+        parser = _java_parser("kafka")
         methods: set[KafkaMethod] = set()
         for rel, source in files:
             source_text = source.decode("utf-8", errors="replace")
@@ -307,7 +312,7 @@ def _extract_java_architecture(
     an optional collection only when a literal is statically present.
     """
     _trace("module.architecture.parser.begin", module=module_dir)
-    parser = _java_parser()
+    parser = _java_parser("architecture")
     _trace("module.architecture.parser.end", module=module_dir)
     java_files = list(_module_files(module_dir, module_roots, "*.java"))
     production_files: list[tuple[Path, str, bytes]] = []
