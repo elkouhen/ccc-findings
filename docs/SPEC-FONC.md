@@ -386,13 +386,10 @@ displays a short confirmation (number of services/graph edges). It renders one
 node per known service — including services without interactions — and one
 distinct node per inter-service Kafka topic. REST calls are solid blue arrows;
 Kafka flows are orange dashed arrows split into `producer → topic` and
-`topic → consumer` segments. The initial layout is deterministic and uses
-left-to-right dependency lanes: callers are placed before their downstream
-services, while services without relations are below the main flow. Each
-Kafka-only topology instead uses the conventional two-band view: all
-microservices in an upper horizontal layer and all Kafka topics in a lower
-horizontal layer; producer and consumer arrows then connect these bands.
-Each
+`topic → consumer` segments. The initial layout is deterministic and follows an
+ELK-style top-down layered model: callers/producers are placed in upper layers,
+then topics and downstream services in later layers; services without relations
+remain below the main flow. Each
 microservice card shows its exposed HTTP resources as an aligned method/path
 list with verb-colored badges and a resource count (or an explicit empty
 state). Connection points are distributed over the card sides, and parallel

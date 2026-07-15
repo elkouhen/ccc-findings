@@ -707,13 +707,11 @@ mxGraph XML (native diagrams.net/drawio format):
   label contains a sorted, distinct exposed REST resource table: count,
   verb-colored badge, and aligned route (or an explicit empty-state message).
   Card height reserves enough rows for the longest list;
-- a built-in deterministic left-to-right dependency layout: longest-path ranks
-  put callers before their downstream services and services without edges below
-  the main flow. A Kafka-only topology uses a dedicated two-band layout instead:
-  microservices occupy the upper band, Kafka topics the lower band, and topics
-  follow their producers where possible. The geometries are stored in the
-  document, so it is immediately readable without running an automatic layout
-  in diagrams.net;
+- a built-in deterministic ELK-style layered layout: longest-path ranks put
+  callers/producers in upper layers, then topics and downstream services in
+  later layers, while services without edges remain below the main flow. The
+  geometries are stored in the document, so it is immediately readable without
+  running an automatic layout in diagrams.net;
 - one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
   Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
   Kafka segments are orange and dashed. All edges use orthogonal routing,

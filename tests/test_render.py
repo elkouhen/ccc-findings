@@ -245,7 +245,7 @@ def test_render_graph_drawio_keeps_a_service_and_topic_with_the_same_name_distin
     assert all(cell.get("source") in vertex_ids and cell.get("target") in vertex_ids for cell in edges)
 
 
-def test_render_graph_drawio_places_kafka_services_above_topics() -> None:
+def test_render_graph_drawio_layers_kafka_flow_top_down() -> None:
     endpoints_by_service = {
         "orders": [make_endpoint("produce", "orders.created", "orders/Producer.java", system="kafka")],
         "payments": [
@@ -264,45 +264,48 @@ def test_render_graph_drawio_places_kafka_services_above_topics() -> None:
             continue
         geometry = cell.find("mxGeometry")
         assert geometry is not None
-        positions[cell.get("id")] = (
+        value = cell.get("value") or ""
+        name = next(
+            name
+            for name in ("orders", "payments", "notifications", "orders.created", "payments.completed")
+            if f"<b>{name}</b>" in value
+        )
+        positions[name] = (
             int(float(geometry.get("x", "0"))),
             int(float(geometry.get("y", "0"))),
         )
-    service_cells = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1" and "rounded=1" in cell.get("style", "")]
-    topic_cells = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1" and "cylinder3" in cell.get("style", "")]
 
-    assert len({positions[cell.get("id")][1] for cell in service_cells}) == 1
-    assert min(positions[cell.get("id")][1] for cell in topic_cells) > max(
-        positions[cell.get("id")][1] for cell in service_cells
-    )
+    assert positions["orders"][1] < positions["orders.created"][1]
+    assert positions["orders.created"][1] < positions["payments"][1]
+    assert positions["payments"][1] < positions["payments.completed"][1]
+    assert positions["payments.completed"][1] < positions["notifications"][1]
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
     assert all(
-        ("exitY=1" in cell.get("style", "") and "entryY=0" in cell.get("style", ""))
-        or ("exitY=0" in cell.get("style", "") and "entryY=1" in cell.get("style", ""))
+        "exitY=1" in cell.get("style", "") and "entryY=0" in cell.get("style", "")
         for cell in edge_cells
     )
 
 
-def test_render_graph_drawio_places_topics_below_services_in_mixed_graph() -> None:
+def test_render_graph_drawio_layers_mixed_graph_top_down() -> None:
     endpoints_by_service = _fixture()
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
 
-    service_positions = []
-    topic_positions = []
+    positions = {}
     for cell in root.iter("mxCell"):
         if cell.get("vertex") != "1":
             continue
         geometry = cell.find("mxGeometry")
         assert geometry is not None
-        y = int(float(geometry.get("y", "0")))
-        if "rounded=1" in cell.get("style", ""):
-            service_positions.append(y)
-        elif "cylinder3" in cell.get("style", ""):
-            topic_positions.append(y)
+        value = cell.get("value") or ""
+        name = next(
+            name
+            for name in ("service-a", "service-b", "orders.created")
+            if f"<b>{name}</b>" in value
+        )
+        positions[name] = int(float(geometry.get("y", "0")))
 
-    assert service_positions
-    assert topic_positions
-    assert min(topic_positions) > max(service_positions)
+    assert positions["service-a"] < positions["orders.created"]
+    assert positions["orders.created"] < positions["service-b"]
 
 
 def test_render_graph_drawio_layers_services_from_mixed_dependencies() -> None:
@@ -311,10 +314,10 @@ def test_render_graph_drawio_layers_services_from_mixed_dependencies() -> None:
 
     service_a = _vertex_for_service(root, "service-a")
     service_b = _vertex_for_service(root, "service-b")
-    service_a_x = int(float(service_a.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
-    service_b_x = int(float(service_b.find("mxGeometry").get("x", "0")))  # type: ignore[union-attr]
+    service_a_y = int(float(service_a.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
+    service_b_y = int(float(service_b.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
 
-    assert service_a_x < service_b_x
+    assert service_a_y < service_b_y
 
 
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
@@ -359,8 +362,8 @@ def test_render_graph_drawio_uses_deterministic_dependency_lanes() -> None:
         )
 
     assert positions["service-a"] == (24, 24)
-    assert positions["service-a"][0] < positions["orders.created"][0]
-    assert positions["orders.created"][0] < positions["service-b"][0]
+    assert positions["service-a"][1] < positions["orders.created"][1]
+    assert positions["orders.created"][1] < positions["service-b"][1]
 
 
 def test_write_graph_d2_writes_raw_source_when_extension_is_d2(tmp_path) -> None:
