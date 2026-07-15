@@ -387,8 +387,9 @@ node per known service — including services without interactions — and one
 distinct node per inter-service Kafka topic. REST calls are solid blue arrows;
 Kafka flows are orange dashed arrows split into `producer → topic` and
 `topic → consumer` segments. The `.drawio` export deliberately avoids layer,
-topological-order, port, or waypoint constraints: nodes receive only neutral
-seed positions, so diagrams.net/ELK can freely compute the final placement. Each
+topological-order, port, or waypoint constraints: nodes receive only seed
+positions that keep each topic close to the services that use it, so
+diagrams.net/ELK can freely compute the final placement. Each
 microservice card shows its exposed HTTP resources as an aligned method/path
 list with verb-colored badges and a resource count (or an explicit empty
 state). To limit visual noise, several relations HTTP with the same source and

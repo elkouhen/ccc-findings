@@ -375,10 +375,11 @@ def render_graph_drawio(
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
     portent des couleurs et des formes distinctes. Le fichier ne porte pas de
-    contraintes de couche ou de tri topologique : un placement initial neutre
-    permet à diagrams.net/ELK de recalculer librement le layout. Toute valeur
-    dérivée du code source (nom de service, route, topic) est échappée XML via
-    `quoteattr` — jamais interpolée brute."""
+    contraintes de couche ou de tri topologique : le placement initial rapproche
+    simplement les topics des services qui les utilisent, puis diagrams.net/ELK
+    peut recalculer librement le layout. Toute valeur dérivée du code source
+    (nom de service, route, topic) est échappée XML via `quoteattr` — jamais
+    interpolée brute."""
     node_width = 320
 
     ordered_services = sorted(endpoints_by_service)
@@ -398,7 +399,7 @@ def render_graph_drawio(
     # sharing the same endpoints. This removes parallel strokes and keeps their
     # individual routes as a multi-line label on the single connector.
     visual_edges = _drawio_visual_graph_edges(edges)
-    positions = _drawio_initial_positions(ordered_nodes, node_dimensions)
+    positions = _drawio_initial_positions(ordered_nodes, visual_edges, node_dimensions)
 
     cells: list[str] = []
     for node_kind, name in ordered_nodes:
@@ -699,28 +700,96 @@ def write_graph_d2(output_path: Path, source: str, layout: str = "elk") -> None:
 
 def _drawio_initial_positions(
     ordered_nodes: list[tuple[str, str]],
+    visual_edges: list[tuple[str, str, str, str, str, str]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
 ) -> dict[tuple[str, str], tuple[int, int]]:
-    """Neutral seed positions for Draw.io before an external layout is run."""
+    """Seed positions by service/topic affinity, without layout constraints."""
     left_margin = 24
     top_margin = 24
     column_gap = 96
-    row_gap = 96
-    max_columns = 3
+    row_gap = 48
+    component_gap = 128
     positions: dict[tuple[str, str], tuple[int, int]] = {}
+    order_index = {node: index for index, node in enumerate(ordered_nodes)}
+    node_set = set(ordered_nodes)
+    adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
+    for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
+        source = (source_kind, source_name)
+        target = (target_kind, target_name)
+        if source not in node_set or target not in node_set or source == target:
+            continue
+        adjacency[source].add(target)
+        adjacency[target].add(source)
 
-    row_start = 0
+    components: list[list[tuple[str, str]]] = []
+    seen: set[tuple[str, str]] = set()
+    for node in ordered_nodes:
+        if node in seen:
+            continue
+        stack = [node]
+        component: list[tuple[str, str]] = []
+        seen.add(node)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            for neighbor in sorted(adjacency[current], key=lambda item: order_index[item]):
+                if neighbor in seen:
+                    continue
+                seen.add(neighbor)
+                stack.append(neighbor)
+        component.sort(key=lambda item: order_index[item])
+        components.append(component)
+
     y = top_margin
-    while row_start < len(ordered_nodes):
-        row_nodes = ordered_nodes[row_start : row_start + max_columns]
-        x = left_margin
-        row_height = max(node_dimensions[node][1] for node in row_nodes)
-        for node in row_nodes:
-            width, height = node_dimensions[node]
-            positions[node] = (x, y + (row_height - height) // 2)
-            x += width + column_gap
-        y += row_height + row_gap
-        row_start += max_columns
+    for component in components:
+        services = [node for node in component if node[0] == "microservice"]
+        topics = [node for node in component if node[0] == "kafka_topic"]
+        if not services or not topics:
+            x = left_margin
+            row_height = max(node_dimensions[node][1] for node in component)
+            for node in component:
+                width, height = node_dimensions[node]
+                positions[node] = (x, y + (row_height - height) // 2)
+                x += width + column_gap
+            y += row_height + component_gap
+            continue
+
+        service_x = left_margin
+        service_y = y
+        for service in services:
+            _width, height = node_dimensions[service]
+            positions[service] = (service_x, service_y)
+            service_y += height + row_gap
+        service_column_height = service_y - y - row_gap
+        service_width = max(node_dimensions[service][0] for service in services)
+        topic_x = service_x + service_width + column_gap
+        desired_topics: list[tuple[int, tuple[str, str]]] = []
+        for topic in topics:
+            related_services = [
+                neighbor for neighbor in adjacency[topic] if neighbor[0] == "microservice" and neighbor in positions
+            ]
+            if related_services:
+                centers = [
+                    positions[service][1] + node_dimensions[service][1] // 2
+                    for service in related_services
+                ]
+                desired_y = int(round(sum(centers) / len(centers) - node_dimensions[topic][1] / 2))
+            else:
+                desired_y = y
+            desired_topics.append((desired_y, topic))
+
+        topic_y = y
+        for desired_y, topic in sorted(desired_topics, key=lambda item: (item[0], order_index[item[1]])):
+            width, height = node_dimensions[topic]
+            topic_y = max(topic_y, desired_y)
+            positions[topic] = (topic_x, topic_y)
+            topic_y += height + row_gap
+
+        topic_column_height = max(
+            (positions[topic][1] - y + node_dimensions[topic][1] for topic in topics),
+            default=0,
+        )
+        y += max(service_column_height, topic_column_height) + component_gap
     return positions
 
 

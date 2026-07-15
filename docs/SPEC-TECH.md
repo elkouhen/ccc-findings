@@ -707,9 +707,10 @@ mxGraph XML (native diagrams.net/drawio format):
   label contains a sorted, distinct exposed REST resource table: count,
   verb-colored badge, and aligned route (or an explicit empty-state message).
   Card height reserves enough rows for the longest list;
-- a deterministic neutral seed placement, independent from graph edges. The
-  Draw.io export does not encode layer constraints, topological ordering, fixed
-  ports, or waypoints, so diagrams.net/ELK can freely compute the final layout;
+- a deterministic service/topic affinity seed placement. It uses graph edges
+  only to keep Kafka topics close to the services that produce or consume them;
+  it does not encode layer constraints, topological ordering, fixed ports, or
+  waypoints, so diagrams.net/ELK can freely compute the final layout;
 - one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
   Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
   Kafka segments are orange and dashed. All edges use orthogonal routing,
