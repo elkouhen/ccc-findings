@@ -721,7 +721,10 @@ def _drawio_initial_positions(
     spring_strength = 0.09
     damping = 0.82
     max_step = 42.0
-    iterations = 260
+    min_iterations = 80
+    max_iterations = 800
+    convergence_epsilon = 0.08
+    stable_iterations_required = 12
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
@@ -772,9 +775,10 @@ def _drawio_initial_positions(
         x_offset += radius * 2 + ideal_edge * 1.8
 
     velocities = {node: (0.0, 0.0) for node in ordered_nodes}
-    for iteration in range(iterations):
+    stable_iterations = 0
+    for iteration in range(max_iterations):
         forces = {node: (0.0, 0.0) for node in ordered_nodes}
-        temperature = max_step * (1.0 - iteration / iterations)
+        temperature = max(2.0, max_step * (1.0 - iteration / max_iterations))
 
         for i, source in enumerate(ordered_nodes):
             sx, sy = positions_f[source]
@@ -815,6 +819,8 @@ def _drawio_initial_positions(
             forces[source] = (sfx + fx, sfy + fy)
             forces[target] = (tfx - fx, tfy - fy)
 
+        total_step = 0.0
+        max_displacement = 0.0
         for node in ordered_nodes:
             vx, vy = velocities[node]
             fx, fy = forces[node]
@@ -827,6 +833,17 @@ def _drawio_initial_positions(
             x, y = positions_f[node]
             positions_f[node] = (x + vx, y + vy)
             velocities[node] = (vx, vy)
+            displacement = math.hypot(vx, vy)
+            total_step += displacement
+            max_displacement = max(max_displacement, displacement)
+
+        mean_displacement = total_step / len(ordered_nodes)
+        if iteration >= min_iterations and mean_displacement < convergence_epsilon and max_displacement < convergence_epsilon * 4:
+            stable_iterations += 1
+            if stable_iterations >= stable_iterations_required:
+                break
+        else:
+            stable_iterations = 0
 
     min_x = min(x for x, _y in positions_f.values())
     min_y = min(y for _x, y in positions_f.values())

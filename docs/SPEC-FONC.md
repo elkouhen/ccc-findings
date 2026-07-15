@@ -389,7 +389,7 @@ Kafka flows are orange dashed arrows split into `producer → topic` and
 `topic → consumer` segments. The `.drawio` export deliberately avoids layer,
 topological-order, port, or waypoint constraints: node coordinates are computed
 with a deterministic elastic layout that pulls each topic toward the services
-that use it and repels unrelated nodes to reduce visual overlap. Each
+that use it and repels unrelated nodes until movement stabilizes. Each
 microservice card shows its exposed HTTP resources as an aligned method/path
 list with verb-colored badges and a resource count (or an explicit empty
 state). To limit visual noise, several relations HTTP with the same source and

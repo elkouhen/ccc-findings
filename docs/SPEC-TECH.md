@@ -709,8 +709,9 @@ mxGraph XML (native diagrams.net/drawio format):
   Card height reserves enough rows for the longest list;
 - a deterministic elastic/force-directed placement. It uses graph edges as
   springs to keep Kafka topics close to the services that produce or consume
-  them, while repulsion separates unrelated nodes. It does not encode layer
-  constraints, topological ordering, fixed ports, or waypoints;
+  them, while repulsion separates unrelated nodes. The solver iterates until
+  node displacement stabilizes, with a bounded maximum iteration count. It does
+  not encode layer constraints, topological ordering, fixed ports, or waypoints;
 - one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
   Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
   Kafka segments are orange and dashed. All edges use orthogonal routing,
