@@ -721,12 +721,13 @@ def _drawio_initial_positions(
     # finding a stable placement is preferable to exporting a dense, unreadable
     # diagram. Distances are measured between rectangle borders, not centers.
     linked_node_gap = 60.0
-    repulsion_strength = 65_000.0
-    center_strength = 0.008
+    repulsion_strength = 44_000.0
+    center_strength = 0.016
     alpha = 1.0
     alpha_min = 0.002
     alpha_decay = 1 - alpha_min ** (1 / 5_000)
-    velocity_decay = 0.32
+    velocity_decay = 0.65
+    max_velocity = 36.0
     max_iterations = 6_000
     node_margin = 44.0
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
@@ -763,11 +764,23 @@ def _drawio_initial_positions(
         component.sort(key=lambda item: order_index[item])
         components.append(component)
 
+    # Isolated services carry no structural information for the force solver.
+    # Letting them participate only expands the main graph, so they are packed
+    # after the connected components have settled.
+    isolated_nodes = [
+        component[0]
+        for component in components
+        if len(component) == 1 and not adjacency[component[0]]
+    ]
+    simulated_nodes = [node for node in ordered_nodes if node not in set(isolated_nodes)]
+
     positions_f: dict[tuple[str, str], tuple[float, float]] = {}
     component_centers: dict[tuple[str, str], tuple[float, float]] = {}
     x_offset = 0.0
     golden_angle = math.pi * (3 - math.sqrt(5))
     for component in components:
+        if component[0] in isolated_nodes:
+            continue
         component_span = max(720.0, math.sqrt(len(component)) * 460.0)
         center_x = x_offset + component_span / 2
         center_y = component_span / 2
@@ -782,7 +795,10 @@ def _drawio_initial_positions(
             component_centers[node] = (center_x, center_y)
         x_offset += component_span + 260.0
 
-    velocities = {node: (0.0, 0.0) for node in ordered_nodes}
+    # Isolated nodes are packed afterwards and deliberately do not consume
+    # force-simulation space.
+    positions_f.update({node: (0.0, 0.0) for node in isolated_nodes})
+    velocities = {node: (0.0, 0.0) for node in simulated_nodes}
     degrees = {node: max(1, len(adjacency[node])) for node in ordered_nodes}
     for iteration in range(max_iterations):
         if alpha < alpha_min:
@@ -799,7 +815,7 @@ def _drawio_initial_positions(
             )
             # A high-degree topic must not turn into a massive rigid hub. The
             # spring contribution is shared across its incident edges.
-            strength = alpha * 0.20 / math.sqrt(degrees[source] * degrees[target])
+            strength = alpha * 0.35 / math.sqrt(degrees[source] * degrees[target])
             force = (distance - desired) / distance * strength
             fx = dx * force
             fy = dy * force
@@ -808,9 +824,9 @@ def _drawio_initial_positions(
             velocities[source] = (svx + fx, svy + fy)
             velocities[target] = (tvx - fx, tvy - fy)
 
-        for i, source in enumerate(ordered_nodes):
+        for i, source in enumerate(simulated_nodes):
             sx, sy = positions_f[source]
-            for target in ordered_nodes[i + 1 :]:
+            for target in simulated_nodes[i + 1 :]:
                 tx, ty = positions_f[target]
                 dx = sx - tx
                 dy = sy - ty
@@ -818,7 +834,14 @@ def _drawio_initial_positions(
                 # `dx` points from target to source, therefore a positive force
                 # pushes the two nodes apart. The former implementation used a
                 # negative value here, which made the supposed charge attractive.
-                force = repulsion_strength * alpha / (distance * distance + 2_500.0)
+                # Connected endpoints already have a spring to keep them
+                # separate. Reducing their electrical repulsion lets related
+                # services/topics form readable neighbourhoods instead of
+                # inflating the whole connected component.
+                pair_repulsion = (
+                    repulsion_strength * 0.18 if target in adjacency[source] else repulsion_strength
+                )
+                force = pair_repulsion * alpha / (distance * distance + 2_500.0)
                 fx = dx / distance * force
                 fy = dy / distance * force
                 svx, svy = velocities[source]
@@ -826,7 +849,7 @@ def _drawio_initial_positions(
                 velocities[source] = (svx + fx, svy + fy)
                 velocities[target] = (tvx - fx, tvy - fy)
 
-        for node in ordered_nodes:
+        for node in simulated_nodes:
             vx, vy = velocities[node]
             x, y = positions_f[node]
             cx, cy = component_centers[node]
@@ -834,6 +857,11 @@ def _drawio_initial_positions(
             vy += (cy - y) * center_strength * alpha
             vx *= 1 - velocity_decay
             vy *= 1 - velocity_decay
+            speed = math.hypot(vx, vy)
+            if speed > max_velocity:
+                scale = max_velocity / speed
+                vx *= scale
+                vy *= scale
             x, y = positions_f[node]
             positions_f[node] = (x + vx, y + vy)
             velocities[node] = (vx, vy)
@@ -842,7 +870,7 @@ def _drawio_initial_positions(
         # is stricter than circular collision and guarantees that the Draw.io
         # boxes cannot overlap when the simulation settles.
         _separate_overlapping_drawio_nodes(
-            ordered_nodes,
+            simulated_nodes,
             positions_f,
             node_dimensions,
             margin=node_margin,
@@ -851,7 +879,10 @@ def _drawio_initial_positions(
         alpha += (0.0 - alpha) * alpha_decay
 
     _separate_overlapping_drawio_nodes(
-        ordered_nodes, positions_f, node_dimensions, margin=node_margin, max_passes=1_000
+        simulated_nodes, positions_f, node_dimensions, margin=node_margin, max_passes=1_000
+    )
+    _pack_isolated_drawio_nodes(
+        isolated_nodes, positions_f, node_dimensions, margin=node_margin
     )
 
     min_x = min(x - node_dimensions[node][0] / 2 for node, (x, _y) in positions_f.items())
@@ -863,6 +894,44 @@ def _drawio_initial_positions(
         )
         for node, (x, y) in positions_f.items()
     }
+
+
+def _pack_isolated_drawio_nodes(
+    isolated_nodes: list[tuple[str, str]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    margin: float,
+) -> None:
+    """Place disconnected nodes in a compact grid below the connected graph."""
+    if not isolated_nodes:
+        return
+
+    connected_nodes = [node for node in positions if node not in set(isolated_nodes)]
+    max_width = max(node_dimensions[node][0] for node in isolated_nodes)
+    max_height = max(node_dimensions[node][1] for node in isolated_nodes)
+    columns = math.ceil(math.sqrt(len(isolated_nodes)))
+    if connected_nodes:
+        left = min(
+            positions[node][0] - node_dimensions[node][0] / 2 for node in connected_nodes
+        )
+        bottom = max(
+            positions[node][1] + node_dimensions[node][1] / 2 for node in connected_nodes
+        )
+        start_x = left
+        start_y = bottom + max_height / 2 + margin * 4
+    else:
+        start_x = 0.0
+        start_y = max_height / 2
+
+    for index, node in enumerate(isolated_nodes):
+        column = index % columns
+        row = index // columns
+        width, height = node_dimensions[node]
+        positions[node] = (
+            start_x + column * (max_width + margin) + width / 2,
+            start_y + row * (max_height + margin) + height / 2,
+        )
 
 
 def _drawio_link_distance(
@@ -915,8 +984,10 @@ def _separate_overlapping_drawio_nodes(
                     continue
 
                 moved = True
-                prefer_horizontal = source[0] == target[0]
-                if prefer_horizontal or overlap_x < overlap_y:
+                # Resolve on the axis requiring the smallest translation.
+                # Forcing same-kind nodes (notably many Kafka topics around a
+                # hub) horizontally creates a long, unreadable strip.
+                if overlap_x < overlap_y:
                     direction = 1.0 if dx >= 0 else -1.0
                     shift = overlap_x / 2
                     sx -= direction * shift
