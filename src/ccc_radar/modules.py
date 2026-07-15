@@ -434,12 +434,20 @@ def _extract_java_architecture(
                     evidence=_source_evidence(source, node, rel),
                 ))
         _trace("module.architecture.walk_mongo.end", module=module_dir, path=rel)
-    return (
-        tuple(sorted(collections)),
-        tuple(sorted(methods, key=lambda item: (item.path, item.line, item.operation))),
-        kafka_methods,
-        tuple(sorted(blocking_points, key=lambda item: (item.path, item.line, item.mechanism))),
-    )
+    _trace("module.architecture.files.end", module=module_dir)
+    _trace("module.architecture.sort_collections.begin", module=module_dir, count=len(collections))
+    sorted_collections = tuple(sorted(collections))
+    _trace("module.architecture.sort_collections.end", module=module_dir)
+    _trace("module.architecture.sort_methods.begin", module=module_dir, count=len(methods))
+    sorted_methods = tuple(sorted(methods, key=lambda item: (item.path, item.line, item.operation)))
+    _trace("module.architecture.sort_methods.end", module=module_dir)
+    _trace("module.architecture.sort_blocking.begin", module=module_dir, count=len(blocking_points))
+    sorted_blocking_points = tuple(sorted(
+        blocking_points, key=lambda item: (item.path, item.line, item.mechanism)
+    ))
+    _trace("module.architecture.sort_blocking.end", module=module_dir)
+    _trace("module.architecture.end", module=module_dir)
+    return sorted_collections, sorted_methods, kafka_methods, sorted_blocking_points
 
 
 def _discover_openapi_files(module_dir: Path, module_roots: set[Path]) -> tuple[str, ...]:
