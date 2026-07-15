@@ -312,6 +312,7 @@ def index_repo(
         discovered_modules = discover_modules(
             repo_root,
             enrich_architecture="module-architecture" not in disabled,
+            use_tree_sitter="module-tree-sitter" not in disabled,
         )
         _trace("modules.end", count=len(discovered_modules))
         if discovered_modules:

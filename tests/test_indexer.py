@@ -109,11 +109,16 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
 def test_index_repo_can_disable_only_module_architecture_enrichment(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[bool] = []
+    calls: list[tuple[bool, bool]] = []
     semgrep_called = False
 
-    def fake_discover_modules(_root: Path, *, enrich_architecture: bool = True) -> list:
-        calls.append(enrich_architecture)
+    def fake_discover_modules(
+        _root: Path,
+        *,
+        enrich_architecture: bool = True,
+        use_tree_sitter: bool = True,
+    ) -> list:
+        calls.append((enrich_architecture, use_tree_sitter))
         return []
 
     def fake_semgrep(*_args: object, **_kwargs: object) -> str:
@@ -134,7 +139,44 @@ def test_index_repo_can_disable_only_module_architecture_enrichment(
             disabled=frozenset({"module-architecture"}),
         )
 
-    assert calls == [False]
+    assert calls == [(False, True)]
+    assert semgrep_called is True
+
+
+def test_index_repo_can_disable_all_module_tree_sitter_usage(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[bool, bool]] = []
+    semgrep_called = False
+
+    def fake_discover_modules(
+        _root: Path,
+        *,
+        enrich_architecture: bool = True,
+        use_tree_sitter: bool = True,
+    ) -> list:
+        calls.append((enrich_architecture, use_tree_sitter))
+        return []
+
+    def fake_semgrep(*_args: object, **_kwargs: object) -> str:
+        nonlocal semgrep_called
+        semgrep_called = True
+        return '{"results": []}'
+
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", fake_discover_modules)
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", fake_semgrep)
+
+    with Store(repo_copy) as store:
+        index_repo(
+            repo_copy,
+            make_config(),
+            store,
+            FakeEmbedder(),
+            full=True,
+            disabled=frozenset({"module-tree-sitter"}),
+        )
+
+    assert calls == [(True, False)]
     assert semgrep_called is True
 
 

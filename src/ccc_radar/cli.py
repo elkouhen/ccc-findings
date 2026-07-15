@@ -249,14 +249,17 @@ def index_cmd(
     disable: list[str] = typer.Option(
         None,
         "--disable",
-        help="Type à désactiver : semgrep, properties ou module-architecture. Répétable.",
+        help=(
+            "Type à désactiver : semgrep, properties, module-architecture "
+            "ou module-tree-sitter. Répétable."
+        ),
     ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
     _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
     disabled = frozenset(disable or [])
-    known_disabled = {"semgrep", "properties", "module-architecture"}
+    known_disabled = {"semgrep", "properties", "module-architecture", "module-tree-sitter"}
     unknown = disabled - known_disabled
     if unknown:
         typer.echo(

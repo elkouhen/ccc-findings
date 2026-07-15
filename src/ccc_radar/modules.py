@@ -497,7 +497,12 @@ def _enrich_module(
     return enriched
 
 
-def discover_modules(root: Path, *, enrich_architecture: bool = True) -> list[DiscoveredModule]:
+def discover_modules(
+    root: Path,
+    *,
+    enrich_architecture: bool = True,
+    use_tree_sitter: bool = True,
+) -> list[DiscoveredModule]:
     """Discover build modules, including libraries and aggregators."""
     root = root.resolve()
     modules: list[DiscoveredModule] = []
@@ -511,7 +516,11 @@ def discover_modules(root: Path, *, enrich_architecture: bool = True) -> list[Di
         _trace("module.maven.begin", pom=pom_path)
         artifact_id, _, packaging = parse_pom(pom_path)
         _trace("module.maven.parsed", pom=pom_path, artifact=artifact_id, packaging=packaging)
-        entrypoint = _starts_application(module_dir)
+        if use_tree_sitter:
+            entrypoint = _starts_application(module_dir)
+        else:
+            _trace("module.maven.entrypoint.disabled", pom=pom_path)
+            entrypoint = None
         _trace("module.maven.entrypoint.end", pom=pom_path, found=entrypoint is not None)
         kind = (
             "aggregator"
@@ -538,7 +547,11 @@ def discover_modules(root: Path, *, enrich_architecture: bool = True) -> list[Di
         has_build_file = any(
             (module_dir / filename).is_file() for filename in ("build.gradle", "build.gradle.kts")
         )
-        entrypoint = _starts_application(module_dir)
+        if use_tree_sitter:
+            entrypoint = _starts_application(module_dir)
+        else:
+            _trace("module.gradle.entrypoint.disabled", module=module_dir)
+            entrypoint = None
         modules.append(
             DiscoveredModule(
                 name=name,
@@ -559,7 +572,11 @@ def discover_modules(root: Path, *, enrich_architecture: bool = True) -> list[Di
     _trace("modules.enrich.begin", count=len(modules))
     enriched = sorted(
         (
-            _enrich_module(module, module_roots, enrich_architecture=enrich_architecture)
+            _enrich_module(
+                module,
+                module_roots,
+                enrich_architecture=enrich_architecture and use_tree_sitter,
+            )
             for module in modules
         ),
         key=lambda module: str(module.path),

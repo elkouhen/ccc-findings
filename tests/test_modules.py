@@ -78,6 +78,30 @@ class OrdersApplication {
     assert modules[0].application_entrypoint.snippet.startswith("SpringApplication.run")
 
 
+def test_modules_can_disable_all_tree_sitter_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrdersApplication.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.boot.SpringApplication;
+class OrdersApplication {
+  public static void main(String[] args) { SpringApplication.run(OrdersApplication.class, args); }
+}
+"""
+    )
+    monkeypatch.setattr(
+        "ccc_radar.modules._starts_application",
+        lambda *_args, **_kwargs: pytest.fail("Tree-sitter entrypoint detection must stay disabled"),
+    )
+
+    modules = discover_modules(tmp_path, use_tree_sitter=False)
+
+    assert modules[0].name == "orders-api"
+    assert modules[0].starts_application is False
+    assert modules[0].application_entrypoint is None
+
+
 def test_modules_cli_lists_then_returns_module_detail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "App.java"
