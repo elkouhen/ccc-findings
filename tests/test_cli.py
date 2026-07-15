@@ -626,6 +626,30 @@ def test_graph_d2_renders_svg_via_d2_cli(
     assert out_file.read_text(encoding="utf-8") == "<svg />"
 
 
+def test_graph_html_writes_interactive_g6_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    consume = _make_endpoint(
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(
+            ["order-service/Producer.java", "payment-service/Consumer.java"],
+            [produce, consume],
+        )
+    out_file = tmp_path / "graph.html"
+
+    result = runner.invoke(app, ["graph", "--html", str(out_file)])
+
+    assert result.exit_code == 0
+    document = out_file.read_text(encoding="utf-8")
+    assert "new G6.Graph" in document
+    assert "order-service" in document
+    assert "orders.created" in document
+
+
 def test_graph_rejects_drawio_and_d2_together(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -639,7 +663,7 @@ def test_graph_rejects_drawio_and_d2_together(
     )
 
     assert result.exit_code == 2
-    assert "soit --drawio, soit --d2" in result.output
+    assert "--drawio, --html ou --d2" in result.output
 
 
 def test_endpoints_without_index_exits_with_code_2(

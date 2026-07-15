@@ -312,7 +312,7 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--d2 FILE]`
+### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE]`
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
@@ -401,10 +401,15 @@ respectively. Without
 inter-module data, it writes a valid document but with no node/edge and
 displays the same explanatory `note` as `--json` (never a silent failure).
 
+`--html FILE`: writes an interactive AntV G6 graph. Nodes can be zoomed, dragged,
+searched, or selected; selecting one mutes unrelated nodes and edges so dense
+hubs remain inspectable. The generated document embeds graph data locally and
+loads AntV G6 from its CDN when opened.
+
 `--d2 FILE`: also replaces JSON/text rendering. With a `.d2` extension it
 writes D2 source; for another extension (for example `.svg` or `.png`) it
 renders through the D2 CLI. `--d2-layout` selects `elk` (default) or `dagre`.
-`--drawio` and `--d2` cannot be combined. No equivalent MCP tool — visual files
+`--drawio`, `--html`, and `--d2` cannot be combined. No equivalent MCP tool — visual files
 are not agent-consumable results, unlike the JSON returned by `graph`.
 
 ### `cccr microservices [root] [--json]`

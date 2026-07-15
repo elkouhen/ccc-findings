@@ -8,6 +8,7 @@ from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 from ccc_radar.render import (
     render_graph_d2,
     render_graph_drawio,
+    render_graph_html,
     render_graph_json,
     render_graph_text,
     write_graph_d2,
@@ -197,6 +198,25 @@ def test_render_graph_drawio_produces_well_formed_xml() -> None:
     assert any(cell.get("value") == "<b>orders.created</b>" for cell in root.iter("mxCell"))
     assert len(edge_cells) == 3
     assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
+
+
+def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
+    endpoints_by_service = {
+        "service-</script>": [
+            make_endpoint("produce", "orders.created", "producer/Producer.java", system="kafka")
+        ],
+        "service-b": [
+            make_endpoint("consume", "orders.created", "consumer/Consumer.java", system="kafka")
+        ],
+    }
+
+    document = render_graph_html(endpoints_by_service, build_graph(endpoints_by_service))
+
+    assert 'src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"' in document
+    assert "new G6.Graph" in document
+    assert "preventOverlap: true" in document
+    assert "<\\/script>" in document
+    assert "service-</script>" not in document
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:

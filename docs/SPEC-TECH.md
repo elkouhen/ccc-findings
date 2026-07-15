@@ -707,7 +707,7 @@ mxGraph XML (native diagrams.net/drawio format):
   label contains a sorted, distinct exposed REST resource table: count,
   verb-colored badge, and aligned route (or an explicit empty-state message).
   Card height reserves enough rows for the longest list;
-- a deterministic elastic/force-directed placement inspired by D3 force
+- a deterministic elastic/force-directed placement inspired by browser force
   simulation: link springs keep Kafka topics close to the services that produce
   or consume them, many-body repulsion separates unrelated nodes, collision
   forces reserve node space, and a weak component center force keeps disconnected

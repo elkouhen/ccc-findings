@@ -40,6 +40,7 @@ from ccc_radar.render import (
     render_flow_text,
     render_graph_d2,
     render_graph_drawio,
+    render_graph_html,
     render_graph_json,
     render_graph_text,
     render_module_detail_json,
@@ -488,6 +489,11 @@ def graph_cmd(
         ".drawio (mxGraph, diagrams.net) à ce chemin, plutôt que le rendu "
         "JSON/texte (BACKLOG-14 G1).",
     ),
+    html: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--html",
+        help="Écrit un graphe HTML interactif propulsé par AntV G6.",
+    ),
     d2: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--d2",
@@ -514,8 +520,8 @@ def graph_cmd(
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
-    if drawio is not None and d2 is not None:
-        typer.echo("Choisissez soit --drawio, soit --d2.", err=True)
+    if sum(output is not None for output in (drawio, html, d2)) > 1:
+        typer.echo("Choisissez un seul rendu parmi --drawio, --html ou --d2.", err=True)
         raise typer.Exit(code=2)
 
     with Store(repo_root) as store:
@@ -555,6 +561,13 @@ def graph_cmd(
             render_graph_drawio(services_by_name, edges), encoding="utf-8"
         )
         typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
+        if result["note"]:
+            typer.echo(result["note"])
+        return
+
+    if html is not None:
+        html.write_text(render_graph_html(services_by_name, edges), encoding="utf-8")
+        typer.echo(f"Graphe écrit dans {html} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
             typer.echo(result["note"])
         return

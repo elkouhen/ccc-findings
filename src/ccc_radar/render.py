@@ -1,4 +1,5 @@
 import math
+import json
 import re
 import subprocess
 from html import escape as html_escape
@@ -469,6 +470,317 @@ def render_graph_drawio(
     )
 
 
+def render_graph_html(
+    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
+) -> str:
+    """Render an interactive AntV G6 graph as a self-contained HTML document.
+
+    AntV G6 is loaded from its CDN at viewing time; graph data is embedded locally
+    and safely serialized so the generated file contains no application data in
+    executable JavaScript.
+    """
+    ordered_services = sorted(endpoints_by_service)
+    kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
+    nodes = [
+        {
+            "id": f"microservice:{name}",
+            "kind": "microservice",
+            "name": name,
+            "width": 250,
+            "height": 56,
+        }
+        for name in ordered_services
+    ] + [
+        {
+            "id": f"kafka_topic:{name}",
+            "kind": "kafka_topic",
+            "name": name,
+            "width": 190,
+            "height": 42,
+        }
+        for name in kafka_topics
+    ]
+    links = [
+        {
+            "source": f"{source_kind}:{source_name}",
+            "target": f"{target_kind}:{target_name}",
+            "kind": kind,
+            "label": label.replace("<br/>", "\\n"),
+        }
+        for source_kind, source_name, target_kind, target_name, label, kind in _drawio_visual_graph_edges(
+            edges
+        )
+    ]
+    graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
+    return _GRAPH_HTML_TEMPLATE.replace("__GRAPH_DATA__", graph_data)
+
+
+_GRAPH_HTML_TEMPLATE = """<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCC Radar graph</title>
+  <script src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"></script>
+  <style>
+    :root { color: #172033; background: #f5f7fb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; }
+    #graph { display: block; width: 100vw; height: 100vh; background: #f8fafc; }
+    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
+    .toolbar input { width: 220px; height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
+    .toolbar button:hover { background: #eaf2ff; }
+    .link { fill: none; stroke-width: 1.4px; stroke-opacity: .24; }
+    .link.kafka { stroke: #d18b20; stroke-dasharray: 5 4; }
+    .link.rest { stroke: #4f79b5; }
+    .node rect { stroke-width: 1.7px; }
+    .node.microservice rect { fill: #eaf2ff; stroke: #4f79b5; }
+    .node.kafka_topic rect { fill: #fff3df; stroke: #d18b20; rx: 21px; ry: 21px; }
+    .node text { fill: #172033; font-size: 12px; font-weight: 650; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
+    .node.kafka_topic text { fill: #744a0b; font-size: 11px; }
+    .node { cursor: grab; }
+    .node:active { cursor: grabbing; }
+    .muted { opacity: .09; }
+    .active { opacity: 1; }
+    .active.link { stroke-opacity: .92; stroke-width: 2.6px; }
+    #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    #details strong { display: block; color: #172033; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <strong>CCC Radar</strong>
+    <input id="search" type="search" placeholder="Rechercher un nœud" autocomplete="off" aria-label="Rechercher un nœud">
+    <button id="reset" type="button" aria-label="Réinitialiser la sélection" title="Réinitialiser">×</button>
+  </div>
+  <div id="details">Sélectionnez un nœud pour isoler ses relations.</div>
+  <div id="graph" aria-label="Graphe des interactions"></div>
+  <script id="graph-data" type="application/json">__GRAPH_DATA__</script>
+  <script>
+    if (false) {
+    const graph = JSON.parse(document.getElementById("graph-data").textContent);
+    const svg = G6.select("#graph");
+    const viewport = svg.append("g");
+    const linkLayer = viewport.append("g");
+    const nodeLayer = viewport.append("g");
+    const details = G6.select("#details");
+    const search = G6.select("#search");
+    let selectedId = null;
+
+    const truncate = (text, width) => {
+      const limit = Math.max(12, Math.floor((width - 18) / 7));
+      return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+    };
+    const rectangleCollide = (padding) => {
+      let nodes;
+      const force = () => {
+        for (let i = 0; i < nodes.length; i += 1) {
+          for (let j = i + 1; j < nodes.length; j += 1) {
+            const a = nodes[i], b = nodes[j];
+            const dx = b.x - a.x || (i < j ? .01 : -.01);
+            const dy = b.y - a.y || .01;
+            const overlapX = (a.width + b.width) / 2 + padding - Math.abs(dx);
+            const overlapY = (a.height + b.height) / 2 + padding - Math.abs(dy);
+            if (overlapX <= 0 || overlapY <= 0) continue;
+            if (overlapX < overlapY) {
+              const shift = overlapX / 2 * Math.sign(dx);
+              a.vx -= shift; b.vx += shift;
+            } else {
+              const shift = overlapY / 2 * Math.sign(dy);
+              a.vy -= shift; b.vy += shift;
+            }
+          }
+        }
+      };
+      force.initialize = value => { nodes = value; };
+      return force;
+    };
+
+    const link = linkLayer.selectAll("line")
+      .data(graph.links)
+      .join("line")
+      .attr("class", d => `link ${d.kind}`)
+      .append("title")
+      .text(d => d.label);
+    const linkLine = linkLayer.selectAll("line");
+    const node = nodeLayer.selectAll("g")
+      .data(graph.nodes)
+      .join("g")
+      .attr("class", d => `node ${d.kind}`)
+      .on("pointerenter", (_event, d) => selectNode(d.id))
+      .on("click", (event, d) => { event.stopPropagation(); selectNode(d.id); })
+      .call(G6.drag()
+        .on("start", dragStarted)
+        .on("drag", dragged)
+        .on("end", dragEnded));
+    node.append("rect")
+      .attr("x", d => -d.width / 2)
+      .attr("y", d => -d.height / 2)
+      .attr("width", d => d.width)
+      .attr("height", d => d.height)
+      .attr("rx", d => d.kind === "microservice" ? 6 : 21);
+    node.append("text").text(d => truncate(d.name, d.width));
+    node.append("title").text(d => d.name);
+
+    const simulation = G6.forceSimulation(graph.nodes)
+      .force("link", G6.forceLink(graph.links).id(d => d.id).distance(d => d.kind === "kafka" ? 180 : 250).strength(.45))
+      .force("charge", G6.forceManyBody().strength(-1150))
+      .force("collide", rectangleCollide(30))
+      .force("center", G6.forceCenter(innerWidth / 2, innerHeight / 2))
+      .force("x", G6.forceX(innerWidth / 2).strength(.018))
+      .force("y", G6.forceY(innerHeight / 2).strength(.018))
+      .alphaDecay(.012)
+      .velocityDecay(.48)
+      .on("tick", ticked);
+
+    function ticked() {
+      linkLine
+        .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      node.attr("transform", d => `translate(${d.x},${d.y})`);
+    }
+    function selectNode(id) {
+      selectedId = id;
+      const related = new Set([id]);
+      graph.links.forEach(d => {
+        const source = d.source.id || d.source;
+        const target = d.target.id || d.target;
+        if (source === id) related.add(target);
+        if (target === id) related.add(source);
+      });
+      node.classed("active", d => related.has(d.id)).classed("muted", d => !related.has(d.id));
+      linkLine.classed("active", d => d.source.id === id || d.target.id === id).classed("muted", d => d.source.id !== id && d.target.id !== id);
+      const selected = graph.nodes.find(d => d.id === id);
+      const relationCount = graph.links.filter(d => d.source.id === id || d.target.id === id).length;
+      details.selectAll("*").remove();
+      details.append("strong").text(selected.name);
+      details.append("span").text(`${selected.kind === "kafka_topic" ? "Topic Kafka" : "Microservice"} · ${relationCount} relation${relationCount > 1 ? "s" : ""}`);
+    }
+    function resetSelection() {
+      selectedId = null;
+      node.classed("active", false).classed("muted", false);
+      linkLine.classed("active", false).classed("muted", false);
+      details.text("Sélectionnez un nœud pour isoler ses relations.");
+      search.property("value", "");
+    }
+    function dragStarted(event, d) { if (!event.active) simulation.alphaTarget(.22).restart(); d.fx = d.x; d.fy = d.y; }
+    function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+    function dragEnded(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+    svg.call(G6.zoom().scaleExtent([.15, 3]).on("zoom", event => viewport.attr("transform", event.transform))).on("click", resetSelection);
+    G6.select("#reset").on("click", resetSelection);
+    search.on("input", function() {
+      const query = this.value.trim().toLocaleLowerCase();
+      const match = graph.nodes.find(d => d.name.toLocaleLowerCase().includes(query));
+      if (match) selectNode(match.id); else if (!query) resetSelection();
+    });
+    }
+
+    const graphData = JSON.parse(document.getElementById("graph-data").textContent);
+    const data = {
+      nodes: graphData.nodes.map(node => ({
+        id: node.id,
+        data: node,
+        style: {
+          size: [node.width, node.height],
+          fill: node.kind === "kafka_topic" ? "#fff3df" : "#eaf2ff",
+          stroke: node.kind === "kafka_topic" ? "#d18b20" : "#4f79b5",
+          radius: node.kind === "kafka_topic" ? 21 : 6,
+          label: node.name,
+          labelFill: node.kind === "kafka_topic" ? "#744a0b" : "#172033",
+          labelFontSize: node.kind === "kafka_topic" ? 11 : 12,
+          labelMaxWidth: node.width - 18,
+          labelWordWrap: true,
+        },
+      })),
+      edges: graphData.links.map((edge, index) => ({
+        id: `edge-${index}`,
+        source: edge.source,
+        target: edge.target,
+        data: edge,
+        style: {
+          stroke: edge.kind === "kafka" ? "#d18b20" : "#4f79b5",
+          lineWidth: 1.4,
+          opacity: .28,
+          lineDash: edge.kind === "kafka" ? [5, 4] : undefined,
+          endArrow: true,
+        },
+      })),
+    };
+    const details = document.getElementById("details");
+    const search = document.getElementById("search");
+    const graph = new G6.Graph({
+      container: "graph",
+      data,
+      autoResize: true,
+      autoFit: "view",
+      animation: false,
+      node: { type: "rect" },
+      edge: { type: "line" },
+      layout: {
+        type: "force",
+        preventOverlap: true,
+        nodeSize: 270,
+        linkDistance: 220,
+        nodeStrength: -110,
+        edgeStrength: .55,
+        gravity: .8,
+        iterations: 1_200,
+      },
+      behaviors: ["drag-canvas", "zoom-canvas", "drag-element-force"],
+    });
+    const elementData = new Map(data.nodes.map(node => [node.id, node]));
+    const setOpacity = async (nodeIds, edgeIds) => {
+      graph.updateNodeData(data.nodes.map(node => ({
+        id: node.id,
+        style: { opacity: nodeIds === null || nodeIds.has(node.id) ? 1 : .09 },
+      })));
+      graph.updateEdgeData(data.edges.map(edge => ({
+        id: edge.id,
+        style: {
+          opacity: edgeIds === null || edgeIds.has(edge.id) ? .9 : .04,
+          lineWidth: edgeIds !== null && edgeIds.has(edge.id) ? 2.4 : 1.2,
+        },
+      })));
+      await graph.draw();
+    };
+    const selectNode = async id => {
+      const relatedNodes = new Set([id]);
+      const relatedEdges = new Set();
+      data.edges.forEach(edge => {
+        if (edge.source === id || edge.target === id) {
+          relatedEdges.add(edge.id);
+          relatedNodes.add(edge.source);
+          relatedNodes.add(edge.target);
+        }
+      });
+      await setOpacity(relatedNodes, relatedEdges);
+      const node = elementData.get(id);
+      details.replaceChildren();
+      const title = document.createElement("strong");
+      title.textContent = node.data.name;
+      details.append(title, document.createTextNode(`${node.data.kind === "kafka_topic" ? "Topic Kafka" : "Microservice"} · ${relatedEdges.size} relation${relatedEdges.size > 1 ? "s" : ""}`));
+    };
+    const reset = async () => {
+      await setOpacity(null, null);
+      details.textContent = "Sélectionnez un nœud pour isoler ses relations.";
+      search.value = "";
+    };
+    graph.on(G6.NodeEvent.CLICK, event => selectNode(event.target.id));
+    graph.render();
+    document.getElementById("reset").addEventListener("click", reset);
+    search.addEventListener("input", event => {
+      const query = event.target.value.trim().toLocaleLowerCase();
+      const node = data.nodes.find(item => item.data.name.toLocaleLowerCase().includes(query));
+      if (node) selectNode(node.id); else if (!query) reset();
+    });
+  </script>
+</body>
+</html>
+"""
+
+
 def _d2_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
@@ -716,7 +1028,7 @@ def _drawio_initial_positions(
     if not ordered_nodes:
         return {}
 
-    # The simulation is intentionally more patient than an interactive D3
+    # The simulation is intentionally more patient than an interactive browser
     # layout. Graph exports are generated off-line, so spending a few seconds
     # finding a stable placement is preferable to exporting a dense, unreadable
     # diagram. Distances are measured between rectangle borders, not centers.
