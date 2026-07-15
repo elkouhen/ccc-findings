@@ -114,12 +114,22 @@ _OPENAPI_FILENAMES = (
 _MAX_NESTED_MODULE_DEPTH = 5
 _KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*[\"']([^\"']+)[\"']")
 _FIRST_STRING_RE = re.compile(r"\(\s*[\"']([^\"']+)[\"']")
+_JAVA_LANGUAGE: Language | None = None
+
+
+def _java_language() -> Language:
+    global _JAVA_LANGUAGE
+    if _JAVA_LANGUAGE is None:
+        _trace("java_language.begin")
+        _JAVA_LANGUAGE = Language(tree_sitter_java.language())
+        _trace("java_language.end")
+    return _JAVA_LANGUAGE
 
 
 def _java_parser() -> Parser:
     _trace("java_parser.begin")
     parser = Parser()
-    parser.language = Language(tree_sitter_java.language())
+    parser.language = _java_language()
     _trace("java_parser.end")
     return parser
 
