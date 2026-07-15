@@ -43,6 +43,27 @@ def test_discover_modules_includes_maven_aggregators_libraries_and_gradle_projec
     ]
 
 
+def test_module_start_attribute_is_detected_from_its_java_entrypoint(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrdersApplication.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.boot.SpringApplication;
+class OrdersApplication {
+  public static void main(String[] args) { SpringApplication.run(OrdersApplication.class, args); }
+}
+"""
+    )
+
+    modules = discover_modules(tmp_path)
+
+    assert modules[0].kind == "library"
+    assert modules[0].starts_application is True
+    assert modules[0].application_entrypoint is not None
+    assert modules[0].application_entrypoint.snippet.startswith("SpringApplication.run")
+
+
 def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: Path) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "App.java"
@@ -63,6 +84,12 @@ def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: P
             "build_system": "maven",
             "version": "3.1.0",
             "kind": "library",
+            "starts_application": False,
+            "mongo_collections": [],
+            "mongo_method_count": 0,
+            "kafka_method_count": 0,
+            "blocking_point_count": 0,
+            "openapi_files": [],
         }
     ]
 
@@ -75,6 +102,103 @@ def test_modules_cli_lists_then_returns_module_detail_and_properties(tmp_path: P
     )
     assert properties.exit_code == 0
     assert properties.output == "server:\n  port: 0\n"
+
+
+def test_modules_index_mongo_facts_and_openapi_files_from_java_ast(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderStore.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.repository.MongoRepository;
+@Document(collection = \"orders\") class Order {}
+class OrderStore {
+  MongoTemplate mongoTemplate;
+  MongoRepository<Order, String> orderRepository;
+  void save(Order order) {
+    mongoTemplate.save(order);
+    mongoTemplate.getCollection(\"audit\");
+    orderRepository.findById(\"id\");
+  }
+}
+"""
+    )
+    contract = module / "src" / "main" / "resources" / "openapi.yaml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("openapi: 3.1.0\ninfo: {title: Orders, version: v1}\n")
+
+    with Store(tmp_path) as store:
+        store.replace_modules(discover_modules(tmp_path))
+        indexed = store.all_modules()[0]
+
+    assert indexed.mongo_collections == ("orders",)
+    assert [(item.operation, item.receiver, item.collection) for item in indexed.mongo_methods] == [
+        ("save", "mongoTemplate", None),
+        ("getCollection", "mongoTemplate", "audit"),
+        ("findById", "orderRepository", None),
+    ]
+    assert indexed.openapi_files == ("src/main/resources/openapi.yaml",)
+    proof = indexed.mongo_methods[0].evidence
+    assert proof is not None
+    assert proof.start_line == 10
+    assert proof.snippet == "mongoTemplate.save(order)"
+    assert proof.source_hash.startswith("sha256:")
+
+
+def test_modules_index_kafka_send_and_receive_methods_from_java_ast(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderMessaging.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+class OrderMessaging {
+  KafkaTemplate<String, String> kafkaTemplate;
+  KafkaConsumer<String, String> consumer;
+  @KafkaListener(topics = "orders.created")
+  void consume(String payload) { kafkaTemplate.send("orders.validated", payload); }
+  void pollBroker() { consumer.poll(java.time.Duration.ofSeconds(1)); }
+}
+"""
+    )
+
+    module_info = discover_modules(tmp_path)[0]
+
+    assert [(item.role, item.mechanism, item.method, item.topic) for item in module_info.kafka_methods] == [
+        ("receive", "spring-kafka-listener", "consume", "orders.created"),
+        ("send", "spring-kafka-template", "consume", "orders.validated"),
+        ("receive", "kafka-clients-poll", "pollBroker", None),
+    ]
+
+
+def test_modules_index_blocking_points_from_java_ast(tmp_path: Path) -> None:
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrderLock.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "3.1.0")
+    source.write_text(
+        """import org.springframework.data.mongodb.core.MongoTemplate;
+class OrderLock {
+  MongoTemplate mongoTemplate;
+  void pause() throws InterruptedException { Thread.sleep(10); }
+  void acquireLock() { mongoTemplate.findAndModify(null, null, Object.class); }
+  void guarded() { synchronized (this) { mongoTemplate.findOne(null, Object.class); } }
+}
+"""
+    )
+
+    points = discover_modules(tmp_path)[0].blocking_points
+
+    assert [(point.mechanism, point.method, point.detail) for point in points] == [
+        ("thread-sleep", "pause", "Thread.sleep"),
+        ("mongo-pessimistic-lock", "acquireLock", "findAndModify"),
+        ("jvm-synchronized", "guarded", "synchronized block"),
+    ]
 
 
 def test_modules_cli_requires_an_index(tmp_path: Path) -> None:

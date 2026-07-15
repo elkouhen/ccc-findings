@@ -99,6 +99,31 @@ def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
     return hashes
 
 
+def _analysis_inputs_signature(repo_root: Path, config: Config) -> str:
+    """Fingerprint every local input that changes Semgrep or architecture facts.
+
+    `.cccr/**` is intentionally excluded from source scanning, therefore its
+    configuration and copied rule packs must be tracked separately. External
+    files are fingerprinted when they are local; registry rule identifiers
+    remain part of the signature as strings.
+    """
+    digest = hashlib.sha256()
+    for rule in sorted(config.rules):
+        digest.update(rule.encode())
+        candidate = (repo_root / rule).resolve()
+        if candidate.is_file():
+            digest.update(_sha256_file(candidate).encode())
+        elif candidate.is_dir():
+            for path in sorted(candidate.rglob("*")):
+                if path.is_file():
+                    digest.update(str(path.relative_to(candidate)).encode())
+                    digest.update(_sha256_file(path).encode())
+    config_file = repo_root / ".cccr" / "config.yml"
+    if config_file.is_file():
+        digest.update(_sha256_file(config_file).encode())
+    return digest.hexdigest()
+
+
 def _embedder_signature(embedder: EmbedderLike, config: Config) -> str:
     return str(getattr(embedder, "signature", config.embedding_model))
 
@@ -229,6 +254,9 @@ def index_repo(
     endpoint_signature = current_endpoint_inventory_signature()
     if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
         full = True
+    analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
+    if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
+        full = True
 
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     current_hashes = _list_repo_files(repo_root, config)
@@ -301,6 +329,7 @@ def index_repo(
             store.set_file_hash(path, current_hashes[path])
 
     store.set_meta("endpoint_inventory_signature", endpoint_signature)
+    store.set_meta("analysis_inputs_signature", analysis_inputs_signature)
 
     # Persist only after the scan path has completed.  The inventory remains
     # transactional with the rest of the index and represents the audited

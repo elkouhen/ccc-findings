@@ -1,24 +1,26 @@
-# fully-completed-microservices-Java-Springboot
+# Audit — fully-completed-microservices-Java-Springboot
 
-## Exécution
+Préflight : `main` / `4a3d1d7`, état local préservé. Index v6 migré exclusivement en copie temporaire ; packs actifs mais modèle absent. Semgrep 1.169.0, `cccr` 0.1.0.
 
-`cccr index` : 22 endpoints. Le graphe contient 9 services nommés, 2 topics Kafka et 5 connecteurs visualisés.
+Analyse directe : 18 routes REST ; clients déclaratifs Customer/Payment, producteurs `order-topic` et `payment-topic`, deux listeners Notification. Les routes et topics littéraux sont résolus.
 
-![Graphe cccr](assets/fully-completed-microservices-Java-Springboot.png)
+| Inventaire | REST | Kafka | Graphe |
+| --- | ---: | ---: | --- |
+| cccr historique | 18 | 4 | 5 services, 5 arêtes |
+| direct | 18 | 4 | deux flux Kafka résolus |
 
-## Analyse directe
+L'avertissement de fraîcheur rend toute différence résiduelle non attribuable avant réindexation. Sources : `/private/tmp/ccc-radar-audit/fully-completed-microservices-Java-Springboot-endpoints.json`.
 
-Les artefacts applicatifs sont `customer`, `order`, `payment`, `product`, `notification`, `gateway`, `discovery` et `config-server`. `order` appelle Customer/Payment/Product; Order et Payment publient respectivement sur `order-topic` et `payment-topic`, consommés par Notification.
+## Kafka et Mongo — rapprochement détaillé
 
-## Diff
+| Usage Kafka direct (production) | Preuve | `cccr` réindexé |
+| --- | --- | --- |
+| produce `order-topic` | `services/order/.../OrderProducer.java:26` (`KafkaTemplate.send`) | producer présent |
+| consume `order-topic` | `services/notification/.../NotificationsConsumer.java:46` | consumer présent |
+| produce `payment-topic` | `services/payment/.../NotificationProducer.java:26` | producer présent |
+| consume `payment-topic` | `services/notification/.../NotificationsConsumer.java:27` | consumer présent |
 
-| Élément | cccr | Direct | Écart |
-|---|---|---|---|
-| Services | 9, dont `services` | 8 applicatifs | `services` est un faux service conteneur |
-| HTTP | 3 appels Order vers Customer/Payment/Product | mêmes appels | conforme |
-| Kafka | 2 producteurs + 2 consommateurs, 2 topics | mêmes flux | conforme |
-| Arêtes | 5 connecteurs Draw.io groupés | 7 relations détaillées | groupement visuel attendu |
+Ces quatre endpoints sont présents dans les deux inventaires et forment les deux relations Kafka résolues vers Notification. Mongo est aussi confirmé directement : `Customer.java:17` et `Notification.java:21` portent `@Document` (nom de collection implicite), les repositories sont `MongoRepository`, et les opérations `save`, `findById`, `findAll` apparaissent notamment dans `CustomerService.java:19–58`, `OrderService.java:40,75,82` et les consumers Notification. Les collections implicites ne sont pas encore matérialisées par `cccr` (le résultat `modules` est vide) : faux négatif P1 de l’inventaire Mongo, sans incidence sur le graphe HTTP/Kafka.
 
-## Axes
-
-Priorité P0 : ne jamais promouvoir un répertoire parent (`services`) en microservice; le nom doit rester l’artifact Maven/Gradle.
+![cccr](assets/fully-completed-microservices-Java-Springboot-cccr.png)
+![direct](assets/fully-completed-microservices-Java-Springboot-direct.png)

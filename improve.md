@@ -1,64 +1,178 @@
-# Prompt : audit croisé graphe microservices (cccr vs analyse directe)
+# Prompt — boucle d'amélioration de l'inventaire microservices
 
-## Contexte
-Tu travailles dans le repo `ccc-radar` (outils `cccr`). Le but est de
-mesurer la qualité de la détection d'endpoints et de construction de graphe
-de `cccr` en la confrontant à une lecture directe du code, sur un repo
-d'exemple représentatif d'une architecture microservices HTTP + Kafka.
+## Objectif
 
-Repo cible à analyser : `~/examples/<nom du repo>`
+Tu travailles dans le dépôt `ccc-radar`. Pour chacun des dépôts d'exemple
+ci-dessous, mesure la qualité de l'inventaire et du graphe produits par `cccr`
+en les confrontant à une analyse directe du code. Transforme ensuite les écarts
+confirmés en backlog priorisé et, lorsque cela est sûr, en améliorations du
+dépôt `ccc-radar`.
 
-## Étape 1 — Analyse outillée (cccr)
-1. Vérifie si le repo cible est déjà indexé (présence de `.cccr/`) ;
-   sinon lance l'indexation nécessaire
-   (`cccr init` / `cccr index`, puis l'équivalent `cccr` — vérifie
-   `cccr --help` pour la commande exacte si tu ne l'as pas déjà en mémoire).
-2. Utilise les commandes/tools `cccr` disponibles (`list_workspace_services`,
-   `list_endpoints`, `graph`, `trace_message_flow`, etc. côté MCP, ou leurs
-   équivalents CLI) pour extraire :
-   - la liste des microservices détectés,
-   - leurs endpoints HTTP (méthode + chemin, exposés ET appelés),
-   - leurs endpoints Kafka (topic + rôle producer/consumer),
-   - les arêtes du graphe qui en résultent (qui appelle/publie vers qui).
-3. Génère un diagramme **drawio** (`.drawio`/XML) représentant ce graphe :
-   un nœud par service, une arête par relation HTTP (avec méthode+chemin en
-   label) et par relation Kafka (avec topic + sens producer/consumer en
-   label, flèche distincte des appels HTTP).
+Dépôts cibles :
 
-## Étape 2 — Analyse directe (sans cccr)
-Sans t'appuyer sur les résultats de l'étape 1 (ne les relis pas avant
-d'avoir terminé celle-ci) :
-1. Explore le repo cible toi-même (lecture de code, grep sur les annotations
-   Spring/Kafka type `@RequestMapping`,
-   `@GetMapping`/`@PostMapping`/etc., `@KafkaListener`, `KafkaTemplate.send`,
-   `builder.stream(...).to(...)` pour Kafka Streams, clients HTTP sortants
-   type `RestTemplate`/`WebClient`/`Feign`).
-2. Reconstruis manuellement le même inventaire : services, endpoints HTTP
-   exposés/appelés, topics Kafka produits/consommés, arêtes du graphe.
-3. Génère un second diagramme **drawio** avec la même convention visuelle
-   que celui de l'étape 1, pour permettre une comparaison visuelle directe.
+- `~/examples/spring-petclinic-microservices`
+- `~/examples/sample-spring-kafka-microservices`
+- `~/examples/microservices-kafka-mq`
+- `~/examples/booking-microservices-java-spring-boot`
+- `~/examples/fully-completed-microservices-Java-Springboot`
+- `~/examples/spring-petclinic-rest`
+- `~/examples/spring-boot-project-example`
 
-## Étape 3 — Comparaison
-Produit un tableau de diff structuré :
-- Services : présents dans les deux / uniquement cccr / uniquement analyse
-  directe.
-- Endpoints HTTP : idem, avec pour chaque écart la raison probable
-  (annotation non reconnue, préfixe de classe non fusionné, endpoint
-  dynamique/réflexif, etc.).
-- Endpoints Kafka : idem (topic non résolu, DSL Kafka Streams non
-  couvert, nom de topic dynamique/config-driven non résolu, etc.).
-- Arêtes du graphe : relations manquantes ou en trop d'un côté par rapport
-  à l'autre.
+Le périmètre principal est Java/Spring, HTTP REST et Kafka. Signaler séparément
+les protocoles hors périmètre (par exemple gRPC, RabbitMQ/AMQP, messagerie
+propriétaire) : leur absence du graphe HTTP/Kafka n'est pas un faux négatif tant
+qu'ils ne sont pas annoncés comme pris en charge.
+
+## Règles de travail
+
+1. Ne modifie jamais le code source, les fichiers de build ou l'index `.cccr`
+   d'un dépôt sous `~/examples`. Préserve également toute modification locale
+   préexistante.
+2. Les commandes de consultation doivent être non mutatives. Si un index
+   historique exige une migration, travaille sur une copie temporaire ou note
+   explicitement l'incompatibilité ; ne contourne pas la règle 1.
+3. Avant une indexation, exécute `cccr doctor` et vérifie les règles actives.
+   En cas d'échec de Semgrep, conserve stderr et classe le problème comme
+   prérequis/outillage : ne conclus pas que le dépôt ne contient aucun endpoint.
+   Exécute ensuite `cccr index` sur chaque module avant toute analyse ou
+   comparaison avec l'inventaire `cccr`. Pour les dépôts sous `~/examples`,
+   cette indexation doit obligatoirement être effectuée sur une copie temporaire
+   afin de ne jamais modifier leur index `.cccr`.
+4. N'utilise pas les résultats de `cccr` pendant l'analyse directe. Termine et
+   enregistre cette dernière avant de comparer les deux inventaires.
+5. Analyse le code de production par défaut. Les éléments sous `src/test`,
+   `test` ou les fixtures doivent être exclus ou marqués `test` ; ne les compte
+   pas comme relation de production.
+6. N'invente pas de relation : une arête HTTP exige un appelant et une cible
+   résolus ; une arête Kafka exige un producteur ou consommateur observé et un
+   topic identifié. Un producteur ou consommateur sans homologue reste un
+   endpoint valide, mais une relation non résolue.
+
+## Étape 0 — Préflight et traçabilité
+
+Pour chaque dépôt :
+
+1. Relever le commit/branche et l'état Git sans modifier le dépôt.
+2. Vérifier `.cccr/`, la version de schéma, la fraîcheur de l'inventaire et le
+   résultat de `cccr doctor`.
+3. Si l'index manque ou est périmé, indiquer la commande de régénération. Ne
+   l'exécuter sur une copie temporaire que si les règles et Semgrep sont
+   opérationnels.
+4. Consigner les versions de `cccr`, Semgrep et les règles actives afin que le
+   rapport soit reproductible.
+
+## Étape 1 — Analyse outillée avec `cccr`
+
+Utilise les commandes MCP ou CLI disponibles (`microservices`, `modules`,
+`endpoints`, `graph`, `flow`, `audit`) et conserve leurs sorties brutes JSON.
+Extraire au minimum :
+
+- les services/modules détectés, avec la raison de leur classification ;
+- les endpoints HTTP servis et appelés (`méthode`, `chemin`, service/module,
+  fichier et ligne) ;
+- les endpoints Kafka produits et consommés (`topic`, rôle, framework,
+  service/module, fichier et ligne) ;
+- les informations d'usage Kafka (listener, poll/consumer natif,
+  `KafkaTemplate`, `ProducerRecord`, Spring Cloud Stream, Kafka Streams) ;
+- les informations Mongo disponibles (collections, opérations telles que
+  `findById`, `findAll`, `save`, `aggregate`, avec leur preuve) ;
+- les arêtes et leurs preuves : HTTP `appelant -> serveur`, Kafka
+  `producteur -> topic -> consommateur`.
+
+Produire un premier diagramme Draw.io : un nœud par service et par topic Kafka,
+des flèches visuellement distinctes pour HTTP et Kafka, et des libellés
+`MÉTHODE chemin` ou `topic / rôle`. Les routes génériques/dynamiques doivent
+être explicitement marquées comme telles, sans être confondues avec une cible
+résolue.
+
+## Étape 2 — Analyse directe, indépendante de `cccr`
+
+Explorer le dépôt avec une lecture de code ciblée. Chercher notamment :
+
+- serveurs HTTP : `@RequestMapping`, `@GetMapping`, `@PostMapping`,
+  `@PutMapping`, `@PatchMapping`, `@DeleteMapping`, routes WebFlux/Gateway ;
+- clients HTTP : `RestTemplate`, `WebClient`, OpenFeign, clients déclaratifs,
+  URLs/configuration Spring ;
+- Kafka : `@KafkaListener`, consommateurs natifs (`poll`, `subscribe`),
+  `KafkaTemplate.send`, `ProducerRecord`, `MessageBuilder`, Kafka Streams
+  (`builder.stream`, `.to`), Spring Cloud Stream ;
+- Mongo : `@Document`, `MongoTemplate`, `MongoRepository`/
+  `ReactiveMongoRepository` et appels de repository ;
+- protocoles complémentaires : gRPC, RabbitMQ/AMQP, JMS, etc.
+
+Reconstruire le même inventaire normalisé que lors de l'étape 1. Fusionner les
+préfixes de route de classe et de méthode. Résoudre les propriétés/constantes
+quand la preuve est locale ; sinon garder une valeur dynamique avec la source
+de l'incertitude. Générer un second diagramme Draw.io selon la même convention.
+
+## Étape 3 — Comparaison structurée
+
+> **Note de qualité :** attribuer à `cccr` une note globale sur **5**, par
+> rapport au scan direct, qui sert de référence. Justifier la note à partir de
+> la couverture des services, endpoints HTTP et Kafka, opérations Mongo et
+> arêtes résolues ; les éléments hors périmètre ou dynamiques non résolubles ne
+> doivent pas la pénaliser.
+
+Comparer les inventaires par clés normalisées et produire les tableaux suivants :
+
+1. **Services/modules** : présents dans les deux, seulement `cccr`, seulement
+   analyse directe.
+2. **HTTP** : rôle, méthode, chemin, service/module, preuve ; pour chaque écart,
+   donner une cause probable (préfixe non fusionné, appel dynamique, framework
+   non couvert, test inclus/exclu, cible non résolue).
+3. **Kafka** : rôle, topic, framework, service/module, preuve ; expliquer les
+   écarts (DSL Streams, propriété non résolue, topic dynamique, API non
+   couverte, test inclus/exclu). Inclure aussi l'usage Kafka au niveau méthode
+   (listener, `poll`/`subscribe`, `KafkaTemplate.send`, `ProducerRecord`,
+   Spring Cloud Stream, `builder.stream`, `.to`) avec le service/module,
+   fichier, ligne, topic résolu ou dynamique et preuve. Différencier les
+   méthodes présentes dans les deux inventaires, seulement `cccr` et seulement
+   analyse directe.
+4. **Mongo** : collection et opération, avec les mêmes catégories d'écart.
+   Comparer séparément les collections (`@Document`, collection explicite ou
+   dynamique) et les méthodes/opérations observées (`findById`, `findAll`,
+   `save`, `aggregate`, `MongoTemplate` ou repository), par service/module,
+   fichier, ligne et preuve ; distinguer les éléments présents dans les deux
+   inventaires, seulement `cccr` et seulement analyse directe.
+5. **Arêtes** : absentes, en trop ou ambiguës, avec leurs endpoints sources.
+6. **Hors périmètre** : protocoles constatés mais non encore pris en charge.
+
+Ne confonds pas un endpoint isolé avec une anomalie. La couverture attendue est
+l'inventaire de chaque producer/consumer et de chaque client/serveur détectable;
+le rapprochement en arête n'est attendu que lorsque topic ou cible sont
+compatibles et résolus.
+
+## Étape 4 — Amélioration et itération
+
+1. Convertir uniquement les écarts confirmés en tâches `P0`, `P1`, `P2` :
+   - **P0** : empêche l'indexation, corrompt/mute un dépôt externe, ou rend un
+     résultat de lecture inutilisable ;
+   - **P1** : faux négatif/faux positif reproductible du périmètre HTTP/Kafka ;
+   - **P2** : extension de protocole, ergonomie, rendu ou dette de test.
+2. Pour chaque tâche retenue, préciser le dépôt révélateur, la preuve, les
+   fichiers pressentis et un critère d'acceptation testable.
+3. Implémenter uniquement les améliorations dans `ccc-radar`, jamais dans les
+   exemples. Ajouter le test de non-régression avant ou avec la correction.
+4. Exécuter les tests ciblés puis la suite pertinente. Si un prérequis externe
+   bloque les tests, distinguer clairement cet échec des régressions du code.
+5. Réindexer une copie temporaire du dépôt révélateur et refaire les étapes 1
+   à 3. Arrêter lorsqu'il ne reste que des écarts documentés, hors périmètre ou
+   non reproductibles.
 
 ## Sorties attendues
-- 1 rapport d'execution dans le répertoire reports
-- Le rapport porte nom du dépot analysé 
-- Le rapport contient le tableau de diff
-- La rapport contient liste d'axes d'amélioration priorisée.
-- une copie d'écran du graph généré en drawio (obtenu par export drawio).
 
-## Remarque 
+Après une boucle complète, produire :
 
-Sur les dépots analysés, 
-- il devrait y avoir un consumer et un producer par endpoint kafka
-- il devrait y avoir un client HTTP pour chaque endpoint HTTP
+- un rapport Markdown par dépôt dans `reports/<nom-du-depot>.md` ;
+- les deux sources Draw.io et leurs exports image dans
+  `reports/assets/<nom>-cccr.*` et `reports/assets/<nom>-direct.*` ;
+- les sorties JSON brutes ou leurs chemins temporaires reproductibles ;
+- dans chaque rapport : préflight, inventaires, tableaux de diff, diagrammes,
+  limites et axes d'amélioration ;
+- un backlog consolidé dans `BACKLOG.md`, fusionné avec les tâches existantes
+  sans les écraser, dédoublonné et ordonné par priorité.
+
+Si la consigne d'exécution demande de supprimer `reports/`, supprimer d'abord
+le contenu historique, puis régénérer uniquement les rapports issus de la
+boucle terminée. Si la suppression devait être définitive, le signaler avant de
+produire les sorties attendues, car ces deux attentes sont incompatibles.

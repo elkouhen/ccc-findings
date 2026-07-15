@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v6"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v10-module-application-projection"
 
 
 def current_endpoint_inventory_signature() -> str:

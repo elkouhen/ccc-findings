@@ -1,6 +1,8 @@
 import json
+import os
 import re
 import subprocess
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,23 @@ _SEVERITY_MAP = {
 
 class SemgrepError(Exception):
     pass
+
+
+def _semgrep_env() -> dict[str, str]:
+    """Give Semgrep a private writable location for its log.
+
+    A scan is otherwise allowed to fail before producing JSON when
+    ``~/.semgrep/semgrep.log`` is read-only (notably in sandboxes and CI).
+    The version check is disabled in the command below, so Semgrep does not
+    need to create its usual version-check cache either.
+    """
+    env = os.environ.copy()
+    env.setdefault(
+        "SEMGREP_LOG_FILE",
+        os.environ.get("CCCR_SEMGREP_LOG_FILE", str(Path(tempfile.gettempdir()) / "cccr-semgrep.log")),
+    )
+    env.setdefault("SEMGREP_SEND_METRICS", "off")
+    return env
 
 
 def _normalize_severity(raw_severity: str) -> str:
@@ -1476,6 +1495,8 @@ def invoke_semgrep_raw(
         "scan",
         "--json",
         "--quiet",
+        "--disable-version-check",
+        "--metrics=off",
         "--x-ignore-semgrepignore-files",
         "--timeout",
         str(config.semgrep_timeout_s),
@@ -1484,7 +1505,10 @@ def invoke_semgrep_raw(
         cmd += ["--config", rule]
     cmd += files if files else ["."]
 
-    proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, cwd=repo_root, capture_output=True, text=True, check=False,
+        env=_semgrep_env(),
+    )
     if proc.returncode not in (0, 1):
         raise SemgrepError(
             f"Semgrep a échoué (code {proc.returncode}) : {proc.stderr.strip()}"

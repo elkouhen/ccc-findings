@@ -10,10 +10,10 @@ import numpy as np
 import sqlite_vec
 
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import DiscoveredModule
+from ccc_radar.modules import BlockingPoint, DiscoveredModule, KafkaMethod, MongoMethod, SourceEvidence
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "11"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -42,6 +42,37 @@ class CodeChunk:
     end_line: int
     language: str
     content: str
+
+
+def _method_to_json(item: object) -> dict[str, object]:
+    data = dict(item.__dict__)
+    evidence = data.get("evidence")
+    if evidence is not None:
+        data["evidence"] = evidence.__dict__
+    return data
+
+
+def _evidence_from_json(data: dict[str, object]) -> SourceEvidence | None:
+    evidence = data.pop("evidence", None)
+    return SourceEvidence(**evidence) if evidence else None
+
+
+def _mongo_method_from_json(data: dict[str, object]) -> MongoMethod:
+    data = dict(data)
+    evidence = _evidence_from_json(data)
+    return MongoMethod(**data, evidence=evidence)
+
+
+def _kafka_method_from_json(data: dict[str, object]) -> KafkaMethod:
+    data = dict(data)
+    evidence = _evidence_from_json(data)
+    return KafkaMethod(**data, evidence=evidence)
+
+
+def _blocking_point_from_json(data: dict[str, object]) -> BlockingPoint:
+    data = dict(data)
+    evidence = _evidence_from_json(data)
+    return BlockingPoint(**data, evidence=evidence)
 
 
 class Store:
@@ -169,12 +200,20 @@ class Store:
                 build_system TEXT NOT NULL,
                 version TEXT,
                 kind TEXT NOT NULL,
-                configuration_example TEXT NOT NULL
+                starts_application INTEGER NOT NULL DEFAULT 0,
+                configuration_example TEXT NOT NULL,
+                application_entrypoint TEXT,
+                mongo_collections TEXT NOT NULL DEFAULT '[]',
+                mongo_methods TEXT NOT NULL DEFAULT '[]',
+                openapi_files TEXT NOT NULL DEFAULT '[]',
+                kafka_methods TEXT NOT NULL DEFAULT '[]',
+                blocking_points TEXT NOT NULL DEFAULT '[]'
             );
             """
         )
         self._migrate_legacy_embeddings()
         self._migrate_module_columns()
+        self._migrate_module_architecture_columns()
         if self.get_meta("schema_version") != SCHEMA_VERSION:
             self.set_meta("schema_version", SCHEMA_VERSION)
         self.conn.commit()
@@ -210,6 +249,17 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_module ON findings(module)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_endpoints_module ON endpoints(module)")
 
+    def _migrate_module_architecture_columns(self) -> None:
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(modules)")}
+        for name in ("starts_application", "application_entrypoint", "mongo_collections", "mongo_methods", "openapi_files", "kafka_methods", "blocking_points"):
+            if name not in cols:
+                if name == "application_entrypoint":
+                    self.conn.execute("ALTER TABLE modules ADD COLUMN application_entrypoint TEXT")
+                    continue
+                default = "0" if name == "starts_application" else "'[]'"
+                column_type = "INTEGER" if name == "starts_application" else "TEXT"
+                self.conn.execute(f"ALTER TABLE modules ADD COLUMN {name} {column_type} NOT NULL DEFAULT {default}")
+
     # -- meta --
 
     def get_meta(self, key: str) -> str | None:
@@ -233,8 +283,9 @@ class Store:
             relative_path = module.path.resolve().relative_to(self._repo_root).as_posix()
             self.conn.execute(
                 """
-                INSERT INTO modules (path, name, build_system, version, kind, configuration_example)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO modules (path, name, build_system, version, kind, starts_application, configuration_example, application_entrypoint,
+                                     mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     relative_path,
@@ -242,13 +293,20 @@ class Store:
                     module.build_system,
                     module.version,
                     module.kind,
+                    int(module.starts_application),
                     module.configuration_example,
+                    json.dumps(module.application_entrypoint.__dict__) if module.application_entrypoint else None,
+                    json.dumps(module.mongo_collections),
+                    json.dumps([_method_to_json(method) for method in module.mongo_methods]),
+                    json.dumps(module.openapi_files),
+                    json.dumps([_method_to_json(method) for method in module.kafka_methods]),
+                    json.dumps([_method_to_json(point) for point in module.blocking_points]),
                 ),
             )
 
     def all_modules(self) -> list[DiscoveredModule]:
         rows = self.conn.execute(
-            "SELECT path, name, build_system, version, kind, configuration_example "
+            "SELECT path, name, build_system, version, kind, starts_application, configuration_example, application_entrypoint, mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points "
             "FROM modules ORDER BY path"
         ).fetchall()
         return [
@@ -258,7 +316,14 @@ class Store:
                 build_system=row["build_system"],
                 version=row["version"],
                 kind=row["kind"],
+                starts_application=bool(row["starts_application"]),
                 configuration_example=row["configuration_example"],
+                application_entrypoint=SourceEvidence(**json.loads(row["application_entrypoint"])) if row["application_entrypoint"] else None,
+                mongo_collections=tuple(json.loads(row["mongo_collections"])),
+                mongo_methods=tuple(_mongo_method_from_json(method) for method in json.loads(row["mongo_methods"])),
+                openapi_files=tuple(json.loads(row["openapi_files"])),
+                kafka_methods=tuple(_kafka_method_from_json(method) for method in json.loads(row["kafka_methods"])),
+                blocking_points=tuple(_blocking_point_from_json(point) for point in json.loads(row["blocking_points"])),
             )
             for row in rows
         ]

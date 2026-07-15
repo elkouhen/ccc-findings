@@ -178,7 +178,7 @@ cccr endpoints                  # indexed REST/Kafka inventory
 cccr graph                      # inter-service REST/Kafka topology
 cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
-cccr modules                    # all Maven/Gradle modules, versions and synthetic config templates
+cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
 ```
 

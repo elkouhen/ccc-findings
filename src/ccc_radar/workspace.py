@@ -10,10 +10,9 @@ déjà indexés pour construire une vue fédérée
 from dataclasses import dataclass
 from pathlib import Path
 
-from ccc_radar.gradle import discover_gradle_services
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
-from ccc_radar.maven import is_runtime_service, parse_pom
 from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.modules import discover_modules
 from ccc_radar.paths import db_path
 from ccc_radar.store import Store, StoreError
 
@@ -55,64 +54,27 @@ def _service_index_state(root: Path, service_dir: Path) -> tuple[bool, Path]:
     return indexed, index_root
 
 
-def _discover_maven_services(root: Path) -> list[DiscoveredService]:
-    """Découvre les modules Maven runtime ou partagés sous `root`."""
-    services: list[DiscoveredService] = []
-    for pom_path in sorted(root.rglob("pom.xml")):
-        module_dir = pom_path.parent
-        artifact_id, is_spring_boot_app, packaging = parse_pom(pom_path)
-        if packaging == "pom" and not is_runtime_service(packaging, is_spring_boot_app):
-            continue
-        name = artifact_id or module_dir.name
-        kind = "microservice" if is_runtime_service(packaging, is_spring_boot_app) else "shared-module"
-        indexed, index_root = _service_index_state(root, module_dir)
-        services.append(
-            DiscoveredService(
-                name=name,
-                path=module_dir,
-                kind=kind,
-                indexed=indexed,
-                index_root=index_root,
-            )
-        )
-    return services
-
-
-def _discover_gradle_services(root: Path, seen_paths: set[Path]) -> list[DiscoveredService]:
-    """Découvre les microservices Gradle de premier niveau sous `root`.
-
-    Contrairement à Maven, on ne tente pas de modéliser des `shared-module`
-    Gradle ici : le besoin utilisateur porte sur les services runtime
-    visibles via `cccr microservices`.
-    """
-    services: list[DiscoveredService] = []
-    for service_name, service_dir in discover_gradle_services(root):
-        if service_dir in seen_paths or not service_dir.is_dir():
-            continue
-        indexed, index_root = _service_index_state(root, service_dir)
-        services.append(
-            DiscoveredService(
-                name=service_name,
-                path=service_dir,
-                kind="microservice",
-                indexed=indexed,
-                index_root=index_root,
-            )
-        )
-    return services
-
-
 def discover_workspace_services(root: Path) -> list[DiscoveredService]:
-    """Découvre les services fédérables sous `root`.
+    """Projette les modules build sur la vue historique du graphe.
 
-    - Maven : un service/module par `pom.xml` runtime.
-    - Gradle : un microservice par répertoire de premier niveau contenant une
-      classe Java Spring Boot exécutable, directement ou dans un sous-projet.
+    Toute la découverte et l'analyse appartiennent à ``modules``. Un
+    microservice n'est plus une entité découverte séparément : c'est un module
+    dont ``starts_application`` est vrai. Cette projection conserve le contrat
+    ``DiscoveredService`` consommé par le graphe et la fédération.
     """
     root = root.resolve()
-    services = _discover_maven_services(root)
-    seen_paths = {service.path.resolve() for service in services}
-    services.extend(_discover_gradle_services(root, seen_paths))
+    services: list[DiscoveredService] = []
+    for module in discover_modules(root):
+        if module.kind == "aggregator":
+            continue
+        indexed, index_root = _service_index_state(root, module.path)
+        services.append(DiscoveredService(
+            name=module.name,
+            path=module.path,
+            kind="microservice" if module.starts_application else "shared-module",
+            indexed=indexed,
+            index_root=index_root,
+        ))
     return sorted(services, key=lambda service: str(service.path))
 
 

@@ -1128,6 +1128,7 @@ class WorkspaceServiceInfo(TypedDict):
     name: str
     path: str
     kind: str
+    starts_application: bool
     indexed: bool
     endpoint_count: int
     finding_count: int
@@ -1139,10 +1140,18 @@ class ModuleSummary(TypedDict):
     build_system: str
     version: str | None
     kind: str
+    mongo_collections: list[str]
+    mongo_method_count: int
+    kafka_method_count: int
+    blocking_point_count: int
+    openapi_files: list[str]
 
 
 class ModuleDetail(ModuleSummary):
     configuration_example: str
+    mongo_methods: list[dict[str, object]]
+    kafka_methods: list[dict[str, object]]
+    blocking_points: list[dict[str, object]]
 
 
 class WorkspaceResult(TypedDict):
@@ -1206,6 +1215,12 @@ def render_modules_list_json(modules: list[DiscoveredModule]) -> list[ModuleSumm
             build_system=module.build_system,
             version=module.version,
             kind=module.kind,
+            starts_application=module.starts_application,
+            mongo_collections=list(module.mongo_collections),
+            mongo_method_count=len(module.mongo_methods),
+            kafka_method_count=len(module.kafka_methods),
+            blocking_point_count=len(module.blocking_points),
+            openapi_files=list(module.openapi_files),
         )
         for module in modules
     ]
@@ -1219,7 +1234,10 @@ def render_modules_list_text(modules: list[ModuleSummary]) -> str:
         version = module["version"] or "inconnue"
         lines.append(
             f"[{module['build_system']}/{module['kind']}] {module['name']} "
-            f"version={version}  {module['path']}"
+            f"version={version} mongo={len(module['mongo_collections'])} "
+            f"mongo_ops={module['mongo_method_count']} kafka_ops={module['kafka_method_count']} "
+            f"blocking={module['blocking_point_count']} app={module['starts_application']} "
+            f"openapi={len(module['openapi_files'])}  {module['path']}"
         )
     return "\n".join(lines)
 
@@ -1231,7 +1249,50 @@ def render_module_detail_json(module: DiscoveredModule) -> ModuleDetail:
         build_system=module.build_system,
         version=module.version,
         kind=module.kind,
+        starts_application=module.starts_application,
+        application_entrypoint=(
+            module.application_entrypoint.__dict__ if module.application_entrypoint else None
+        ),
         configuration_example=module.configuration_example,
+        mongo_collections=list(module.mongo_collections),
+        mongo_method_count=len(module.mongo_methods),
+        kafka_method_count=len(module.kafka_methods),
+        blocking_point_count=len(module.blocking_points),
+        openapi_files=list(module.openapi_files),
+        mongo_methods=[
+            {
+                "operation": method.operation,
+                "receiver": method.receiver,
+                "path": method.path,
+                "line": method.line,
+                "collection": method.collection,
+                "evidence": method.evidence.__dict__ if method.evidence else None,
+            }
+            for method in module.mongo_methods
+        ],
+        kafka_methods=[
+            {
+                "role": method.role,
+                "mechanism": method.mechanism,
+                "method": method.method,
+                "path": method.path,
+                "line": method.line,
+                "topic": method.topic,
+                "evidence": method.evidence.__dict__ if method.evidence else None,
+            }
+            for method in module.kafka_methods
+        ],
+        blocking_points=[
+            {
+                "mechanism": point.mechanism,
+                "method": point.method,
+                "path": point.path,
+                "line": point.line,
+                "detail": point.detail,
+                "evidence": point.evidence.__dict__ if point.evidence else None,
+            }
+            for point in module.blocking_points
+        ],
     )
 
 
@@ -1239,7 +1300,13 @@ def render_module_detail_text(module: ModuleDetail) -> str:
     version = module["version"] or "inconnue"
     return (
         f"[{module['build_system']}/{module['kind']}] {module['name']}\n"
-        f"version={version}\nchemin={module['path']}"
+        f"version={version}\nchemin={module['path']}\n"
+        f"démarre l'application={module['starts_application']}\n"
+        f"collections Mongo={', '.join(module['mongo_collections']) or 'aucune'}\n"
+        f"opérations Mongo={module['mongo_method_count']}\n"
+        f"opérations Kafka={module['kafka_method_count']}\n"
+        f"points bloquants={module['blocking_point_count']}\n"
+        f"OpenAPI={', '.join(module['openapi_files']) or 'aucun'}"
     )
 
 

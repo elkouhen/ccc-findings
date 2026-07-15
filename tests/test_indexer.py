@@ -478,3 +478,20 @@ def test_index_repo_removes_endpoint_embeddings_of_deleted_file(
         remaining = store.endpoint_embedding_count()
 
     assert remaining == 0
+
+
+def test_index_repo_rescans_everything_when_local_rule_changes(
+    repo_copy: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}'
+    )
+    config = make_config()
+    with Store(repo_copy) as store:
+        first = index_repo(repo_copy, config, store, FakeEmbedder())
+        rule_file = repo_copy / "rules" / "rules.yml"
+        rule_file.write_text(rule_file.read_text() + "\n# changed rule input\n")
+        second = index_repo(repo_copy, config, store, FakeEmbedder())
+
+    assert first.scanned > 0
+    assert second.scanned == first.scanned

@@ -4,6 +4,8 @@ from typer.testing import CliRunner
 
 from ccc_radar.audit import assess_architecture
 from ccc_radar.cli import app
+from ccc_radar.config import Config
+from ccc_radar.doctor import _has_pack
 from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 
 
@@ -36,3 +38,13 @@ def test_doctor_reports_missing_configuration(tmp_path: Path, monkeypatch) -> No
     result = CliRunner().invoke(app, ["doctor", "--json"])
     assert result.exit_code == 2
     assert '"name": "configuration"' in result.output
+
+
+def test_doctor_accepts_pack_directory_paths() -> None:
+    config = Config(
+        rules=[".cccr/rules/rest", ".cccr/rules/kafka/java.yaml"],
+        include=["**/*"], exclude=[], min_severity="INFO", embedding_model="model",
+    )
+
+    assert _has_pack(config, "rest")
+    assert _has_pack(config, "kafka")

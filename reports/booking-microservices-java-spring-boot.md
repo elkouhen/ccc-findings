@@ -1,24 +1,25 @@
-# booking-microservices-java-spring-boot
+# Audit — booking-microservices-java-spring-boot
 
-## Exécution
+Préflight : `main` / `ea481c3`, état local préservé. Index historique v6 migré uniquement dans `/private/tmp/ccc-radar-audit`; packs actifs mais modèle d'embeddings absent. Semgrep 1.169.0, `cccr` 0.1.0.
 
-`cccr index` : 16 endpoints; graphe sans arête. La découverte fédérée retourne `src`, `apigateway`, `buildingblocks`, `booking`, `flight`, `passenger`.
+Analyse directe : 15 routes HTTP sur Booking, Flight et Passenger ; Mongo `@Document`/repositories ; appel gRPC bloquant Booking → Flight et configuration RabbitMQ. RabbitMQ et gRPC sont hors périmètre HTTP/Kafka, donc ne sont pas des faux négatifs.
 
-![Graphe cccr](assets/booking-microservices-java-spring-boot.png)
+| Inventaire | REST | Kafka | Graphe |
+| --- | ---: | ---: | --- |
+| cccr historique | 15 | 1 | 4 services, 0 arête |
+| direct | 15 | 0 Kafka confirmé | gRPC/RabbitMQ hors périmètre |
 
-## Analyse directe
+Diff : index obsolète et protocole Kafka non confirmé par le code direct ; réindexation requise après disponibilité du modèle. Sources : `/private/tmp/ccc-radar-audit/booking-microservices-java-spring-boot-endpoints.json`.
 
-Les contrôleurs de production sont dans les artefacts `booking`, `flight` et `passenger`; `buildingblocks` est une bibliothèque commune et `src` un conteneur de sources. Des configurations `RestTemplate` et des usages Kafka existent, mais les appels métier inter-services ne sont pas résolus en relations statiques par l’inventaire actuel.
+## Kafka et Mongo — rapprochement détaillé
 
-## Diff
+| Catégorie | `cccr` réindexé | Analyse directe de production | Conclusion |
+| --- | --- | --- | --- |
+| Kafka | un `send` dynamique dans `buildingblocks/.../TransactionPipelineBehavior.java:40` | aucun `KafkaTemplate`, `ProducerRecord`, listener, poll, subscribe, Streams ou Cloud Stream confirmé | endpoint dynamique non rapprochable ; aucune arête Kafka inventée |
+| Mongo collections | `bookings`; `aircrafts`, `airports`, `flights`, `seats`; `passengers` | mêmes collections via `@Document` dans Booking, Flight et Passenger | conforme |
+| Mongo opérations | 15 appels détectés dans Flight/Passenger | `save` des read-models, p. ex. `CreateBookingMongoCommandHandler.java:29`, `CreatePassengerMongoCommandHandler.java:30` | couverture de méthodes disponible dans `modules`; pas encore un endpoint de graphe |
 
-| Élément | cccr | Direct | Écart |
-|---|---|---|---|
-| Services | 6, dont `src` et `buildingblocks` | booking, flight, passenger (et gateway si déployé) | faux positifs de découverte de service |
-| HTTP exposé | 13 routes de production + appels dynamiques de test | mêmes contrôleurs | routes conformes; appels test à isoler |
-| Kafka | topic dynamique non résolu | usages médiateur/Kafka présents | résolution de configuration manquante |
-| Arêtes | 0 | relations non triviales/configurées | faux négatifs attendus |
+Les appels REST trouvés dans `buildingblocks/testbase` sont des fixtures et ne sont pas interprétés comme relations de production. RabbitMQ/AMQP (`RabbitmqConfiguration`) et gRPC (stub Flight appelé depuis Booking) restent explicitement hors périmètre HTTP/Kafka. Le support Mongo est utile pour l’inventaire de module, mais son rendu comparatif complet reste P2.
 
-## Axes
-
-Priorité P0 : ne retenir qu’un module applicatif Maven/Gradle déployable, identifié par son artifact, et exclure les agrégateurs/bibliothèques.
+![cccr](assets/booking-microservices-java-spring-boot-cccr.png)
+![direct](assets/booking-microservices-java-spring-boot-direct.png)

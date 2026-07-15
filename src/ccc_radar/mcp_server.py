@@ -32,6 +32,7 @@ from ccc_radar.render import (
     render_endpoints_json,
     render_flow_json,
     render_graph_json,
+    render_modules_list_json,
     render_search_json,
     render_summary_json,
     render_workspace_json,
@@ -229,6 +230,18 @@ def list_workspace_services(root: str) -> WorkspaceResult:
     services = discover_maven_services(Path(root))
     federation = load_federation(services)
     return render_workspace_json(services, federation)
+
+
+@mcp.tool()
+def list_modules() -> list[dict[str, object]]:
+    """Liste tous les modules indexés avec leurs collections/opérations Mongo
+    et leurs contrats OpenAPI déclarés. Utiliser pour établir le périmètre
+    applicatif avant un audit de données ou d'API.
+    """
+    repo_root = _repo_root()
+    _require_index(repo_root)
+    with Store(repo_root) as store:
+        return render_modules_list_json(store.all_modules())
 
 
 @mcp.tool()

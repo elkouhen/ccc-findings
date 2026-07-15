@@ -1,25 +1,19 @@
-# spring-petclinic-microservices
+# Audit — spring-petclinic-microservices
 
-## Exécution
+Préflight : `main` / `305a1f1`, état local non propre préservé. Index v11 présent ; `cccr doctor` refuse l'indexation car les packs architecture ne sont pas actifs. Semgrep 1.169.0, `cccr` 0.1.0.
 
-`cccr index` puis `cccr graph --workspace .` : 8 services, 30 endpoints HTTP et 10 relations HTTP. Aucun endpoint Kafka.
+Analyse directe (production) : 20 routes Spring servies et 10 appels REST dans la gateway ; aucun Kafka. Les préfixes `@RequestMapping` sont fusionnés (par exemple `GET /owners/{ownerId}`). Les routes Gateway générales/dynamiques restent non résolues.
 
-![Graphe cccr](assets/spring-petclinic-microservices.png)
+| Inventaire | REST | Kafka | Graphe |
+| --- | ---: | ---: | --- |
+| cccr historique | 30 | 0 | 5 services, 10 arêtes |
+| direct | 30 | 0 | appels Gateway dynamiques non reliés |
 
-## Analyse directe
+Les écarts confirmés sont les libellés insuffisants des routes Gateway génériques ; ils restent P1 dans `BACKLOG.md`. Sources brutes : `/private/tmp/ccc-radar-audit/spring-petclinic-microservices-endpoints.json`.
 
-Lecture des contrôleurs Spring, des clients `WebClient`/`RestClient` et de `application.yml` Gateway. Les 8 services sont confirmés; les routes Gateway, les appels GenAI vers Customers/Vets et les appels du Gateway vers Customers/Visits sont présents dans le code.
+## Kafka et Mongo — rapprochement détaillé
 
-## Diff
+Aucun usage Kafka de production (`@KafkaListener`, `KafkaTemplate`, `ProducerRecord`, client natif, Streams ou Cloud Stream) n’est observé et `cccr` n’en inventorie aucun. Les appels `findById`, `findAll` et `save` relevés dans Customers, Vets et Visits sont des repositories JPA ; aucune preuve locale de `@Document`, `MongoRepository` ou `MongoTemplate` ne permet de les classer Mongo. Les deux inventaires Mongo/Kafka sont donc vides par preuve, et l’absence d’arête Kafka est conforme.
 
-| Élément | cccr | Direct | Conclusion |
-|---|---|---|---|
-| Services | 8 | 8 | conforme |
-| HTTP | 30 endpoints, 10 relations | 30 endpoints, 10 relations | conforme |
-| Kafka | 0 | 0 | conforme |
-
-Reste à améliorer : les routes Gateway `ANY /**` sont nécessairement plus larges que les routes concrètes ciblées; le diagramme les regroupe pour rester lisible.
-
-## Axes
-
-Voir [BACKLOG.md](../BACKLOG.md), P1 Gateway.
+![cccr](assets/spring-petclinic-microservices-cccr.png)
+![direct](assets/spring-petclinic-microservices-direct.png)

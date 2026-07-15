@@ -1,10 +1,11 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from ccc_radar.config import Config
-from ccc_radar.scanner import SemgrepError, parse_semgrep_json, run_semgrep
+from ccc_radar.scanner import SemgrepError, invoke_semgrep_raw, parse_semgrep_json, run_semgrep
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 VULN_REPO = FIXTURES_DIR / "vuln_repo"
@@ -49,6 +50,24 @@ def test_parse_semgrep_json_malformed_raises_semgrep_error() -> None:
 def test_parse_semgrep_json_missing_results_field_raises_semgrep_error() -> None:
     with pytest.raises(SemgrepError):
         parse_semgrep_json("{}", VULN_REPO)
+
+
+def test_invoke_semgrep_uses_private_writable_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CCCR_SEMGREP_LOG_FILE", str(tmp_path / "semgrep.log"))
+    captured: dict[str, object] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, stdout='{"results": []}', stderr="")
+
+    monkeypatch.setattr("ccc_radar.scanner.subprocess.run", fake_run)
+
+    assert invoke_semgrep_raw(VULN_REPO, make_config()) == '{"results": []}'
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["SEMGREP_LOG_FILE"] == str(tmp_path / "semgrep.log")
 
 
 @pytest.mark.integration
