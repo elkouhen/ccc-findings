@@ -245,7 +245,7 @@ def test_render_graph_drawio_keeps_a_service_and_topic_with_the_same_name_distin
     assert all(cell.get("source") in vertex_ids and cell.get("target") in vertex_ids for cell in edges)
 
 
-def test_render_graph_drawio_layers_kafka_flow_top_down() -> None:
+def test_render_graph_drawio_uses_neutral_seed_positions_for_kafka_graph() -> None:
     endpoints_by_service = {
         "orders": [make_endpoint("produce", "orders.created", "orders/Producer.java", system="kafka")],
         "payments": [
@@ -258,57 +258,27 @@ def test_render_graph_drawio_layers_kafka_flow_top_down() -> None:
     }
 
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
-    positions = {}
-    for cell in root.iter("mxCell"):
-        if cell.get("vertex") != "1":
-            continue
-        geometry = cell.find("mxGeometry")
-        assert geometry is not None
-        value = cell.get("value") or ""
-        name = next(
-            name
-            for name in ("orders", "payments", "notifications", "orders.created", "payments.completed")
-            if f"<b>{name}</b>" in value
-        )
-        positions[name] = (
-            int(float(geometry.get("x", "0"))),
-            int(float(geometry.get("y", "0"))),
-        )
+    vertices = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]
 
-    assert positions["orders"][1] < positions["orders.created"][1]
-    assert positions["orders.created"][1] < positions["payments"][1]
-    assert positions["payments"][1] < positions["payments.completed"][1]
-    assert positions["payments.completed"][1] < positions["notifications"][1]
-    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
-    assert all(
-        "exitY=1" in cell.get("style", "") and "entryY=0" in cell.get("style", "")
-        for cell in edge_cells
-    )
+    assert len(vertices) == 5
+    assert all(cell.find("mxGeometry") is not None for cell in vertices)
 
 
-def test_render_graph_drawio_layers_mixed_graph_top_down() -> None:
+def test_render_graph_drawio_does_not_encode_layer_or_port_constraints() -> None:
     endpoints_by_service = _fixture()
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
 
-    positions = {}
-    for cell in root.iter("mxCell"):
-        if cell.get("vertex") != "1":
-            continue
-        geometry = cell.find("mxGeometry")
-        assert geometry is not None
-        value = cell.get("value") or ""
-        name = next(
-            name
-            for name in ("service-a", "service-b", "orders.created")
-            if f"<b>{name}</b>" in value
-        )
-        positions[name] = int(float(geometry.get("y", "0")))
+    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
 
-    assert positions["service-a"] < positions["orders.created"]
-    assert positions["orders.created"] < positions["service-b"]
+    assert edge_cells
+    assert all("exitX=" not in (cell.get("style") or "") for cell in edge_cells)
+    assert all("exitY=" not in (cell.get("style") or "") for cell in edge_cells)
+    assert all("entryX=" not in (cell.get("style") or "") for cell in edge_cells)
+    assert all("entryY=" not in (cell.get("style") or "") for cell in edge_cells)
+    assert all(cell.find("mxGeometry/Array[@as='points']") is None for cell in edge_cells)
 
 
-def test_render_graph_drawio_layers_services_from_mixed_dependencies() -> None:
+def test_render_graph_drawio_seed_positions_do_not_follow_dependencies() -> None:
     endpoints_by_service = _fixture()
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
 
@@ -317,7 +287,7 @@ def test_render_graph_drawio_layers_services_from_mixed_dependencies() -> None:
     service_a_y = int(float(service_a.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
     service_b_y = int(float(service_b.find("mxGeometry").get("y", "0")))  # type: ignore[union-attr]
 
-    assert service_a_y < service_b_y
+    assert service_a_y == service_b_y
 
 
 def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
@@ -337,7 +307,7 @@ def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     assert "style.stroke-dash: 3" in rendered
 
 
-def test_render_graph_drawio_uses_deterministic_dependency_lanes() -> None:
+def test_render_graph_drawio_uses_deterministic_neutral_grid() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
 
@@ -362,8 +332,9 @@ def test_render_graph_drawio_uses_deterministic_dependency_lanes() -> None:
         )
 
     assert positions["service-a"] == (24, 24)
-    assert positions["service-a"][1] < positions["orders.created"][1]
-    assert positions["orders.created"][1] < positions["service-b"][1]
+    assert positions["service-b"][1] == positions["service-a"][1]
+    assert positions["service-a"][0] < positions["service-b"][0]
+    assert positions["service-b"][0] < positions["orders.created"][0]
 
 
 def test_write_graph_d2_writes_raw_source_when_extension_is_d2(tmp_path) -> None:

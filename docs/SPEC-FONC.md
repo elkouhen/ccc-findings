@@ -386,17 +386,14 @@ displays a short confirmation (number of services/graph edges). It renders one
 node per known service — including services without interactions — and one
 distinct node per inter-service Kafka topic. REST calls are solid blue arrows;
 Kafka flows are orange dashed arrows split into `producer → topic` and
-`topic → consumer` segments. The initial layout is deterministic and follows an
-ELK-style top-down layered model: callers/producers are placed in upper layers,
-then topics and downstream services in later layers; services without relations
-remain below the main flow. Each
+`topic → consumer` segments. The `.drawio` export deliberately avoids layer,
+topological-order, port, or waypoint constraints: nodes receive only neutral
+seed positions, so diagrams.net/ELK can freely compute the final placement. Each
 microservice card shows its exposed HTTP resources as an aligned method/path
 list with verb-colored badges and a resource count (or an explicit empty
-state). Connection points are distributed over the card sides, and parallel
-calls between the same two services are bundled to prevent overlap. To limit
-visual noise, several relations HTTP with the same source
-and destination are rendered as one connector whose multi-line label lists
-all methods/routes; the JSON graph remains detailed with one relation per
+state). To limit visual noise, several relations HTTP with the same source and
+destination are rendered as one unconstrained connector whose multi-line label
+lists all methods/routes; the JSON graph remains detailed with one relation per
 route. Node and edge labels contain the service name and route/topic
 respectively. Without
 inter-module data, it writes a valid document but with no node/edge and

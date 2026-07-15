@@ -374,12 +374,11 @@ def render_graph_drawio(
     Kafka inter-service. Les arêtes REST vont de l'appelant vers l'appelé ;
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
-    portent des couleurs et des formes distinctes. Le layout initial est
-    déterministe et suit un modèle ELK layered top-down : les appelants et
-    producteurs sont placés dans les couches supérieures, puis les topics et
-    services aval dans les couches suivantes. Toute valeur dérivée du code
-    source (nom de service, route, topic) est échappée XML via `quoteattr` —
-    jamais interpolée brute."""
+    portent des couleurs et des formes distinctes. Le fichier ne porte pas de
+    contraintes de couche ou de tri topologique : un placement initial neutre
+    permet à diagrams.net/ELK de recalculer librement le layout. Toute valeur
+    dérivée du code source (nom de service, route, topic) est échappée XML via
+    `quoteattr` — jamais interpolée brute."""
     node_width = 320
 
     ordered_services = sorted(endpoints_by_service)
@@ -399,7 +398,7 @@ def render_graph_drawio(
     # sharing the same endpoints. This removes parallel strokes and keeps their
     # individual routes as a multi-line label on the single connector.
     visual_edges = _drawio_visual_graph_edges(edges)
-    positions = _elk_layered_drawio_positions(ordered_nodes, visual_edges, node_dimensions)
+    positions = _drawio_initial_positions(ordered_nodes, node_dimensions)
 
     cells: list[str] = []
     for node_kind, name in ordered_nodes:
@@ -428,8 +427,6 @@ def render_graph_drawio(
             'as="geometry" /></mxCell>'
         )
 
-    edge_ports = _drawio_edge_ports(visual_edges, positions)
-    parallel_lanes = _drawio_parallel_lanes(visual_edges)
     for visual_edge_index, (source_kind, source_name, target_kind, target_name, label, kind) in enumerate(
         visual_edges
     ):
@@ -442,30 +439,14 @@ def render_graph_drawio(
             "html=1;endArrow=block;endFill=1;strokeWidth=2;"
             "labelBackgroundColor=#ffffff;fontSize=11;spacing=4;"
         )
-        exit_side, exit_port, entry_side, entry_port = edge_ports[visual_edge_index]
-        style += (
-            f"exitX={_drawio_side_coordinate(exit_side, exit_port, x_axis=True)};"
-            f"exitY={_drawio_side_coordinate(exit_side, exit_port, x_axis=False)};"
-            f"entryX={_drawio_side_coordinate(entry_side, entry_port, x_axis=True)};"
-            f"entryY={_drawio_side_coordinate(entry_side, entry_port, x_axis=False)};"
-            "exitPerimeter=1;entryPerimeter=1;"
-        )
         if kind == "kafka":
             style += "dashed=1;dashPattern=6 4;strokeColor=#d18b20;fontColor=#744a0b;"
         else:
             style += "strokeColor=#4f79b5;fontColor=#183b66;"
-        geometry = _drawio_edge_geometry(
-            visual_edge_index,
-            visual_edges,
-            positions,
-            parallel_lanes,
-            edge_ports,
-            node_dimensions=node_dimensions,
-        )
         cells.append(
             f'<mxCell id="edge-{visual_edge_index}" value={quoteattr(label)} style={quoteattr(style)} '
             f'edge="1" parent="1" source="{source_id}" target="{target_id}">'
-            f'{geometry}</mxCell>'
+            '<mxGeometry relative="1" as="geometry" /></mxCell>'
         )
 
     body = "\n        ".join(cells)
@@ -542,135 +523,6 @@ def _drawio_resource_row(resource: str) -> str:
         f'<span style="background-color:{background};color:{foreground};font-weight:bold;'
         f'font-size:9px;padding:2px 4px;border-radius:3px;">{html_escape(method)}</span></td>'
         f'<td style="padding:2px 0;color:#183b66;">{html_escape(path)}</td></tr>'
-    )
-
-
-def _drawio_side_coordinate(side: str, port: float, *, x_axis: bool) -> str:
-    """Return a Draw.io relative connection coordinate for a node side."""
-    if x_axis:
-        value = {"left": 0.0, "right": 1.0}.get(side, port)
-    else:
-        value = {"top": 0.0, "bottom": 1.0}.get(side, port)
-    return f"{value:.3f}".rstrip("0").rstrip(".")
-
-
-def _drawio_edge_sides(
-    source: tuple[str, str],
-    target: tuple[str, str],
-    positions: dict[tuple[str, str], tuple[int, int]],
-) -> tuple[str, str]:
-    source_x, source_y = positions[source]
-    target_x, target_y = positions[target]
-    dx = target_x - source_x
-    dy = target_y - source_y
-    if abs(dx) >= abs(dy):
-        return ("right", "left") if dx >= 0 else ("left", "right")
-    return ("bottom", "top") if dy >= 0 else ("top", "bottom")
-
-
-def _drawio_edge_ports(
-    visual_edges: list[tuple[str, str, str, str, str, str]],
-    positions: dict[tuple[str, str], tuple[int, int]],
-) -> dict[int, tuple[str, float, str, float]]:
-    """Allocate distinct attachment points to every incident edge.
-
-    Draw.io's orthogonal router otherwise attaches several arrows to the same
-    midpoint of a card, making parallel calls appear as one line. Ports are
-    distributed per node side in stable target/source order.
-    """
-    incidences: dict[tuple[str, str, str], list[tuple[int, bool, tuple[str, str]]]] = {}
-    sides: dict[int, tuple[str, str]] = {}
-    for index, (source_kind, source_name, target_kind, target_name, _label, kind) in enumerate(visual_edges):
-        source = (source_kind, source_name)
-        target = (target_kind, target_name)
-        exit_side, entry_side = _drawio_edge_sides(source, target, positions)
-        sides[index] = (exit_side, entry_side)
-        incidences.setdefault((*source, exit_side), []).append((index, True, target))
-        incidences.setdefault((*target, entry_side), []).append((index, False, source))
-
-    ports: dict[tuple[int, bool], float] = {}
-    for incident_edges in incidences.values():
-        incident_edges.sort(key=lambda item: (positions[item[2]][1], positions[item[2]][0], item[0]))
-        count = len(incident_edges)
-        for slot, (index, is_source, _peer) in enumerate(incident_edges, start=1):
-            ports[(index, is_source)] = slot / (count + 1)
-
-    return {
-        index: (exit_side, ports[(index, True)], entry_side, ports[(index, False)])
-        for index, (exit_side, entry_side) in sides.items()
-    }
-
-
-def _drawio_parallel_lanes(
-    visual_edges: list[tuple[str, str, str, str, str, str]],
-) -> dict[int, tuple[int, int]]:
-    """Assign a separate orthogonal lane to edges sharing both endpoints."""
-    groups: dict[tuple[str, str, str, str], list[int]] = {}
-    for index, (source_kind, source_name, target_kind, target_name, _label, _kind) in enumerate(visual_edges):
-        groups.setdefault((source_kind, source_name, target_kind, target_name), []).append(index)
-    return {
-        index: (slot, len(indices))
-        for indices in groups.values()
-        for slot, index in enumerate(indices)
-    }
-
-
-def _drawio_port_point(
-    node: tuple[str, str],
-    side: str,
-    port: float,
-    positions: dict[tuple[str, str], tuple[int, int]],
-    *,
-    node_dimensions: dict[tuple[str, str], tuple[int, int]],
-) -> tuple[float, float]:
-    x, y = positions[node]
-    width, height = node_dimensions[node]
-    if side == "left":
-        return x, y + height * port
-    if side == "right":
-        return x + width, y + height * port
-    if side == "top":
-        return x + width * port, y
-    return x + width * port, y + height
-
-
-def _drawio_edge_geometry(
-    index: int,
-    visual_edges: list[tuple[str, str, str, str, str, str]],
-    positions: dict[tuple[str, str], tuple[int, int]],
-    parallel_lanes: dict[int, tuple[int, int]],
-    edge_ports: dict[int, tuple[str, float, str, float]],
-    *,
-    node_dimensions: dict[tuple[str, str], tuple[int, int]],
-) -> str:
-    """Add explicit lanes only where Draw.io would otherwise overlap edges."""
-    lane, lane_count = parallel_lanes[index]
-    if lane_count == 1:
-        return '<mxGeometry relative="1" as="geometry" />'
-
-    source_kind, source_name, target_kind, target_name, _label, _kind = visual_edges[index]
-    exit_side, exit_port, entry_side, entry_port = edge_ports[index]
-    source_point = _drawio_port_point(
-        (source_kind, source_name), exit_side, exit_port, positions,
-        node_dimensions=node_dimensions,
-    )
-    target_point = _drawio_port_point(
-        (target_kind, target_name), entry_side, entry_port, positions,
-        node_dimensions=node_dimensions,
-    )
-    offset = (lane - (lane_count - 1) / 2) * 28
-    if exit_side in {"left", "right"}:
-        lane_coordinate = (source_point[0] + target_point[0]) / 2 + offset
-        points = [(lane_coordinate, source_point[1]), (lane_coordinate, target_point[1])]
-    else:
-        lane_coordinate = (source_point[1] + target_point[1]) / 2 + offset
-        points = [(source_point[0], lane_coordinate), (target_point[0], lane_coordinate)]
-    points_xml = "".join(
-        f'<mxPoint x="{int(round(x))}" y="{int(round(y))}" />' for x, y in points
-    )
-    return (
-        '<mxGeometry relative="1" as="geometry"><Array as="points">'
-        f"{points_xml}</Array></mxGeometry>"
     )
 
 
@@ -845,97 +697,30 @@ def write_graph_d2(output_path: Path, source: str, layout: str = "elk") -> None:
         raise RuntimeError(f"d2 a échoué: {details}")
 
 
-def _elk_layered_drawio_positions(
+def _drawio_initial_positions(
     ordered_nodes: list[tuple[str, str]],
-    visual_edges: list[tuple[str, str, str, str, str, str]],
     node_dimensions: dict[tuple[str, str], tuple[int, int]],
 ) -> dict[tuple[str, str], tuple[int, int]]:
-    """ELK-style layered layout embedded directly in the Draw.io export.
-
-    Draw.io XML needs concrete coordinates. This deterministic pass mirrors
-    the layered ELK model used by D2: edges flow top-to-bottom, nodes are
-    ranked by longest acyclic path, and nodes in each layer are ordered by the
-    barycenter of their already placed predecessors to reduce crossings.
-    """
+    """Neutral seed positions for Draw.io before an external layout is run."""
     left_margin = 24
     top_margin = 24
-    layer_gap = 116
-    node_gap = 84
-    isolated_gap = 96
-    node_set = set(ordered_nodes)
-    predecessors: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
-    successors: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
-    for source_kind, source_name, target_kind, target_name, _label, _kind in visual_edges:
-        source = (source_kind, source_name)
-        target = (target_kind, target_name)
-        if source in node_set and target in node_set and source != target:
-            successors[source].add(target)
-            predecessors[target].add(source)
-
-    connected = [node for node in ordered_nodes if predecessors[node] or successors[node]]
-    isolated = [node for node in ordered_nodes if not predecessors[node] and not successors[node]]
-    indegree = {node: len(predecessors[node]) for node in connected}
-    rank = {node: 0 for node in connected}
-    ready = sorted(node for node in connected if indegree[node] == 0)
-    processed: set[tuple[str, str]] = set()
-    while ready:
-        node = ready.pop(0)
-        processed.add(node)
-        for target in sorted(successors[node]):
-            rank[target] = max(rank[target], rank[node] + 1)
-            indegree[target] -= 1
-            if indegree[target] == 0:
-                ready.append(target)
-        ready.sort()
-
-    for node in connected:
-        if node not in processed:
-            rank[node] = 0
-
-    layers: dict[int, list[tuple[str, str]]] = {}
-    for node in connected:
-        layers.setdefault(rank[node], []).append(node)
-    for layer_index in sorted(layers):
-        layer_nodes = layers[layer_index]
-        if layer_index == 0:
-            layer_nodes.sort()
-            continue
-        previous_positions = {
-            node: slot
-            for previous_layer in range(layer_index)
-            for slot, node in enumerate(layers.get(previous_layer, []))
-        }
-        layer_nodes.sort(
-            key=lambda node: (
-                sum(previous_positions[parent] for parent in predecessors[node] if parent in previous_positions)
-                / max(1, sum(1 for parent in predecessors[node] if parent in previous_positions)),
-                node,
-            )
-        )
-
-    layer_widths = {
-        layer_index: sum(node_dimensions[node][0] for node in layer_nodes)
-        + node_gap * max(0, len(layer_nodes) - 1)
-        for layer_index, layer_nodes in layers.items()
-    }
-    content_width = max(layer_widths.values(), default=0)
+    column_gap = 96
+    row_gap = 96
+    max_columns = 3
     positions: dict[tuple[str, str], tuple[int, int]] = {}
-    y = top_margin
-    for layer_index in sorted(layers):
-        layer_nodes = layers[layer_index]
-        layer_height = max(node_dimensions[node][1] for node in layer_nodes)
-        x = left_margin + (content_width - layer_widths[layer_index]) // 2
-        for node in layer_nodes:
-            width, height = node_dimensions[node]
-            positions[node] = (x, y + (layer_height - height) // 2)
-            x += width + node_gap
-        y += layer_height + layer_gap
 
-    if isolated:
-        y += isolated_gap if connected else 0
-        for node in isolated:
-            positions[node] = (left_margin, y)
-            y += node_dimensions[node][1] + node_gap
+    row_start = 0
+    y = top_margin
+    while row_start < len(ordered_nodes):
+        row_nodes = ordered_nodes[row_start : row_start + max_columns]
+        x = left_margin
+        row_height = max(node_dimensions[node][1] for node in row_nodes)
+        for node in row_nodes:
+            width, height = node_dimensions[node]
+            positions[node] = (x, y + (row_height - height) // 2)
+            x += width + column_gap
+        y += row_height + row_gap
+        row_start += max_columns
     return positions
 
 
