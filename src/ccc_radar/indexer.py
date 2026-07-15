@@ -83,10 +83,38 @@ def _is_test_source(rel_path: str) -> bool:
     )
 
 
+def _nested_build_roots(repo_root: Path) -> tuple[Path, ...]:
+    """Return the outermost Maven/Gradle modules below a container root.
+
+    A directory used only as a workspace (for example ``~/examples``) must
+    not be mistaken for one source module.  When it has no build descriptor of
+    its own, scanning is restricted to its child Maven/Gradle projects; nested
+    modules remain included and are later attributed to their nearest build
+    descriptor.  A normal repository root keeps the historical whole-tree
+    behaviour.
+    """
+    descriptors = ("pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
+    if any((repo_root / descriptor).is_file() for descriptor in descriptors):
+        return ()
+    candidates = {
+        path.parent
+        for descriptor in descriptors
+        for path in repo_root.rglob(descriptor)
+    }
+    return tuple(
+        candidate
+        for candidate in sorted(candidates)
+        if not any(parent != candidate and parent in candidates for parent in candidate.parents)
+    )
+
+
 def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
     hashes: dict[str, str] = {}
+    nested_roots = _nested_build_roots(repo_root)
     for path in sorted(repo_root.rglob("*")):
         if not path.is_file():
+            continue
+        if nested_roots and not any(root == path.parent or root in path.parents for root in nested_roots):
             continue
         rel_path = path.relative_to(repo_root).as_posix()
         if _is_test_source(rel_path):

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from ccc_radar.config import Config
-from ccc_radar.indexer import _is_test_source, index_repo
+from ccc_radar.indexer import _is_test_source, _list_repo_files, index_repo
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
 from ccc_radar.store import Store
@@ -100,6 +100,26 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
     assert report.findings_added == 0
     assert any("Semgrep désactivé" in message for message in messages)
     assert any("propriétés et inventaire" in message for message in messages)
+
+
+def test_container_root_scans_only_nested_maven_or_gradle_modules(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("workspace only\n")
+    (tmp_path / "loose.java").write_text("class Loose {}\n")
+    maven = tmp_path / "orders"
+    (maven / "src" / "main" / "java").mkdir(parents=True)
+    (maven / "pom.xml").write_text("<project><artifactId>orders</artifactId></project>")
+    (maven / "src" / "main" / "java" / "Order.java").write_text("class Order {}\n")
+    gradle = tmp_path / "payments"
+    (gradle / "src" / "main" / "java").mkdir(parents=True)
+    (gradle / "build.gradle").write_text("plugins {}\n")
+    (gradle / "src" / "main" / "java" / "Payment.java").write_text("class Payment {}\n")
+
+    files = _list_repo_files(tmp_path, Config(rules=[]))
+
+    assert set(files) == {
+        "orders/pom.xml", "orders/src/main/java/Order.java",
+        "payments/build.gradle", "payments/src/main/java/Payment.java",
+    }
 
 
 @pytest.mark.integration
