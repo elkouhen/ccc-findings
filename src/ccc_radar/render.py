@@ -725,6 +725,7 @@ def _drawio_initial_positions(
     max_iterations = 800
     convergence_epsilon = 0.08
     stable_iterations_required = 12
+    node_margin = 32.0
     order_index = {node: index for index, node in enumerate(ordered_nodes)}
     node_set = set(ordered_nodes)
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {node: set() for node in ordered_nodes}
@@ -845,15 +846,103 @@ def _drawio_initial_positions(
         else:
             stable_iterations = 0
 
-    min_x = min(x for x, _y in positions_f.values())
-    min_y = min(y for _x, y in positions_f.values())
+    _separate_overlapping_drawio_nodes(
+        ordered_nodes, positions_f, node_dimensions, margin=node_margin
+    )
+    _compact_drawio_edges_without_overlap(
+        edge_pairs, positions_f, node_dimensions, ideal_distance=ideal_edge, margin=node_margin
+    )
+
+    min_x = min(x - node_dimensions[node][0] / 2 for node, (x, _y) in positions_f.items())
+    min_y = min(y - node_dimensions[node][1] / 2 for node, (_x, y) in positions_f.items())
     return {
         node: (
-            int(round(x - min_x + left_margin)),
-            int(round(y - min_y + top_margin)),
+            int(round(x - node_dimensions[node][0] / 2 - min_x + left_margin)),
+            int(round(y - node_dimensions[node][1] / 2 - min_y + top_margin)),
         )
         for node, (x, y) in positions_f.items()
     }
+
+
+def _separate_overlapping_drawio_nodes(
+    ordered_nodes: list[tuple[str, str]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    margin: float,
+) -> None:
+    """Resolve rectangle overlaps in-place after the elastic solver settles."""
+    max_passes = 160
+    for _pass in range(max_passes):
+        moved = False
+        for i, source in enumerate(ordered_nodes):
+            sx, sy = positions[source]
+            sw, sh = node_dimensions[source]
+            for target in ordered_nodes[i + 1 :]:
+                tx, ty = positions[target]
+                tw, th = node_dimensions[target]
+                dx = tx - sx
+                dy = ty - sy
+                overlap_x = (sw + tw) / 2 + margin - abs(dx)
+                overlap_y = (sh + th) / 2 + margin - abs(dy)
+                if overlap_x <= 0 or overlap_y <= 0:
+                    continue
+
+                moved = True
+                prefer_horizontal = source[0] == target[0]
+                if prefer_horizontal or overlap_x < overlap_y:
+                    direction = 1.0 if dx >= 0 else -1.0
+                    shift = overlap_x / 2
+                    sx -= direction * shift
+                    tx += direction * shift
+                else:
+                    direction = 1.0 if dy >= 0 else -1.0
+                    shift = overlap_y / 2
+                    sy -= direction * shift
+                    ty += direction * shift
+                positions[source] = (sx, sy)
+                positions[target] = (tx, ty)
+        if not moved:
+            break
+
+
+def _compact_drawio_edges_without_overlap(
+    edge_pairs: list[tuple[tuple[str, str], tuple[str, str]]],
+    positions: dict[tuple[str, str], tuple[float, float]],
+    node_dimensions: dict[tuple[str, str], tuple[int, int]],
+    *,
+    ideal_distance: float,
+    margin: float,
+) -> None:
+    """Shorten stretched graph edges, resolving overlaps after each pass."""
+    if not edge_pairs:
+        return
+
+    ordered_nodes = list(positions)
+    for _pass in range(100):
+        max_excess = 0.0
+        for source, target in edge_pairs:
+            sx, sy = positions[source]
+            tx, ty = positions[target]
+            dx = tx - sx
+            dy = ty - sy
+            distance = max(1.0, math.hypot(dx, dy))
+            desired = ideal_distance - 55.0 if source[0] != target[0] else ideal_distance
+            excess = distance - desired
+            if excess <= 0:
+                continue
+            max_excess = max(max_excess, excess)
+            shift = min(excess * 0.18, 18.0)
+            ux = dx / distance
+            uy = dy / distance
+            positions[source] = (sx + ux * shift, sy + uy * shift)
+            positions[target] = (tx - ux * shift, ty - uy * shift)
+
+        _separate_overlapping_drawio_nodes(
+            ordered_nodes, positions, node_dimensions, margin=margin
+        )
+        if max_excess < 8.0:
+            break
 
 
 class EndpointHit(TypedDict):

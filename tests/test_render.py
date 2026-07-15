@@ -59,6 +59,40 @@ def _vertex_for_service(root: ET.Element, service: str) -> ET.Element:
     )
 
 
+def _vertex_rectangles(root: ET.Element) -> list[tuple[int, int, int, int]]:
+    rectangles = []
+    for cell in root.iter("mxCell"):
+        if cell.get("vertex") != "1":
+            continue
+        geometry = cell.find("mxGeometry")
+        assert geometry is not None
+        rectangles.append(
+            (
+                int(float(geometry.get("x", "0"))),
+                int(float(geometry.get("y", "0"))),
+                int(float(geometry.get("width", "0"))),
+                int(float(geometry.get("height", "0"))),
+            )
+        )
+    return rectangles
+
+
+def _rectangles_overlap(
+    first: tuple[int, int, int, int], second: tuple[int, int, int, int]
+) -> bool:
+    ax, ay, aw, ah = first
+    bx, by, bw, bh = second
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+def _rectangle_gap(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = first
+    bx, by, bw, bh = second
+    dx = max(bx - (ax + aw), ax - (bx + bw), 0)
+    dy = max(by - (ay + ah), ay - (by + bh), 0)
+    return math.hypot(dx, dy)
+
+
 def test_render_graph_json_expands_kafka_edges_via_topic_nodes() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
@@ -259,7 +293,7 @@ def test_render_graph_drawio_uses_affinity_seed_positions_for_kafka_graph() -> N
     }
 
     root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
-    positions = {}
+    rectangles = {}
     for cell in root.iter("mxCell"):
         if cell.get("vertex") != "1":
             continue
@@ -271,15 +305,45 @@ def test_render_graph_drawio_uses_affinity_seed_positions_for_kafka_graph() -> N
             for name in ("orders", "payments", "notifications", "orders.created", "payments.completed")
             if f"<b>{name}</b>" in value
         )
-        positions[name] = (
+        rectangles[name] = (
             int(float(geometry.get("x", "0"))),
             int(float(geometry.get("y", "0"))),
+            int(float(geometry.get("width", "0"))),
+            int(float(geometry.get("height", "0"))),
         )
 
-    assert math.dist(positions["orders.created"], positions["orders"]) < 260
-    assert math.dist(positions["orders.created"], positions["payments"]) < 260
-    assert math.dist(positions["payments.completed"], positions["payments"]) < 260
-    assert math.dist(positions["payments.completed"], positions["notifications"]) < 260
+    assert _rectangle_gap(rectangles["orders.created"], rectangles["orders"]) < 96
+    assert _rectangle_gap(rectangles["orders.created"], rectangles["payments"]) < 96
+    assert _rectangle_gap(rectangles["payments.completed"], rectangles["payments"]) < 96
+    assert _rectangle_gap(rectangles["payments.completed"], rectangles["notifications"]) < 96
+
+
+def test_render_graph_drawio_separates_overlapping_nodes() -> None:
+    endpoints_by_service = {
+        "orders": [
+            make_endpoint("produce", "orders.created", "orders/Producer.java", system="kafka"),
+            make_endpoint("produce", "orders.cancelled", "orders/CancelProducer.java", system="kafka"),
+        ],
+        "payments": [
+            make_endpoint("consume", "orders.created", "payments/Listener.java", system="kafka"),
+            make_endpoint("produce", "payments.completed", "payments/Producer.java", system="kafka"),
+        ],
+        "notifications": [
+            make_endpoint("consume", "payments.completed", "notifications/Listener.java", system="kafka"),
+            make_endpoint("consume", "orders.cancelled", "notifications/CancelListener.java", system="kafka"),
+        ],
+        "audit": [
+            make_endpoint("consume", "orders.created", "audit/OrdersListener.java", system="kafka"),
+            make_endpoint("consume", "payments.completed", "audit/PaymentsListener.java", system="kafka"),
+        ],
+    }
+
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, build_graph(endpoints_by_service)))
+    rectangles = _vertex_rectangles(root)
+
+    for i, first in enumerate(rectangles):
+        for second in rectangles[i + 1 :]:
+            assert not _rectangles_overlap(first, second)
 
 
 def test_render_graph_drawio_does_not_encode_layer_or_port_constraints() -> None:
