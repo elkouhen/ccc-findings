@@ -141,7 +141,7 @@ def test_build_graph_skips_same_service_calls() -> None:
     assert build_graph(endpoints_by_service) == []
 
 
-def test_build_graph_ignores_rest_route_matches_without_a_service_target() -> None:
+def test_build_graph_links_compatible_rest_routes_without_a_service_target() -> None:
     edges = build_graph(
         {
             "caller-service": [make_endpoint("call", "GET /health", "Caller.java")],
@@ -149,7 +149,8 @@ def test_build_graph_ignores_rest_route_matches_without_a_service_target() -> No
         }
     )
 
-    assert edges == []
+    assert len(edges) == 1
+    assert (edges[0].from_service, edges[0].to_service) == ("caller-service", "unrelated-service")
 
 
 def test_build_graph_creates_kafka_edges_on_matching_topic_only() -> None:

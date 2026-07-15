@@ -90,7 +90,9 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     return None
 
 
-def _service_matches_hint(service_name: str, hint: str) -> bool:
+def _service_matches_hint(service_name: str, hint: str | None) -> bool:
+    if hint is None:
+        return True
     normalized = service_name.lower()
     return normalized == hint or normalized.endswith(f"-{hint}") or hint in normalized
 
@@ -128,10 +130,9 @@ def paths_match(call_topic: str, serve_topic: str) -> bool:
 def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[GraphEdge]:
     """Construit les arêtes REST et Kafka entre services distincts.
 
-    Une arête REST nécessite une cible de service explicite dans le site
-    d'appel (URL de service, ``lb://`` ou getter de configuration). Une simple
-    égalité de route ne prouve pas une dépendance : elle créait des faux
-    positifs fréquents pour ``/health``, ``/api`` ou les routes partagées.
+    Une arête REST associe un appel à une route exposée compatible. Lorsqu'une
+    cible de service est présente dans le site d'appel (URL de service,
+    ``lb://`` ou getter de configuration), elle restreint cet appariement.
     Pas d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
     graphe inter-services.
 
@@ -166,8 +167,6 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     gateway_proxy_targets: set[tuple[str, str]] = set()
     for call_service, call in calls:
         target_hint = _rest_target_service_hint(call)
-        if target_hint is None:
-            continue
         for serve_service, serve in serves:
             if call_service == serve_service:
                 continue

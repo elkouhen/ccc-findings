@@ -1,4 +1,6 @@
+import json
 import math
+import re
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -233,6 +235,18 @@ def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
     assert '"visible" : "hidden"' in document
     assert "<\\/script>" in document
     assert "service-</script>" not in document
+
+
+def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
+    document = render_graph_html(_fixture(), build_graph(_fixture()))
+
+    graph_data = json.loads(
+        re.search(
+            r'<script id="graph-data" type="application/json">(.*)</script>', document
+        ).group(1)
+    )
+
+    assert [link["kind"] for link in graph_data["links"]] == ["rest", "kafka", "kafka"]
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
