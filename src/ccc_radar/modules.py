@@ -337,10 +337,17 @@ def _extract_java_architecture(
         _trace("module.architecture.parse.begin", module=module_dir, path=rel)
         tree = parser.parse(source)
         _trace("module.architecture.parse.end", module=module_dir, path=rel)
-        if tree.root_node.has_error:
+        _trace("module.architecture.root.begin", module=module_dir, path=rel)
+        root_node = tree.root_node
+        _trace("module.architecture.root.end", module=module_dir, path=rel, node_type=root_node.type)
+        _trace("module.architecture.error_check.begin", module=module_dir, path=rel)
+        has_error = root_node.has_error
+        _trace("module.architecture.error_check.end", module=module_dir, path=rel, has_error=has_error)
+        if has_error:
             continue
         repository_receivers: dict[str, str | None] = {}
-        for node in _walk(tree.root_node):
+        _trace("module.architecture.walk_metadata.begin", module=module_dir, path=rel)
+        for node in _walk(root_node):
             if node.type == "field_declaration":
                 text = _node_text(source, node)
                 for type_name, generic_entity, receiver in _REPOSITORY_FIELD_RE.findall(text):
@@ -357,7 +364,9 @@ def _extract_java_architecture(
                 match = _DOCUMENT_COLLECTION_RE.search(_node_text(source, node))
                 if match:
                     collections.add(match.group(1))
-        for method_node in _walk(tree.root_node):
+        _trace("module.architecture.walk_metadata.end", module=module_dir, path=rel)
+        _trace("module.architecture.walk_methods.begin", module=module_dir, path=rel)
+        for method_node in _walk(root_node):
             if method_node.type != "method_declaration":
                 continue
             method_name_node = method_node.child_by_field_name("name")
@@ -400,7 +409,9 @@ def _extract_java_architecture(
                         line=statement.start_point.row + 1, detail="synchronized block",
                         evidence=_source_evidence(source, statement, rel),
                     ))
-        for node in _walk(tree.root_node):
+        _trace("module.architecture.walk_methods.end", module=module_dir, path=rel)
+        _trace("module.architecture.walk_mongo.begin", module=module_dir, path=rel)
+        for node in _walk(root_node):
             if node.type != "method_invocation":
                 continue
             text = _node_text(source, node)
@@ -422,6 +433,7 @@ def _extract_java_architecture(
                     collection=literal.group(1) if literal else repository_receivers.get(receiver),
                     evidence=_source_evidence(source, node, rel),
                 ))
+        _trace("module.architecture.walk_mongo.end", module=module_dir, path=rel)
     return (
         tuple(sorted(collections)),
         tuple(sorted(methods, key=lambda item: (item.path, item.line, item.operation))),
