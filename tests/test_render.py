@@ -23,6 +23,7 @@ def make_endpoint(
     end_line: int = 1,
     system: str = "rest",
     framework: str | None = None,
+    snippet: str = "",
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
@@ -35,14 +36,21 @@ def make_endpoint(
         path=path,
         start_line=start_line,
         end_line=end_line,
-        snippet="",
+        snippet=snippet,
     )
 
 
 def _fixture() -> dict[str, list[MessageEndpoint]]:
     return {
         "service-a": [
-            make_endpoint("call", "GET /orders", "a/Client.java", 3, 3),
+            make_endpoint(
+                "call",
+                "GET /orders",
+                "a/Client.java",
+                3,
+                3,
+                snippet="client.getServiceBServiceUrl()",
+            ),
             make_endpoint("produce", "orders.created", "a/Producer.java", 5, 5, system="kafka"),
         ],
         "service-b": [
@@ -221,6 +229,8 @@ def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
     assert "graph.zoomBy(1.25" in document
     assert 'id="fit-view"' in document
     assert 'type: "zoom-canvas"' in document
+    assert "graph.setElementVisibility(visibility)" in document
+    assert '"visible" : "hidden"' in document
     assert "<\\/script>" in document
     assert "service-</script>" not in document
 
@@ -252,8 +262,12 @@ def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
 def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
     endpoints_by_service = {
         "service-a": [
-            make_endpoint("call", "GET /orders", "a/Client1.java", 5, 5),
-            make_endpoint("call", "GET /orders", "a/Client2.java", 15, 15),
+            make_endpoint(
+                "call", "GET /orders", "a/Client1.java", 5, 5, snippet="client.getServiceBServiceUrl()"
+            ),
+            make_endpoint(
+                "call", "GET /orders", "a/Client2.java", 15, 15, snippet="client.getServiceBServiceUrl()"
+            ),
         ],
         "service-b": [make_endpoint("serve", "GET /orders", "b/Controller.java", 10, 10)],
     }
@@ -270,8 +284,12 @@ def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
 def test_render_graph_drawio_bundles_parallel_relations_in_a_multiline_label() -> None:
     endpoints_by_service = {
         "service-a": [
-            make_endpoint("call", "GET /orders", "a/Client.java", 5, 5),
-            make_endpoint("call", "POST /orders", "a/Client.java", 10, 10),
+            make_endpoint(
+                "call", "GET /orders", "a/Client.java", 5, 5, snippet="client.getServiceBServiceUrl()"
+            ),
+            make_endpoint(
+                "call", "POST /orders", "a/Client.java", 10, 10, snippet="client.getServiceBServiceUrl()"
+            ),
         ],
         "service-b": [
             make_endpoint("serve", "GET /orders", "b/Controller.java", 10, 10),

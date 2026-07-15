@@ -42,15 +42,21 @@ def make_endpoint(
 def _three_service_fixture() -> dict[str, list[MessageEndpoint]]:
     service_a = [
         make_endpoint("serve", "GET /a-status", "a/Controller.java", 10, 10),
-        make_endpoint("call", "GET /b-status", "a/Client.java", 5, 5),
+        make_endpoint(
+            "call", "GET /b-status", "a/Client.java", 5, 5, snippet="client.getBServiceUrl()"
+        ),
     ]
     service_b = [
         make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10),
-        make_endpoint("call", "GET /c-status", "b/Client.java", 5, 5),
+        make_endpoint(
+            "call", "GET /c-status", "b/Client.java", 5, 5, snippet="client.getCServiceUrl()"
+        ),
     ]
     service_c = [
         make_endpoint("serve", "GET /c-status", "c/Controller.java", 10, 10),
-        make_endpoint("call", "GET /a-status", "c/Client.java", 5, 5),
+        make_endpoint(
+            "call", "GET /a-status", "c/Client.java", 5, 5, snippet="client.getAServiceUrl()"
+        ),
     ]
     return {"service-a": service_a, "service-b": service_b, "service-c": service_c}
 
@@ -135,6 +141,17 @@ def test_build_graph_skips_same_service_calls() -> None:
     assert build_graph(endpoints_by_service) == []
 
 
+def test_build_graph_ignores_rest_route_matches_without_a_service_target() -> None:
+    edges = build_graph(
+        {
+            "caller-service": [make_endpoint("call", "GET /health", "Caller.java")],
+            "unrelated-service": [make_endpoint("serve", "GET /health", "Health.java")],
+        }
+    )
+
+    assert edges == []
+
+
 def test_build_graph_creates_kafka_edges_on_matching_topic_only() -> None:
     endpoints_by_service = {
         "producer-svc": [
@@ -183,7 +200,9 @@ def test_build_graph_uses_manifest_kafka_endpoints_as_service_authority() -> Non
 
 
 def test_build_graph_deduplicates_duplicate_edges() -> None:
-    call = make_endpoint("call", "GET /b-status", "a/Client.java", 5, 5)
+    call = make_endpoint(
+        "call", "GET /b-status", "a/Client.java", 5, 5, snippet="client.getBServiceUrl()"
+    )
     serve = make_endpoint("serve", "GET /b-status", "b/Controller.java", 10, 10)
 
     edges = build_graph({"service-a": [call, call], "service-b": [serve, serve]})

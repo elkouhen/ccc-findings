@@ -90,9 +90,7 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     return None
 
 
-def _service_matches_hint(service_name: str, hint: str | None) -> bool:
-    if hint is None:
-        return True
+def _service_matches_hint(service_name: str, hint: str) -> bool:
     normalized = service_name.lower()
     return normalized == hint or normalized.endswith(f"-{hint}") or hint in normalized
 
@@ -128,9 +126,13 @@ def paths_match(call_topic: str, serve_topic: str) -> bool:
 
 
 def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[GraphEdge]:
-    """Construit les arêtes REST (call -> serve, appariement de chemin) et
-    Kafka (produce -> consume, même topic) entre services distincts. Pas
-    d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
+    """Construit les arêtes REST et Kafka entre services distincts.
+
+    Une arête REST nécessite une cible de service explicite dans le site
+    d'appel (URL de service, ``lb://`` ou getter de configuration). Une simple
+    égalité de route ne prouve pas une dépendance : elle créait des faux
+    positifs fréquents pour ``/health``, ``/api`` ou les routes partagées.
+    Pas d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
     graphe inter-services.
 
     Les entrées Kafka provenant d'un manifeste Markdown sont autoritatives
@@ -163,10 +165,13 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     seen: set[tuple[str, str, str, str, str]] = set()
     gateway_proxy_targets: set[tuple[str, str]] = set()
     for call_service, call in calls:
+        target_hint = _rest_target_service_hint(call)
+        if target_hint is None:
+            continue
         for serve_service, serve in serves:
             if call_service == serve_service:
                 continue
-            if not _service_matches_hint(serve_service, _rest_target_service_hint(call)):
+            if not _service_matches_hint(serve_service, target_hint):
                 continue
             if paths_match(call.topic, serve.topic):
                 proxy_target = (call.id, serve_service)

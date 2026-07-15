@@ -788,16 +788,27 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
       ],
     });
     const elementData = new Map(data.nodes.map(node => [node.id, node]));
-    const setOpacity = async (nodeIds, edgeIds) => {
+    const setVisibility = async (nodeIds, edgeIds) => {
+      const visibility = Object.fromEntries([
+        ...data.nodes.map(node => [
+          node.id,
+          nodeIds === null || nodeIds.has(node.id) ? "visible" : "hidden",
+        ]),
+        ...data.edges.map(edge => [
+          edge.id,
+          edgeIds === null || edgeIds.has(edge.id) ? "visible" : "hidden",
+        ]),
+      ]);
+      await graph.setElementVisibility(visibility);
       graph.updateNodeData(data.nodes.map(node => ({
         id: node.id,
-        style: { opacity: nodeIds === null || nodeIds.has(node.id) ? 1 : .09 },
+        style: { opacity: 1 },
       })));
       graph.updateEdgeData(data.edges.map(edge => ({
         id: edge.id,
         style: {
-          opacity: edgeIds === null || edgeIds.has(edge.id) ? .9 : .04,
-          lineWidth: edgeIds !== null && edgeIds.has(edge.id) ? 2.4 : 1.2,
+          opacity: .9,
+          lineWidth: edgeIds === null ? 1.4 : 2.4,
         },
       })));
       await graph.draw();
@@ -812,7 +823,7 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
           relatedNodes.add(edge.target);
         }
       });
-      await setOpacity(relatedNodes, relatedEdges);
+      await setVisibility(relatedNodes, relatedEdges);
       const node = elementData.get(id);
       details.replaceChildren();
       const title = document.createElement("strong");
@@ -820,7 +831,7 @@ _GRAPH_HTML_TEMPLATE = """<!doctype html>
       details.append(title, document.createTextNode(`${node.data.kind === "kafka_topic" ? "Topic Kafka" : "Microservice"} · ${relatedEdges.size} relation${relatedEdges.size > 1 ? "s" : ""}`));
     };
     const reset = async () => {
-      await setOpacity(null, null);
+      await setVisibility(null, null);
       details.textContent = "Sélectionnez un nœud pour isoler ses relations.";
       search.value = "";
     };
