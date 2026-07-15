@@ -2,6 +2,8 @@ import json
 import os
 import shutil
 import hashlib
+import sys
+import time
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -81,6 +83,13 @@ def _current_repo_endpoint_warning(store: Store) -> str | None:
 
 def _echo_index_progress(message: str) -> None:
     typer.echo(message)
+
+
+def _trace_index(stage: str, **fields: object) -> None:
+    if os.environ.get("CCCR_TRACE") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
 @app.callback()
@@ -243,6 +252,7 @@ def index_cmd(
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut)."""
     repo_root = Path.cwd()
+    _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
     disabled = frozenset(disable or [])
     unknown = disabled - {"semgrep", "properties"}
     if unknown:
@@ -258,10 +268,14 @@ def index_cmd(
     resolved_model, model_warning = resolve_embedding_model(config.embedding_model)
     if model_warning is not None:
         typer.echo(f"⚠ {model_warning}")
+    _trace_index("embedder.begin", model=resolved_model)
     embedder = make_embedder(resolved_model)
+    _trace_index("embedder.end")
 
     try:
+        _trace_index("store.open.begin")
         with Store(repo_root) as store:
+            _trace_index("store.open.end")
             if engine == "cocoindex":
                 report = index_repo_with_cocoindex(
                     repo_root, config, store, embedder, full=full,
@@ -273,6 +287,7 @@ def index_cmd(
                     disabled=disabled,
                 )
                 store.set_meta("index_engine", "manual")
+            _trace_index("store.close.begin")
     except (SemgrepError, EmbeddingError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
@@ -282,6 +297,7 @@ def index_cmd(
         f"+findings={report.findings_added} -findings={report.findings_removed} "
         f"+endpoints={report.endpoints_added} -endpoints={report.endpoints_removed}"
     )
+    _trace_index("cli.index.end")
 
 
 def _require_index(repo_root: Path) -> None:

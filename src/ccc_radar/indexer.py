@@ -1,5 +1,8 @@
 import fnmatch
 import hashlib
+import os
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
@@ -277,6 +280,14 @@ def _report_progress(progress: ProgressCallback | None, message: str) -> None:
         progress(message)
 
 
+def _trace(stage: str, **fields: object) -> None:
+    """Emit an opt-in, flush-on-write checkpoint for native crash diagnosis."""
+    if os.environ.get("CCCR_TRACE") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(), file=sys.stderr, flush=True)
+
+
 def index_repo(
     repo_root: Path,
     config: Config,
@@ -293,10 +304,13 @@ def index_repo(
     # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
     # pas tels qu'un `cccr index` précédent les avait mémorisés.
     clear_analysis_caches()
+    _trace("index_repo.begin", root=repo_root, full=full, disabled=",".join(sorted(disabled)))
     discovered_modules = []
     if "properties" not in disabled:
         _report_progress(progress, "→ Indexation : découverte des modules Maven/Gradle...")
+        _trace("modules.begin")
         discovered_modules = discover_modules(repo_root)
+        _trace("modules.end", count=len(discovered_modules))
         if discovered_modules:
             for module in discovered_modules:
                 _report_progress(
@@ -313,8 +327,10 @@ def index_repo(
         full = True
 
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
+    _trace("files.begin")
     current_hashes = _list_repo_files(repo_root, config)
     previous_hashes = store.get_file_hashes()
+    _trace("files.end", current=len(current_hashes), previous=len(previous_hashes))
 
     # The module inventory is intentionally materialized with the index rather
     # than reconstructed by `cccr modules`: its configuration examples describe
@@ -355,6 +371,7 @@ def index_repo(
     endpoints: list[MessageEndpoint] = []
     if changed and "semgrep" not in disabled:
         _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
+        _trace("semgrep.begin", files=len(changed))
         findings_removed += store.count_findings_for_paths(changed)
         endpoints_removed += store.count_endpoints_for_paths(changed)
 
@@ -363,6 +380,7 @@ def index_repo(
         # chaque parseur filtre ce qui le concerne sur la même sortie
         # (BACKLOG-11 A1) — pas de min_severity pour les endpoints (K8 CA2).
         raw = invoke_semgrep_raw(repo_root, config, files=changed)
+        _trace("semgrep.end", bytes=len(raw))
         min_index = SEVERITY_ORDER.index(config.min_severity)
         findings = [
             f
@@ -370,7 +388,9 @@ def index_repo(
             if SEVERITY_ORDER.index(f.severity) >= min_index
         ]
         endpoints = parse_semgrep_endpoints(raw, repo_root)
+        _trace("endpoint_inference.begin")
         endpoints.extend(infer_framework_endpoints(repo_root, changed))
+        _trace("endpoint_inference.end", findings=len(findings), endpoints=len(endpoints))
 
         _report_progress(
             progress,
@@ -379,6 +399,7 @@ def index_repo(
         )
         store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
+        _trace("store.endpoints_written", findings=len(findings), endpoints=len(endpoints))
         findings_added = len(findings)
         endpoints_added = len(endpoints)
 
@@ -396,7 +417,9 @@ def index_repo(
     # repository state, not a partially failed scan.
     if "properties" not in disabled:
         _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
+        _trace("store.modules.begin", count=len(discovered_modules))
         store.replace_modules(discovered_modules)
+        _trace("store.modules.end")
     else:
         _report_progress(progress, "→ Indexation : propriétés et inventaire des modules désactivés, snapshot conservé.")
 
@@ -437,11 +460,15 @@ def index_repo(
         store.set_meta("embedding_model", str(getattr(embedder, "model_name", config.embedding_model)))
         store.set_meta("embedding_dim", "")
         _report_progress(progress, "→ Indexation : embedding complet des findings...")
+        _trace("embedding.findings.full.begin")
         dim = _embed_findings(embedder, store, store.all_findings())
+        _trace("embedding.findings.full.end", dimension=dim)
         if dim is not None:
             store.set_meta("embedding_dim", str(dim))
         _report_progress(progress, "→ Indexation : embedding complet des endpoints...")
+        _trace("embedding.endpoints.full.begin")
         endpoint_dim = _embed_endpoints(embedder, store, store.all_endpoints())
+        _trace("embedding.endpoints.full.end", dimension=endpoint_dim)
         if endpoint_dim is not None:
             store.set_meta("endpoint_embedding_dim", str(endpoint_dim))
     else:
@@ -452,6 +479,7 @@ def index_repo(
         dim = _embed_findings(
             embedder, store, new_findings
         )
+        _trace("embedding.findings.delta.end", count=len(new_findings), dimension=dim)
         if dim is not None and store.get_meta("embedding_dim") != str(dim):
             store.set_meta("embedding_dim", str(dim))
 
@@ -467,11 +495,13 @@ def index_repo(
         endpoint_dim = _embed_endpoints(
             embedder, store, new_endpoints
         )
+        _trace("embedding.endpoints.delta.end", count=len(new_endpoints), dimension=endpoint_dim)
         if endpoint_dim is not None and store.get_meta("endpoint_embedding_dim") != str(
             endpoint_dim
         ):
             store.set_meta("endpoint_embedding_dim", str(endpoint_dim))
 
+    _trace("index_repo.end", scanned=len(changed), skipped=len(unchanged))
     return IndexReport(
         scanned=len(changed),
         skipped=len(unchanged),
