@@ -370,11 +370,15 @@ of direct relations.
 
 `--c4 DIR` writes a runnable LikeC4 project in `DIR`: `architecture.c4`, the
 LikeC4 configuration, `package.json`, `.gitignore` and a README. It declares
-custom `microservice`, `kafka_topic` and `mongodb_collection` elements and
-`http`, `publishes`, `consumes`, and `uses_data` relations. The model is an
-inferred static topology, never a runtime trace. No equivalent MCP tool —
-generated files are not agent-consumable results, unlike the JSON returned by
-`graph`.
+custom `microservice`, `kafka_topic`, `mongodb_collection` and `external_api`
+elements, plus `http`, `publishes`, `consumes`, and data-access relations. It also renders
+unmatched HTTP calls as external HTTP API elements, appends statically inferred
+Java payload types to Kafka relation labels, distinguishes indexed MongoDB reads
+from writes, and lists detected OpenAPI contracts in microservice descriptions.
+MongoDB collection nodes are scoped by microservice because a collection name
+alone does not establish a shared database. The model is an inferred static
+topology, never a runtime trace. No equivalent MCP tool — generated files are
+not agent-consumable results, unlike the JSON returned by `graph`.
 
 ### `cccr microservices [list|show|topics|apis|mongodb|neighbors|implementation|properties|openapi]`
 *Java/Spring microservices extension — beta.*

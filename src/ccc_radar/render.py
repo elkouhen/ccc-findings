@@ -657,17 +657,24 @@ def _likec4_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
 
 
+_MONGO_WRITE_OPERATIONS = frozenset({
+    "bulkOps", "findAndModify", "findAndReplace", "insert", "remove", "save",
+    "updateFirst", "updateMulti", "upsert",
+})
+
+
 def _likec4_complexity(
     service_ids: dict[str, str],
     topic_ids: dict[str, str],
     collection_ids: dict[str, str],
+    external_api_ids: dict[str, str],
     relations: set[tuple[str, str, str, str]],
     findings_by_service: dict[str, list[Finding]],
 ) -> dict[str, tuple[str, str]]:
     """Build a topology-only visual complexity signal while retaining finding details."""
     relation_counts = {
         node_id: 0
-        for node_id in (*service_ids.values(), *topic_ids.values(), *collection_ids.values())
+        for node_id in (*service_ids.values(), *topic_ids.values(), *collection_ids.values(), *external_api_ids.values())
     }
     for _, source, target, _ in relations:
         relation_counts[source] += 1
@@ -691,7 +698,7 @@ def _likec4_complexity(
             f"Complexity score {score}: {relation_counts[service_id]} relations; "
             f"{len(findings)} findings ({finding_summary})",
         )
-    for node_id in (*topic_ids.values(), *collection_ids.values()):
+    for node_id in (*topic_ids.values(), *collection_ids.values(), *external_api_ids.values()):
         score = relation_counts[node_id]
         color = "complexity_high" if score >= 7 else "complexity_medium" if score >= 4 else "complexity_low"
         details[node_id] = (color, f"Complexity score {score}: {score} relations")
@@ -703,20 +710,38 @@ def render_graph_likec4(
     edges: list[GraphEdge],
     collections_by_service: dict[str, list[str]] | None = None,
     findings_by_service: dict[str, list[Finding]] | None = None,
+    modules_by_service: dict[str, DiscoveredModule] | None = None,
 ) -> str:
     """Render the inferred runtime graph as a standalone LikeC4 model.
 
-    Services, Kafka topics and MongoDB collections are peers in one generated
+    Services, Kafka topics, MongoDB collections and external HTTP APIs are peers in one generated
     system boundary. The source inventory is static, so relations carry the
     protocol semantics but never claim to be runtime traces. Node complexity
     is derived only from graph degree; findings remain informational details.
     """
     services = sorted(endpoints_by_service)
     topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
-    collections = sorted({collection for values in (collections_by_service or {}).values() for collection in values})
+    collection_nodes = _mongodb_collection_nodes(collections_by_service)
+    collection_names = {identity: collection for _service, collection, identity in collection_nodes}
+    collection_services = {identity: service for service, _collection, identity in collection_nodes}
+    matched_internal_call_ids = {edge.from_endpoint.id for edge in edges if edge.kind == "rest"}
+    external_calls = sorted(
+        [
+            (service, endpoint)
+            for service, endpoints in endpoints_by_service.items()
+            for endpoint in endpoints
+            if endpoint.system == "rest"
+            and endpoint.role == "call"
+            and endpoint.id not in matched_internal_call_ids
+        ],
+        key=lambda item: (item[0], item[1].topic, item[1].path, item[1].start_line),
+    )
+    external_apis = sorted({endpoint.topic for _service, endpoint in external_calls})
+    module_details = modules_by_service or {}
     service_ids = _likec4_identifier_map("service", services)
     topic_ids = _likec4_identifier_map("topic", topics)
-    collection_ids = _likec4_identifier_map("collection", collections)
+    collection_ids = _likec4_identifier_map("collection", sorted(collection_names))
+    external_api_ids = _likec4_identifier_map("external_api", external_apis)
 
     relations: set[tuple[str, str, str, str]] = set()
     for edge in edges:
@@ -724,15 +749,34 @@ def render_graph_likec4(
             relations.add(("http", service_ids[edge.from_service], service_ids[edge.to_service], edge.from_endpoint.topic))
             continue
         topic_id = topic_ids[edge.from_endpoint.topic]
-        relations.add(("publishes", service_ids[edge.from_service], topic_id, "publishes"))
-        relations.add(("consumes", topic_id, service_ids[edge.to_service], "consumes"))
-    for service, values in sorted((collections_by_service or {}).items()):
+        produced_type = edge.from_endpoint.message_type
+        consumed_type = edge.to_endpoint.message_type
+        relations.add((
+            "publishes", service_ids[edge.from_service], topic_id,
+            f"publishes {produced_type}" if produced_type else "publishes",
+        ))
+        relations.add((
+            "consumes", topic_id, service_ids[edge.to_service],
+            f"consumes {consumed_type}" if consumed_type else "consumes",
+        ))
+    for service, endpoint in external_calls:
+        relations.add(("calls_external", service_ids[service], external_api_ids[endpoint.topic], endpoint.topic))
+    for service, collection, identity in collection_nodes:
         if service not in service_ids:
             continue
-        for collection in sorted(set(values)):
-            relations.add(("uses_data", service_ids[service], collection_ids[collection], "uses"))
+        module = module_details.get(service)
+        operations = {
+            "writes_data" if method.operation in _MONGO_WRITE_OPERATIONS else "reads_data"
+            for method in (module.mongo_methods if module else ())
+            if method.collection == collection
+        }
+        if not operations:
+            operations = {"uses_data"}
+        for operation in operations:
+            label = {"reads_data": "reads", "writes_data": "writes", "uses_data": "uses"}[operation]
+            relations.add((operation, service_ids[service], collection_ids[identity], label))
     complexities = _likec4_complexity(
-        service_ids, topic_ids, collection_ids, relations, findings_by_service or {}
+        service_ids, topic_ids, collection_ids, external_api_ids, relations, findings_by_service or {}
     )
 
     lines = [
@@ -756,6 +800,10 @@ def render_graph_likec4(
         "  element mongodb_collection {",
         "    notation 'MongoDB collection'",
         "    style { shape cylinder }",
+        "  }",
+        "  element external_api {",
+        "    notation 'External HTTP API'",
+        "    style { shape browser }",
         "  }",
         "  relationship http {",
         "    color outgoing",
@@ -781,6 +829,24 @@ def render_graph_likec4(
         "    head diamond",
         "    multiple true",
         "  }",
+        "  relationship reads_data {",
+        "    color data_access",
+        "    line dotted",
+        "    head vee",
+        "    multiple true",
+        "  }",
+        "  relationship writes_data {",
+        "    color outgoing",
+        "    line solid",
+        "    head vee",
+        "    multiple true",
+        "  }",
+        "  relationship calls_external {",
+        "    color outgoing",
+        "    line dashed",
+        "    head vee",
+        "    multiple true",
+        "  }",
         "}",
         "",
         "model {",
@@ -788,6 +854,9 @@ def render_graph_likec4(
     ]
     for service in services:
         color, description = complexities[service_ids[service]]
+        openapi_files = module_details.get(service).openapi_files if service in module_details else ()
+        if openapi_files:
+            description = f"{description}; OpenAPI contracts: {', '.join(openapi_files)}"
         lines.extend(
             [
                 f"    {service_ids[service]} = microservice '{_likec4_string(service)}' {{",
@@ -808,12 +877,25 @@ def render_graph_likec4(
                 "    }",
             ]
         )
-    for collection in collections:
-        color, description = complexities[collection_ids[collection]]
+    for identity in sorted(collection_names):
+        color, description = complexities[collection_ids[identity]]
+        collection = collection_names[identity]
+        service = collection_services[identity]
         lines.extend(
             [
-                f"    {collection_ids[collection]} = mongodb_collection '{_likec4_string(collection)}' {{",
+                f"    {collection_ids[identity]} = mongodb_collection '{_likec4_string(collection)} ({_likec4_string(service)})' {{",
                 "      technology 'MongoDB'",
+                f"      description '{_likec4_string(description)}'",
+                f"      style {{ color {color} }}",
+                "    }",
+            ]
+        )
+    for external_api in external_apis:
+        color, description = complexities[external_api_ids[external_api]]
+        lines.extend(
+            [
+                f"    {external_api_ids[external_api]} = external_api '{_likec4_string(external_api)}' {{",
+                "      technology 'HTTP'",
                 f"      description '{_likec4_string(description)}'",
                 f"      style {{ color {color} }}",
                 "    }",

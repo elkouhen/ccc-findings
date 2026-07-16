@@ -3,10 +3,12 @@ import math
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import ccc_radar.render as render_module
 from ccc_radar.graph import build_graph
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.modules import DiscoveredModule, MongoMethod
 from ccc_radar.render import (
     render_graph_d2,
     render_graph_drawio,
@@ -27,6 +29,7 @@ def make_endpoint(
     system: str = "rest",
     framework: str | None = None,
     snippet: str = "",
+    message_type: str | None = None,
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
@@ -40,6 +43,7 @@ def make_endpoint(
         start_line=start_line,
         end_line=end_line,
         snippet=snippet,
+        message_type=message_type,
     )
 
 
@@ -54,11 +58,17 @@ def _fixture() -> dict[str, list[MessageEndpoint]]:
                 3,
                 snippet="http://service-b",
             ),
-            make_endpoint("produce", "orders.created", "a/Producer.java", 5, 5, system="kafka"),
+            make_endpoint(
+                "produce", "orders.created", "a/Producer.java", 5, 5,
+                system="kafka", message_type="OrderCreated",
+            ),
         ],
         "service-b": [
             make_endpoint("serve", "GET /orders", "b/Controller.java", 10, 10),
-            make_endpoint("consume", "orders.created", "b/Listener.java", 12, 12, system="kafka"),
+            make_endpoint(
+                "consume", "orders.created", "b/Listener.java", 12, 12,
+                system="kafka", message_type="OrderCreated",
+            ),
         ],
     }
 
@@ -235,6 +245,9 @@ def test_graph_renderers_include_mongodb_collections_when_requested() -> None:
 
 def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> None:
     endpoints_by_service = _fixture()
+    endpoints_by_service["service-a"].append(
+        make_endpoint("call", "POST /external-orders", "a/ExternalClient.java", 8, 8)
+    )
     edges = build_graph(endpoints_by_service)
     findings = [
         Finding("finding-1", "rule-1", "ERROR", "Failure", "a/Client.java", 1, 1, "", None, [], [], "service-a"),
@@ -246,15 +259,33 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
         edges,
         {"service-a": ["orders"], "service-b": ["payments"]},
         {"service-a": findings},
+        {
+            "service-a": DiscoveredModule(
+                "service-a", Path("service-a"), "maven", None, "library", True, "",
+                mongo_methods=(
+                    MongoMethod("find", "mongoTemplate", "a/Repository.java", 12, "orders"),
+                    MongoMethod("save", "repository", "a/Repository.java", 15, "orders"),
+                ),
+                openapi_files=("src/main/resources/openapi.yaml",),
+            ),
+            "service-b": DiscoveredModule(
+                "service-b", Path("service-b"), "maven", None, "library", True, "",
+                mongo_methods=(MongoMethod("find", "mongoTemplate", "b/Repository.java", 12, "payments"),),
+            ),
+        },
     )
 
     assert "specification {" in document
     assert "element microservice" in document
     assert "element kafka_topic" in document
     assert "element mongodb_collection" in document
+    assert "element external_api" in document
     assert "relationship http" in document
     assert "relationship publishes" in document
     assert "relationship consumes" in document
+    assert "relationship calls_external" in document
+    assert "relationship reads_data" in document
+    assert "relationship writes_data" in document
     assert "shape component" in document
     assert "shape queue" in document
     assert "shape cylinder" in document
@@ -262,10 +293,13 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "color incoming" in document
     assert "style { color complexity_low }" in document
     assert "2 findings (ERROR=2)" in document
+    assert "OpenAPI contracts: src/main/resources/openapi.yaml" in document
     assert "service_service-a -[http]-> service_service-b 'GET /orders'" in document
-    assert "service_service-a -[publishes]-> topic_orders_created 'publishes'" in document
-    assert "topic_orders_created -[consumes]-> service_service-b 'consumes'" in document
-    assert "service_service-a -[uses_data]-> collection_orders 'uses'" in document
+    assert "service_service-a -[publishes]-> topic_orders_created 'publishes OrderCreated'" in document
+    assert "topic_orders_created -[consumes]-> service_service-b 'consumes OrderCreated'" in document
+    assert "service_service-a -[calls_external]-> external_api_POST_external-orders 'POST /external-orders'" in document
+    assert "service_service-a -[reads_data]-> collection_service-a_orders 'reads'" in document
+    assert "service_service-a -[writes_data]-> collection_service-a_orders 'writes'" in document
     assert "view dependencies" in document
 
 

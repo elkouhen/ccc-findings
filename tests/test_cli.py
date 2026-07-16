@@ -831,7 +831,7 @@ def test_graph_html_writes_interactive_sigma_document(
     assert (c4_project / "package.json").is_file()
     assert (c4_project / ".gitignore").is_file()
     assert (c4_project / "README.md").is_file()
-    assert "Couleurs de nœud" in (c4_project / "README.md").read_text(encoding="utf-8")
+    assert "Node colors" in (c4_project / "README.md").read_text(encoding="utf-8")
     c4_document = (c4_project / "architecture.c4").read_text(encoding="utf-8")
     assert "element microservice" in c4_document
     assert "element kafka_topic" in c4_document
