@@ -850,6 +850,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .toolbar select { width: 168px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
     .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
+    #path-via-nodes { display: flex; flex-wrap: wrap; gap: 4px; }
+    .toolbar button.path-stop { width: auto; padding: 0 7px; color: #315f9b; font-size: 12px; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     #details strong { display: block; color: #172033; font-size: 14px; }
     #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -866,6 +868,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <strong>CCC Radar</strong>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
     <select id="path-from" aria-label="Microservice source du chemin"><option value="">Service source</option></select>
+    <select id="path-via" aria-label="Noeud intermediaire du chemin"><option value="">Noeud intermediaire</option></select>
+    <span id="path-via-nodes" aria-label="Noeuds intermediaires selectionnes"></span>
     <select id="path-to" aria-label="Microservice cible du chemin"><option value="">Service cible</option></select>
     <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
     <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
@@ -1103,7 +1107,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const details = document.getElementById("details");
     const search = document.getElementById("search");
     const pathFrom = document.getElementById("path-from");
+    const pathVia = document.getElementById("path-via");
+    const pathViaNodes = document.getElementById("path-via-nodes");
     const pathTo = document.getElementById("path-to");
+    const viaNodes = [];
     const microservices = graphData.nodes
       .filter(node => node.kind === "microservice")
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -1115,6 +1122,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         select.append(option);
       }
     });
+    graphData.nodes
+      .filter(node => node.kind === "microservice" || node.kind === "kafka_topic")
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .forEach(node => {
+        const option = document.createElement("option");
+        option.value = node.id;
+        option.textContent = `${node.kind === "microservice" ? "Service" : "Topic"}: ${node.name}`;
+        pathVia.append(option);
+      });
 
     function appendList(title, values) {
       if (!values.length) return;
@@ -1163,10 +1179,37 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       }
       return { nodes, edges };
     }
+    function shortestPathThrough(stops) {
+      const path = { nodes: [], edges: [] };
+      for (let index = 0; index < stops.length - 1; index += 1) {
+        const segment = shortestPath(stops[index], stops[index + 1]);
+        if (segment === null) return null;
+        path.nodes.push(...(index === 0 ? segment.nodes : segment.nodes.slice(1)));
+        path.edges.push(...segment.edges);
+      }
+      return path;
+    }
+    function renderViaNodes() {
+      pathViaNodes.replaceChildren();
+      viaNodes.forEach((id, index) => {
+        const stop = document.createElement("button");
+        stop.type = "button";
+        stop.className = "path-stop";
+        stop.title = "Retirer ce noeud intermediaire";
+        stop.setAttribute("aria-label", `Retirer ${nodeDataById.get(id).name} des noeuds intermediaires`);
+        stop.textContent = `${nodeDataById.get(id).name} ×`;
+        stop.addEventListener("click", () => {
+          viaNodes.splice(index, 1);
+          renderViaNodes();
+          showShortestPath();
+        });
+        pathViaNodes.append(stop);
+      });
+    }
     function renderPathDetails(path) {
       details.replaceChildren();
       const title = document.createElement("strong");
-      title.textContent = "Chemin le plus court";
+      title.textContent = viaNodes.length ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
       details.append(title, document.createTextNode(
         path.nodes.map(id => nodeDataById.get(id).name).join(" -> ")
       ));
@@ -1176,7 +1219,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const sourceId = pathFrom.value;
       const targetId = pathTo.value;
       if (!sourceId || !targetId) return;
-      const path = shortestPath(sourceId, targetId);
+      const stops = [sourceId, ...viaNodes, targetId];
+      if (new Set(stops).size !== stops.length) {
+        reset();
+        details.textContent = "Les services source/cible et les noeuds intermediaires doivent etre distincts.";
+        return;
+      }
+      const path = shortestPathThrough(stops);
       if (path === null) {
         reset();
         details.textContent = "Aucun chemin oriente entre les deux microservices.";
@@ -1232,6 +1281,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       search.value = "";
       pathFrom.value = "";
       pathTo.value = "";
+      viaNodes.splice(0, viaNodes.length);
+      renderViaNodes();
     }
     renderer.on("clickNode", ({ node }) => selectNode(node));
     renderer.on("clickStage", reset);
@@ -1242,6 +1293,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("show-path").addEventListener("click", showShortestPath);
     pathFrom.addEventListener("change", showShortestPath);
     pathTo.addEventListener("change", showShortestPath);
+    pathVia.addEventListener("change", event => {
+      const id = event.target.value;
+      event.target.value = "";
+      if (!id || viaNodes.includes(id) || id === pathFrom.value || id === pathTo.value) return;
+      viaNodes.push(id);
+      renderViaNodes();
+      showShortestPath();
+    });
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
       const node = graphData.nodes.find(item => item.name.toLocaleLowerCase().includes(query));
