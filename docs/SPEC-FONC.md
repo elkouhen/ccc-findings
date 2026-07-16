@@ -327,6 +327,9 @@ range).
 with a `stocke` edge from the microservice. The service name remains part of
 the node identity: two collections with the same name are never displayed as a
 shared database without explicit evidence.
+Collections are detected from `@Document`, repository entity mappings, and a
+literal trailing collection argument on indexed `MongoTemplate`/
+`MongoOperations` calls. Dynamic expressions are not guessed.
 
 For the inter-service topology, two sources are possible, tried in this order:
 1. **Without `--workspace`**: if the index covers a multi-module Maven or

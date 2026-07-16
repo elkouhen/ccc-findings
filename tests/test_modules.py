@@ -191,6 +191,7 @@ class OrderStore {
   void save(Order order) {
     mongoTemplate.save(order);
     mongoTemplate.getCollection(\"audit\");
+    mongoTemplate.find(null, Order.class, \"orders_archive\");
     orderRepository.findById(\"id\");
   }
 }
@@ -205,10 +206,11 @@ interface OrderRepository extends MongoRepository<Order, String> {}
         store.replace_modules(discover_modules(tmp_path))
         indexed = store.all_modules()[0]
 
-    assert indexed.mongo_collections == ("orders",)
+    assert indexed.mongo_collections == ("audit", "orders", "orders_archive")
     assert [(item.operation, item.receiver, item.collection) for item in indexed.mongo_methods] == [
         ("save", "mongoTemplate", None),
         ("getCollection", "mongoTemplate", "audit"),
+        ("find", "mongoTemplate", "orders_archive"),
         ("findById", "orderRepository", "orders"),
     ]
     assert indexed.openapi_files == ("src/main/resources/openapi.yaml",)

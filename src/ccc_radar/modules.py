@@ -124,6 +124,7 @@ _OPENAPI_FILENAMES = (
 _MAX_NESTED_MODULE_DEPTH = 5
 _KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*([\"'])(.*?)\1")
 _FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
+_JAVA_STRING_LITERAL_RE = re.compile(r'^\s*"((?:\\.|[^"\\])*)"\s*$')
 _JAVA_LANGUAGE: Language | None = None
 _JAVA_PARSER: Parser | None = None
 
@@ -225,6 +226,53 @@ def _kafka_topic_literal(match: re.Match[str] | None) -> str | None:
 
 def _module_relative(module_dir: Path, path: Path) -> str:
     return path.relative_to(module_dir).as_posix()
+
+
+def _top_level_arguments(invocation: str) -> list[str]:
+    """Split the arguments of an already parsed Java method invocation."""
+    opening = invocation.find("(")
+    if opening == -1:
+        return []
+    arguments: list[str] = []
+    start = opening + 1
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(invocation[start:], start=start):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {"\"", "'"}:
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                value = invocation[start:index].strip()
+                if value:
+                    arguments.append(value)
+                break
+        elif character == "," and depth == 1:
+            arguments.append(invocation[start:index].strip())
+            start = index + 1
+    return arguments
+
+
+def _mongo_collection_literal(invocation: str) -> str | None:
+    """Return a literal trailing Mongo collection argument, when present."""
+    arguments = _top_level_arguments(invocation)
+    if not arguments:
+        return None
+    match = _JAVA_STRING_LITERAL_RE.match(arguments[-1])
+    if match is None:
+        return None
+    return match.group(1)
 
 
 def _module_files(module_dir: Path, module_roots: set[Path], pattern: str):
@@ -459,13 +507,19 @@ def _extract_java_architecture(
             if (is_template and operation in _MONGO_TEMPLATE_OPERATIONS) or (
                 is_repository and _REPOSITORY_OPERATIONS.match(operation)
             ):
-                literal = re.search(r"getCollection\s*\(\s*[\"']([^\"']+)[\"']", text)
+                collection = (
+                    repository_receivers.get(receiver)
+                    if is_repository
+                    else _mongo_collection_literal(text)
+                )
+                if collection:
+                    collections.add(collection)
                 methods.add(MongoMethod(
                     operation=operation,
                     receiver=receiver,
                     path=rel,
                     line=node.start_point.row + 1,
-                    collection=literal.group(1) if literal else repository_receivers.get(receiver),
+                    collection=collection,
                     evidence=_source_evidence(source, node, rel),
                 ))
         _trace("module.architecture.walk_mongo.end", module=module_dir, path=rel)
