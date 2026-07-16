@@ -753,8 +753,10 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     monkeypatch.chdir(tmp_path)
     orders = tmp_path / "orders"
     payments = tmp_path / "payments"
+    shipping = tmp_path / "shipping"
     orders.mkdir()
     payments.mkdir()
+    shipping.mkdir()
     modules = [
         DiscoveredModule(
             name="orders",
@@ -772,6 +774,15 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
             path=payments,
             build_system="gradle",
             version=None,
+            kind="library",
+            starts_application=True,
+            configuration_example="",
+        ),
+        DiscoveredModule(
+            name="shipping",
+            path=shipping,
+            build_system="maven",
+            version="1.0.0",
             kind="library",
             starts_application=True,
             configuration_example="",
@@ -796,12 +807,26 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
 
     publish = endpoint("produce", "kafka", "orders.created", "orders", "OrderPublisher.java", "send")
     consume = endpoint("consume", "kafka", "orders.created", "payments", "PaymentConsumer.java", "listen")
+    payment_publish = endpoint(
+        "produce", "kafka", "payments.accepted", "payments", "PaymentPublisher.java", "send"
+    )
+    shipping_consume = endpoint(
+        "consume", "kafka", "payments.accepted", "shipping", "ShippingConsumer.java", "listen"
+    )
     call = endpoint("call", "rest", "POST /payments", "orders", "PaymentClient.java", "http://payments/payments")
     serve = endpoint("serve", "rest", "POST /payments", "payments", "PaymentController.java")
     with Store(tmp_path) as store:
         store.replace_modules(modules)
         store.replace_endpoints_for_files(
-            [publish.path, consume.path, call.path, serve.path], [publish, consume, call, serve]
+            [
+                publish.path,
+                consume.path,
+                payment_publish.path,
+                shipping_consume.path,
+                call.path,
+                serve.path,
+            ],
+            [publish, consume, payment_publish, shipping_consume, call, serve],
         )
 
     summary = runner.invoke(app, ["microservices", "show", "orders", "--root", str(tmp_path), "--json"])
@@ -847,6 +872,71 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     )
     assert consumers.exit_code == 0
     assert json.loads(consumers.output)["microservices"] == ["payments"]
+
+    trace = runner.invoke(
+        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+    )
+    assert trace.exit_code == 0
+    trace_payload = json.loads(trace.output)
+    assert trace_payload["kind"] == "potential_topic_flows"
+    assert trace_payload["flows"] == [
+        {
+            "nodes": [
+                {"kind": "topic", "name": "orders.created"},
+                {"kind": "microservice", "name": "payments"},
+                {"kind": "topic", "name": "payments.accepted"},
+                {"kind": "microservice", "name": "shipping"},
+            ]
+        }
+    ]
+    assert "hypothèses" in trace_payload["caveat"]
+
+    shallow_trace = runner.invoke(
+        app,
+        [
+            "topics",
+            "trace",
+            "orders.created",
+            "--max-depth",
+            "1",
+            "--root",
+            str(tmp_path),
+            "--json",
+        ],
+    )
+    assert shallow_trace.exit_code == 0
+    assert json.loads(shallow_trace.output)["flows"] == [
+        {
+            "nodes": [
+                {"kind": "topic", "name": "orders.created"},
+                {"kind": "microservice", "name": "payments"},
+            ]
+        }
+    ]
+
+    cycle_publish = endpoint(
+        "produce", "kafka", "orders.created", "shipping", "ShippingPublisher.java", "send"
+    )
+    with Store(tmp_path) as store:
+        store.replace_endpoints_for_files(
+            [cycle_publish.path], [cycle_publish]
+        )
+    cyclic_trace = runner.invoke(
+        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+    )
+    assert cyclic_trace.exit_code == 0
+    assert json.loads(cyclic_trace.output)["flows"] == [
+        {
+            "nodes": [
+                {"kind": "topic", "name": "orders.created"},
+                {"kind": "microservice", "name": "payments"},
+                {"kind": "topic", "name": "payments.accepted"},
+                {"kind": "microservice", "name": "shipping"},
+                {"kind": "topic", "name": "orders.created"},
+            ],
+            "cycle_detected": True,
+        }
+    ]
 
     topic_search = runner.invoke(
         app, ["topics", "search", "created", "--root", str(tmp_path), "--json"]

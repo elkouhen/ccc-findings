@@ -187,6 +187,7 @@ cccr topics consumers orders.created
 cccr topics producers orders.created
 cccr topics neighbors orders.created
 cccr topics search created
+cccr topics trace orders.created  # potential Kafka flows, not runtime traces
 cccr resources                  # discovered HTTP resources
 cccr resources consumers "POST /payments"
 cccr resources search payments

@@ -18,6 +18,7 @@ from ccc_radar.architecture import (
     neighbors as architecture_neighbors,
     render_text as render_architecture_text,
     show_object as show_architecture_object,
+    trace_topic_flows,
 )
 from ccc_radar.code_search import search_code_with_findings
 from ccc_radar.audit import assess_architecture, render_audit_json, render_audit_text
@@ -143,6 +144,8 @@ def topics_cmd(
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
     ),
     json_output: bool = typer.Option(False, "--json"),
+    max_depth: int = typer.Option(6, "--max-depth", min=1, max=12),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
 ) -> None:
     """Explore les topics Kafka et leurs producteurs/consommateurs."""
     arguments = arguments or []
@@ -155,7 +158,7 @@ def topics_cmd(
         _emit_architecture(list_architecture_objects(catalog, "topic"), json_output)
         return
     command = arguments[0]
-    if command in {"show", "neighbors", "consumers", "producers", "search"}:
+    if command in {"show", "neighbors", "consumers", "producers", "search", "trace"}:
         if len(arguments) != 2:
             typer.echo(f"`cccr topics {command}` requiert un topic.", err=True)
             raise typer.Exit(code=2)
@@ -166,6 +169,8 @@ def topics_cmd(
             result = architecture_neighbors(catalog, "topic", topic)
         elif command == "search":
             result = _search_architecture_object(workspace_root, catalog, "topic", "kafka", topic)
+        elif command == "trace":
+            result = trace_topic_flows(catalog, topic, max_depth=max_depth, limit=limit)
         else:
             result = analyze_architecture(catalog, command, topic)
         if result is None:
@@ -173,7 +178,7 @@ def topics_cmd(
             raise typer.Exit(code=2)
         _emit_architecture(result, json_output)
         return
-    typer.echo("Usage : `cccr topics [list|show|neighbors|consumers|producers|search] [topic]`.", err=True)
+    typer.echo("Usage : `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`.", err=True)
     raise typer.Exit(code=2)
 
 

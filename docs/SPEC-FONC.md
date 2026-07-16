@@ -478,7 +478,7 @@ business objects and never includes source paths or snippets by default:
 - `cccr microservices implementation endpoint <id>` is the explicit final
   level that returns location and indexed source evidence.
 
-### `cccr topics [list|show|neighbors|consumers|producers|search] [topic]`
+### `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`
 
 Explores Kafka topic objects from the same indexed graph. With no argument or
 with `list`, it returns the discovered topics. The remaining subcommands take
@@ -490,6 +490,11 @@ one exact topic name:
 - `producers` answers which microservices publish it.
 - `search` resolves an exact name or a unique case-insensitive substring; on a
   locally indexed project only, it falls back to endpoint vector similarity.
+- `trace` explores potential Kafka flows starting from a topic, following
+  `topic -> consumer microservice -> published topic`. It stops on a leaf,
+  repeated topic or `--max-depth` (default: 6), and returns at most `--limit`
+  paths (default: 50). Dynamic topics are excluded. A consumer-to-producer
+  transition is an exploration hypothesis, not proof of a runtime causal link.
 
 The command returns business objects only, without source paths or snippets.
 

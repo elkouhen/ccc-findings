@@ -274,6 +274,77 @@ def analyze(catalog: ArchitectureCatalog, query: str, target: str | None) -> dic
     return None
 
 
+def trace_topic_flows(
+    catalog: ArchitectureCatalog, topic: str, *, max_depth: int = 6, limit: int = 50
+) -> dict[str, object] | None:
+    """Explore des enchaînements Kafka plausibles au niveau microservice.
+
+    Un inventaire d'endpoints ne permet pas d'établir la causalité entre une
+    consommation et une production au sein d'un même service. Les chemins
+    renvoyés sont donc des pistes de compréhension, jamais une trace runtime.
+    """
+    kafka_endpoints = [
+        endpoint
+        for endpoint in catalog.endpoints
+        if endpoint.system == "kafka" and not endpoint.topic_dynamic and endpoint.module
+    ]
+    known_topics = {endpoint.topic for endpoint in kafka_endpoints}
+    if topic not in known_topics:
+        return None
+    consumers_by_topic: dict[str, set[str]] = {}
+    published_by_module: dict[str, set[str]] = {}
+    for endpoint in kafka_endpoints:
+        if endpoint.role == "consume":
+            consumers_by_topic.setdefault(endpoint.topic, set()).add(endpoint.module)
+        elif endpoint.role == "produce":
+            published_by_module.setdefault(endpoint.module, set()).add(endpoint.topic)
+
+    flows: list[dict[str, object]] = []
+    truncated = False
+
+    def add_flow(nodes: list[dict[str, str]], cycle_detected: bool = False) -> bool:
+        nonlocal truncated
+        if len(flows) >= limit:
+            truncated = True
+            return False
+        flow: dict[str, object] = {"nodes": nodes}
+        if cycle_detected:
+            flow["cycle_detected"] = True
+        flows.append(flow)
+        return True
+
+    def visit(current_topic: str, nodes: list[dict[str, str]], seen_topics: set[str], depth: int) -> None:
+        nonlocal truncated
+        for consumer in sorted(consumers_by_topic.get(current_topic, ())):
+            if truncated:
+                return
+            service_node = {"kind": "microservice", "name": consumer}
+            branch = [*nodes, service_node]
+            next_topics = sorted(published_by_module.get(consumer, ()))
+            if depth >= max_depth or not next_topics:
+                add_flow(branch)
+                continue
+            for next_topic in next_topics:
+                topic_node = {"kind": "topic", "name": next_topic}
+                if next_topic in seen_topics:
+                    add_flow([*branch, topic_node], cycle_detected=True)
+                else:
+                    visit(next_topic, [*branch, topic_node], seen_topics | {next_topic}, depth + 1)
+
+    visit(topic, [{"kind": "topic", "name": topic}], {topic}, 1)
+    return {
+        "kind": "potential_topic_flows",
+        "topic": topic,
+        "max_depth": max_depth,
+        "flows": flows,
+        "truncated": truncated,
+        "caveat": (
+            "Les transitions d'un microservice consommateur vers ses topics publiés "
+            "sont des hypothèses d'exploration, pas des traces d'exécution."
+        ),
+    }
+
+
 def endpoint_implementation(catalog: ArchitectureCatalog, endpoint_id: str) -> dict[str, object] | None:
     endpoint = next((item for item in catalog.endpoints if item.id == endpoint_id), None)
     if endpoint is None:
@@ -307,6 +378,15 @@ def render_text(result: object) -> str:
 
 def _render_item(item: dict[str, object]) -> str:
     kind = item.get("kind") or item.get("query", "result")
+    if kind == "potential_topic_flows":
+        lines = [f"[flux potentiels] {item['topic']}", str(item["caveat"])]
+        for flow in item["flows"]:
+            path = " -> ".join(node["name"] for node in flow["nodes"])
+            cycle = " (cycle)" if flow.get("cycle_detected") else ""
+            lines.append(f"  {path}{cycle}")
+        if item["truncated"]:
+            lines.append("  Résultats tronqués par la limite demandée.")
+        return "\n".join(lines)
     name = item.get("name") or item.get("topic") or item.get("module") or ""
     details = []
     for key, value in item.items():
