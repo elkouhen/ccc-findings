@@ -184,6 +184,28 @@ def test_index_accepts_topic_manifest_option(
     assert captured["extra_files"] == ["docs/kafka-flow-graph.json"]
 
 
+def test_index_passes_topic_strategy_to_manual_indexer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules.yml']\n")
+    captured: dict[str, object] = {}
+
+    def fake_index_repo(*args: object, **kwargs: object) -> IndexReport:
+        captured["topic_strategy"] = kwargs["topic_strategy"]
+        return IndexReport(1, 0, 0, 0, 0, 0, 0)
+
+    monkeypatch.setattr("ccc_radar.cli.resolve_embedding_model", lambda model: (model, None))
+    monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
+    monkeypatch.setattr("ccc_radar.cli.index_repo", fake_index_repo)
+
+    result = runner.invoke(app, ["index", "--topic-strategy", "strategy1"])
+
+    assert result.exit_code == 0
+    assert captured["topic_strategy"] == "strategy1"
+
+
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -768,7 +790,7 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "order-service" in document
     assert "orders.created" in document
     assert "mongodb_collection:order-service:orders" in document
-    assert '"complexity": {"score": 5' in document
+    assert '"complexity": {"score": 2' in document
     assert "Complexite elevee" in document
 
     c4_project = tmp_path / "architecture-likec4"
@@ -944,7 +966,15 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
         ),
     ]
 
-    def endpoint(role: str, system: str, topic: str, module: str, path: str, snippet: str = "") -> MessageEndpoint:
+    def endpoint(
+        role: str,
+        system: str,
+        topic: str,
+        module: str,
+        path: str,
+        snippet: str = "",
+        message_type: str | None = None,
+    ) -> MessageEndpoint:
         return MessageEndpoint(
             id=compute_endpoint_id(role, topic, path),
             role=role,
@@ -958,15 +988,20 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
             end_line=10,
             snippet=snippet,
             module=module,
+            message_type=message_type,
         )
 
-    publish = endpoint("produce", "kafka", "orders.created", "orders", "OrderPublisher.java", "send")
-    consume = endpoint("consume", "kafka", "orders.created", "payments", "PaymentConsumer.java", "listen")
+    publish = endpoint(
+        "produce", "kafka", "orders.created", "orders", "OrderPublisher.java", "send", "OrderCreated"
+    )
+    consume = endpoint(
+        "consume", "kafka", "orders.created", "payments", "PaymentConsumer.java", "listen", "OrderCreated"
+    )
     payment_publish = endpoint(
-        "produce", "kafka", "payments.accepted", "payments", "PaymentPublisher.java", "send"
+        "produce", "kafka", "payments.accepted", "payments", "PaymentPublisher.java", "send", "PaymentAccepted"
     )
     shipping_consume = endpoint(
-        "consume", "kafka", "payments.accepted", "shipping", "ShippingConsumer.java", "listen"
+        "consume", "kafka", "payments.accepted", "shipping", "ShippingConsumer.java", "listen", "PaymentAccepted"
     )
     call = endpoint("call", "rest", "POST /payments", "orders", "PaymentClient.java", "http://payments/payments")
     serve = endpoint("serve", "rest", "POST /payments", "payments", "PaymentController.java")
@@ -990,6 +1025,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert summary_payload["http_apis_exposed"] == []
     assert summary_payload["http_apis_consumed"] == ["POST /payments"]
     assert summary_payload["kafka_topics_published"] == ["orders.created"]
+    assert summary_payload["kafka_message_types_published"] == {"orders.created": ["OrderCreated"]}
     assert summary_payload["databases"]["mongodb_collections"] == ["orders"]
 
     short_summary = runner.invoke(app, ["microservices", "show", "orders", "--json"])
@@ -1002,8 +1038,19 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     )
     assert service_topics.exit_code == 0
     assert json.loads(service_topics.output) == {
-        "microservice": "orders", "published": ["orders.created"], "consumed": []
+        "microservice": "orders",
+        "published": ["orders.created"],
+        "consumed": [],
+        "published_message_types": {"orders.created": ["OrderCreated"]},
+        "consumed_message_types": {},
     }
+
+    topic_summary = runner.invoke(
+        app, ["topics", "show", "orders.created", "--root", str(tmp_path), "--json"]
+    )
+    assert topic_summary.exit_code == 0
+    assert json.loads(topic_summary.output)["message_types_published"] == ["OrderCreated"]
+    assert json.loads(topic_summary.output)["message_types_consumed"] == ["OrderCreated"]
 
     service_resources = runner.invoke(
         app, ["microservices", "apis", "orders", "--root", str(tmp_path), "--json"]
@@ -1314,12 +1361,12 @@ public class BillingServiceMain {
         MessageEndpoint(
             id="publish", role="produce", system="kafka", topic="invoices.created", topic_dynamic=False,
             source="code", framework="spring", path="InvoicePublisher.java", start_line=1,
-            end_line=1, snippet="", module="billing-service",
+            end_line=1, snippet="", module="billing-service", message_type="InvoiceCreated",
         ),
         MessageEndpoint(
             id="consume", role="consume", system="kafka", topic="payments.received", topic_dynamic=False,
             source="code", framework="spring", path="PaymentConsumer.java", start_line=1,
-            end_line=1, snippet="", module="billing-service",
+            end_line=1, snippet="", module="billing-service", message_type="PaymentReceived",
         ),
     ]
     with Store(tmp_path) as store:
@@ -1343,6 +1390,8 @@ public class BillingServiceMain {
             "http_apis_consumed": [],
             "kafka_topics_published": ["invoices.created"],
             "kafka_topics_consumed": ["payments.received"],
+            "kafka_message_types_published": {"invoices.created": ["InvoiceCreated"]},
+            "kafka_message_types_consumed": {"payments.received": ["PaymentReceived"]},
             "mongo_collections": ["invoices"],
         }
     ]

@@ -93,18 +93,161 @@ _JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
 
 
 @lru_cache(maxsize=2048)
+def _java_source(repo_root_str: str, rel_path: str) -> str:
+    if not rel_path.endswith(".java"):
+        return ""
+    try:
+        return (Path(repo_root_str) / rel_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+@lru_cache(maxsize=2048)
 def _java_qualified_name(repo_root_str: str, rel_path: str) -> str | None:
     if not rel_path.endswith(".java"):
         return None
     class_name = Path(rel_path).stem
-    try:
-        text = (Path(repo_root_str) / rel_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _java_source(repo_root_str, rel_path)
+    if not text:
         return class_name
     match = _JAVA_PACKAGE_RE.search(text)
     if match is None:
         return class_name
     return f"{match.group(1)}.{class_name}"
+
+
+def _split_java_type_arguments(value: str) -> list[str]:
+    arguments: list[str] = []
+    depth = 0
+    start = 0
+    for index, character in enumerate(value):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth -= 1
+        elif character == "," and depth == 0:
+            arguments.append(value[start:index].strip())
+            start = index + 1
+    arguments.append(value[start:].strip())
+    return [argument for argument in arguments if argument]
+
+
+def _generic_arguments_after(source: str, open_angle: int) -> tuple[list[str], int] | None:
+    depth = 0
+    for index in range(open_angle, len(source)):
+        character = source[index]
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth -= 1
+            if depth == 0:
+                return _split_java_type_arguments(source[open_angle + 1:index]), index
+    return None
+
+
+def _generic_value_type(
+    source: str, container: str, variable: str | None = None, before: int | None = None
+) -> str | None:
+    candidates: list[tuple[int, str]] = []
+    pattern = re.compile(rf"\b{re.escape(container)}\s*<")
+    for match in pattern.finditer(source):
+        parsed = _generic_arguments_after(source, match.end() - 1)
+        if parsed is None:
+            continue
+        arguments, end = parsed
+        if not arguments:
+            continue
+        if variable is not None:
+            declaration = re.match(rf"\s+{re.escape(variable)}\b", source[end + 1:])
+            if declaration is None:
+                continue
+        candidates.append((match.start(), arguments[-1]))
+    if not candidates:
+        return None
+    if before is None:
+        return candidates[-1][1]
+    preceding = [candidate for candidate in candidates if candidate[0] <= before]
+    return (preceding or candidates)[-1][1]
+
+
+def _message_payload_type(declared_type: str | None) -> str | None:
+    if declared_type is None:
+        return None
+    normalized = re.sub(r"@\w+(?:\([^)]*\))?\s*", "", declared_type)
+    normalized = re.sub(r"\b(?:final|volatile)\b\s*", "", normalized).strip()
+    if not normalized or normalized in {"var", "?"}:
+        return None
+    for container in ("ConsumerRecord", "Message", "KafkaTemplate", "KafkaConsumer", "ProducerRecord", "KStream", "KTable"):
+        match = re.fullmatch(rf"(?:[\w.]+\.)?{container}\s*<(.*)>", normalized)
+        if match is not None:
+            arguments = _split_java_type_arguments(match.group(1))
+            return _message_payload_type(arguments[-1] if arguments else None)
+    return normalized.replace("...", "[]")
+
+
+def _first_listener_payload_type(source: str, start_line: int) -> str | None:
+    lines = source.splitlines()
+    context = "\n".join(lines[max(0, start_line - 1): min(len(lines), start_line + 16)])
+    for match in re.finditer(r"\(([^()]*)\)\s*(?:throws[^\{]+)?\{", context, re.DOTALL):
+        for parameter in _split_java_type_arguments(match.group(1)):
+            if "@Header" in parameter or "@Headers" in parameter:
+                continue
+            cleaned = re.sub(r"@\w+(?:\([^)]*\))?\s*", "", parameter).strip()
+            parts = cleaned.rsplit(None, 1)
+            if len(parts) != 2:
+                continue
+            payload_type = _message_payload_type(parts[0])
+            if payload_type and payload_type not in {"Acknowledgment", "Consumer", "ConsumerRecordMetadata"}:
+                return payload_type
+    return None
+
+
+def _receiver_name(snippet: str, method: str) -> str | None:
+    match = re.search(rf"\b([A-Za-z_]\w*)\s*\.{method}\s*\(", snippet)
+    return match.group(1) if match else None
+
+
+def _infer_kafka_message_type(
+    repo_root: Path,
+    rel_path: str,
+    start_line: int,
+    role: str,
+    framework: str | None,
+    snippet: str,
+) -> str | None:
+    """Infer a Kafka payload type only from an explicit Java signature.
+
+    The result is the source-level Java type (for example `OrderCreated`), not
+    a serializer guess. Returning `None` is preferable to inventing a type.
+    """
+    source = _java_source(str(repo_root), rel_path)
+    if not source:
+        return None
+    line_offset = sum(len(line) + 1 for line in source.splitlines()[: max(start_line - 1, 0)])
+
+    if role == "consume" and (framework == "spring-kafka" or "@KafkaListener" in snippet):
+        payload_type = _first_listener_payload_type(source, start_line)
+        if payload_type:
+            return payload_type
+    if framework == "kafka-streams":
+        payload_type = _generic_value_type(source, "KStream", before=line_offset)
+        return _message_payload_type(payload_type)
+    if role == "consume" and framework == "kafka-clients":
+        receiver = _receiver_name(snippet, "subscribe")
+        payload_type = _generic_value_type(source, "KafkaConsumer", receiver, line_offset)
+        return _message_payload_type(payload_type)
+    if role == "produce":
+        record_match = re.search(r"\b(?:new\s+)?ProducerRecord\s*<", snippet)
+        if record_match is not None:
+            parsed = _generic_arguments_after(snippet, record_match.end() - 1)
+            if parsed is not None:
+                arguments, _ = parsed
+                return _message_payload_type(arguments[-1] if arguments else None)
+        receiver = _receiver_name(snippet, "send") or _receiver_name(snippet, "sendDefault")
+        payload_type = _generic_value_type(source, "KafkaTemplate", receiver, line_offset)
+        if payload_type:
+            return _message_payload_type(payload_type)
+    return None
 
 
 def _module_for_path(repo_root: Path, rel_path: str) -> str | None:
@@ -644,6 +787,11 @@ def _build_endpoint(
         snippet=snippet,
         module=_module_for_path(repo_root, rel_path),
         qualified_name=_java_qualified_name(str(repo_root), rel_path),
+        message_type=(
+            _infer_kafka_message_type(repo_root, rel_path, start_line, role, framework, snippet)
+            if system == "kafka"
+            else None
+        ),
     )
 
 
@@ -1406,6 +1554,109 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
     return list(inferred.values())
 
 
+_STRATEGY1_PRODUCER_RE = re.compile(r"\bgetTopics\s*\(\s*\)\s*\.\s*get([A-Z]\w*)\s*\(\s*\)")
+_STRATEGY1_KAFKA_KEY_RE = re.compile(
+    r"\$\{\s*kafka\.topics\.([A-Za-z_]\w*)\.[^}:]+(?:\s*:[^}]*)?\s*\}"
+)
+
+
+def _strategy1_topic_name(value: str) -> str:
+    """Normalize a Java accessor or Spring property segment to a Kafka topic."""
+    separated = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", value)
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", separated)
+    return separated.replace("-", "_").upper()
+
+
+def _kafka_listener_annotation_blocks(source: str) -> list[tuple[int, str]]:
+    """Return complete `@KafkaListener(...)` blocks without parsing Java AST."""
+    blocks: list[tuple[int, str]] = []
+    for match in re.finditer(r"@KafkaListener\s*\(", source):
+        depth = 0
+        for index in range(match.end() - 1, len(source)):
+            character = source[index]
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    blocks.append((match.start(), source[match.start():index + 1]))
+                    break
+    return blocks
+
+
+def infer_kafka_topic_strategy1_endpoints(
+    repo_root: Path, files: list[str] | None = None
+) -> list[MessageEndpoint]:
+    """Infer logical Kafka topics from project conventions selected by strategy1.
+
+    Producers use `getTopics().getXxx()` and listeners use a Spring key shaped
+    as `kafka.topics.xxx.<property>`. Both conventions are normalized to the
+    physical Kafka name in `SCREAMING_SNAKE_CASE`.
+    """
+    if files is None:
+        candidate_files = [
+            path.relative_to(repo_root).as_posix()
+            for path in repo_root.rglob("*.java")
+            if path.is_file()
+        ]
+    else:
+        candidate_files = sorted(path for path in files if path.endswith(".java"))
+
+    endpoints: dict[str, MessageEndpoint] = {}
+    for rel_path in candidate_files:
+        source = _java_source(str(repo_root), rel_path)
+        if not source:
+            continue
+        lines = source.splitlines()
+        for match in _STRATEGY1_PRODUCER_RE.finditer(source):
+            line_no = source.count("\n", 0, match.start()) + 1
+            endpoint = _build_endpoint(
+                repo_root,
+                rel_path,
+                line_no,
+                line_no,
+                "produce",
+                "kafka",
+                _strategy1_topic_name(match.group(1)),
+                "kafka-topic-strategy1",
+                lines[line_no - 1].strip(),
+            )
+            endpoints[endpoint.id] = endpoint
+        for offset, annotation in _kafka_listener_annotation_blocks(source):
+            line_no = source.count("\n", 0, offset) + 1
+            for key_match in _STRATEGY1_KAFKA_KEY_RE.finditer(annotation):
+                endpoint = _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    line_no,
+                    line_no + annotation.count("\n"),
+                    "consume",
+                    "kafka",
+                    _strategy1_topic_name(key_match.group(1)),
+                    "kafka-topic-strategy1",
+                    annotation,
+                )
+                endpoints[endpoint.id] = endpoint
+    return list(endpoints.values())
+
+
+def apply_kafka_topic_strategy1(
+    endpoints: list[MessageEndpoint], strategy_endpoints: list[MessageEndpoint]
+) -> list[MessageEndpoint]:
+    """Replace standard Kafka extraction at sites covered by strategy1."""
+    covered_sites = {
+        (endpoint.role, endpoint.path, endpoint.start_line)
+        for endpoint in strategy_endpoints
+    }
+    retained = [
+        endpoint
+        for endpoint in endpoints
+        if endpoint.system != "kafka"
+        or (endpoint.role, endpoint.path, endpoint.start_line) not in covered_sites
+    ]
+    return [*retained, *strategy_endpoints]
+
+
 def _build_markdown_topic_manifest_endpoint(
     rel_path: str,
     line_no: int,
@@ -1746,6 +1997,11 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
                 snippet=snippet,
                 module=_module_for_path(repo_root, path),
                 qualified_name=_java_qualified_name(str(repo_root), path),
+                message_type=(
+                    _infer_kafka_message_type(repo_root, path, start_line, role, framework, snippet)
+                    if system == "kafka"
+                    else None
+                ),
             )
         )
 
@@ -1818,6 +2074,7 @@ def clear_analysis_caches() -> None:
     valeurs résolues avant la modification des fichiers qui a motivé la
     réindexation."""
     _java_qualified_name.cache_clear()
+    _java_source.cache_clear()
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()
     _class_base_path.cache_clear()

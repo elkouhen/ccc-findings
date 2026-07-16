@@ -101,12 +101,31 @@ APIs and topics required for architecture mapping.
 cccr microservices
 cccr microservices show order-service
 cccr microservices topics order-service
+cccr topics show orders.created
 cccr topics consumers orders.created
 cccr apis consumers "POST /payments"
 cccr mongodb services orders
 cccr analyze microservices path order-service shipping-service
 cccr analyze audit
 ```
+
+Kafka summaries include the statically inferred Java payload types for each
+published and consumed topic. Types are extracted from explicit listener
+parameters and Kafka client generics; an unknown type is left empty rather
+than inferred from a topic name or serializer configuration.
+
+For projects that centralize their Kafka configuration in a `getTopics()`
+object, use the opt-in `strategy1` extractor:
+
+```bash
+cccr index --topic-strategy strategy1
+```
+
+It normalizes a producer call `getTopics().getAbcDefGhiJkl()` and a
+`@KafkaListener` placeholder `${kafka.topics.abc_def_ghi_jkl.name}` to the
+physical topic `ABC_DEF_GHI_JKL`. Changing the strategy triggers a full
+inventory refresh. `strategy1` is available with the default `manual` engine,
+not with the experimental `cocoindex` engine.
 
 Exports keep the runtime graph (microservices, Kafka, MongoDB) separate from
 module build dependencies:

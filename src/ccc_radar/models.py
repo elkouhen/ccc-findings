@@ -76,3 +76,6 @@ class MessageEndpoint:
     # BACKLOG-13 M1 : voir Finding.module/qualified_name — même principe.
     module: str | None = None
     qualified_name: str | None = None
+    # Type Java du payload Kafka lorsqu'il est déductible statiquement. Les
+    # manifestes et les appels sans signature exploitable restent à `None`.
+    message_type: str | None = None

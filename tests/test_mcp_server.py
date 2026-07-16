@@ -293,11 +293,19 @@ public class BillingServiceMain {
     assert result["services"] == [
         {
             "name": "billing-service",
-            "path": str(project.resolve()),
             "kind": "microservice",
+            "starts_application": True,
             "indexed": True,
             "integration_count": 0,
             "finding_count": 0,
+            "exposes_http_api": False,
+            "http_apis_exposed": [],
+            "http_apis_consumed": [],
+            "kafka_topics_published": [],
+            "kafka_topics_consumed": [],
+            "kafka_message_types_published": {},
+            "kafka_message_types_consumed": {},
+            "mongo_collections": [],
         }
     ]
     assert any("billing-service" in warning and "obsolète" in warning for warning in result["warnings"])

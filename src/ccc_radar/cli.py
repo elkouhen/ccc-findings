@@ -842,6 +842,11 @@ def index_cmd(
         "--engine",
         help="Moteur d'indexation : manual (défaut) ou cocoindex (expérimental).",
     ),
+    topic_strategy: Literal["default", "strategy1"] = typer.Option(
+        "default",
+        "--topic-strategy",
+        help="Stratégie de détection Kafka : default ou strategy1 (conventions getTopics/KafkaListener).",
+    ),
     disable: list[str] = typer.Option(
         None,
         "--disable",
@@ -853,12 +858,14 @@ def index_cmd(
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut).
 
-    Exemples : `cccr index`, `cccr index --full`,
+    Exemples : `cccr index`, `cccr index --full`, `cccr index --topic-strategy strategy1`,
     `cccr index --manifest TOPICS.md`,
     `cccr index --manifest kafka-flow-graph-anonymous.json`.
     """
     repo_root = Path.cwd()
-    _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
+    _trace_index(
+        "cli.index.begin", root=repo_root, full=full, engine=engine, topic_strategy=topic_strategy
+    )
     explicit_manifests = _manifest_rel_paths(repo_root, list(manifest_args or []) + list(manifests or []))
     disabled = frozenset(disable or [])
     known_disabled = {"semgrep", "properties", "module-architecture", "module-tree-sitter"}
@@ -895,6 +902,12 @@ def index_cmd(
                         err=True,
                     )
                     raise typer.Exit(code=2)
+                if topic_strategy != "default":
+                    typer.echo(
+                        "--topic-strategy n'est pas supporté avec --engine cocoindex ; utilisez --engine manual.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
                 report = index_repo_with_cocoindex(
                     repo_root, config, store, embedder, full=full,
                     progress=_echo_index_progress, disabled=disabled,
@@ -903,6 +916,7 @@ def index_cmd(
                 report = index_repo(
                     repo_root, config, store, embedder, full=full, progress=_echo_index_progress,
                     disabled=disabled, extra_files=explicit_manifests,
+                    topic_strategy=topic_strategy,
                 )
                 store.set_meta("index_engine", "manual")
             _trace_index("store.close.begin")
@@ -1693,6 +1707,8 @@ def _render_microservice_topics(service: str, root: Path, json_output: bool) -> 
             "microservice": service,
             "published": summary["kafka_topics_published"],
             "consumed": summary["kafka_topics_consumed"],
+            "published_message_types": summary["kafka_message_types_published"],
+            "consumed_message_types": summary["kafka_message_types_consumed"],
         },
         json_output,
     )

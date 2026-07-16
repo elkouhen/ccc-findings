@@ -69,6 +69,8 @@ def module_summary(catalog: ArchitectureCatalog, name: str) -> dict[str, object]
     called = sorted({endpoint.topic for endpoint in endpoints if endpoint.system == "rest" and endpoint.role == "call"})
     produced = sorted({endpoint.topic for endpoint in endpoints if endpoint.system == "kafka" and endpoint.role == "produce"})
     consumed = sorted({endpoint.topic for endpoint in endpoints if endpoint.system == "kafka" and endpoint.role == "consume"})
+    produced_types = _kafka_message_types(endpoints, "produce")
+    consumed_types = _kafka_message_types(endpoints, "consume")
     outgoing = sorted({edge.to_service for edge in catalog.edges if edge.from_service == name})
     incoming = sorted({edge.from_service for edge in catalog.edges if edge.to_service == name})
     matched_call_ids = {edge.from_endpoint.id for edge in catalog.edges if edge.kind == "rest" and edge.from_service == name}
@@ -97,6 +99,8 @@ def module_summary(catalog: ArchitectureCatalog, name: str) -> dict[str, object]
         "http_apis_consumed": called,
         "kafka_topics_published": produced,
         "kafka_topics_consumed": consumed,
+        "kafka_message_types_published": produced_types,
+        "kafka_message_types_consumed": consumed_types,
         "databases": {"mongodb_collections": list(module.mongo_collections)},
         "technologies": technologies,
         "openapi": bool(module.openapi_files),
@@ -140,6 +144,8 @@ def topic_summary(catalog: ArchitectureCatalog, topic: str) -> dict[str, object]
         "name": topic,
         "producers": sorted({endpoint.module for endpoint in endpoints if endpoint.role == "produce" and endpoint.module}),
         "consumers": sorted({endpoint.module for endpoint in endpoints if endpoint.role == "consume" and endpoint.module}),
+        "message_types_published": _kafka_message_types(endpoints, "produce").get(topic, []),
+        "message_types_consumed": _kafka_message_types(endpoints, "consume").get(topic, []),
     }
 
 
@@ -175,6 +181,7 @@ def endpoint_summary(endpoint: MessageEndpoint) -> dict[str, object]:
         "system": endpoint.system,
         "module": endpoint.module,
         "framework": endpoint.framework,
+        "message_type": endpoint.message_type,
         "dynamic": endpoint.topic_dynamic,
     }
 
@@ -195,6 +202,18 @@ def show_object(catalog: ArchitectureCatalog, kind: str, name: str) -> dict[str,
         endpoint = next((item for item in catalog.endpoints if item.id == name), None)
         return endpoint_summary(endpoint) if endpoint else None
     return None
+
+
+def _kafka_message_types(
+    endpoints: list[MessageEndpoint], role: str
+) -> dict[str, list[str]]:
+    """Aggregate only statically inferred Java payload types by topic."""
+    types: dict[str, set[str]] = {}
+    for endpoint in endpoints:
+        if endpoint.system != "kafka" or endpoint.role != role or not endpoint.message_type:
+            continue
+        types.setdefault(endpoint.topic, set()).add(endpoint.message_type)
+    return {topic: sorted(values) for topic, values in sorted(types.items())}
 
 
 def neighbors(catalog: ArchitectureCatalog, kind: str, name: str) -> list[dict[str, str]] | None:
@@ -437,6 +456,7 @@ def endpoint_implementation(catalog: ArchitectureCatalog, endpoint_id: str) -> d
         "role": endpoint.role,
         "system": endpoint.system,
         "module": endpoint.module,
+        "message_type": endpoint.message_type,
         "implementation": {
             "path": endpoint.path,
             "start_line": endpoint.start_line,

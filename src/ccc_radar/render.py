@@ -644,7 +644,7 @@ def _likec4_complexity(
     relations: set[tuple[str, str, str, str]],
     findings_by_service: dict[str, list[Finding]],
 ) -> dict[str, tuple[str, str]]:
-    """Build a visual complexity signal from topology while retaining finding details."""
+    """Build a topology-only visual complexity signal while retaining finding details."""
     relation_counts = {
         node_id: 0
         for node_id in (*service_ids.values(), *topic_ids.values(), *collection_ids.values())
@@ -689,7 +689,7 @@ def render_graph_likec4(
     Services, Kafka topics and MongoDB collections are peers in one generated
     system boundary. The source inventory is static, so relations carry the
     protocol semantics but never claim to be runtime traces. Node complexity
-    combines graph degree with severity-weighted findings.
+    is derived only from graph degree; findings remain informational details.
     """
     services = sorted(endpoints_by_service)
     topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
@@ -2008,6 +2008,7 @@ class EndpointHit(TypedDict):
     topic_dynamic: bool
     source: str
     framework: str | None
+    message_type: str | None
     path: str
     start_line: int
     end_line: int
@@ -2025,6 +2026,7 @@ def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]
             topic_dynamic=e.topic_dynamic,
             source=e.source,
             framework=e.framework,
+            message_type=e.message_type,
             path=e.path,
             start_line=e.start_line,
             end_line=e.end_line,
@@ -2045,8 +2047,9 @@ def render_endpoints_text(endpoints: list[MessageEndpoint], warnings: list[str] 
     for e in endpoints:
         dynamic_marker = " (dynamique)" if e.topic_dynamic else ""
         module_marker = f" [{e.module}]" if e.module else ""
+        type_marker = f" <{e.message_type}>" if e.message_type else ""
         lines.append(
-            f"[{e.system}/{e.role}] {e.topic}{dynamic_marker}{module_marker}  "
+            f"[{e.system}/{e.role}] {e.topic}{type_marker}{dynamic_marker}{module_marker}  "
             f"{e.path}:{e.start_line}-{e.end_line}"
         )
     for warning in warnings or []:
@@ -2066,6 +2069,8 @@ class WorkspaceServiceInfo(TypedDict):
     http_apis_consumed: list[str]
     kafka_topics_published: list[str]
     kafka_topics_consumed: list[str]
+    kafka_message_types_published: dict[str, list[str]]
+    kafka_message_types_consumed: dict[str, list[str]]
     mongo_collections: list[str]
 
 
@@ -2115,6 +2120,8 @@ def _workspace_service_info(
         endpoint.topic for endpoint in endpoints
         if endpoint.system == "rest" and endpoint.role == "serve"
     })
+    kafka_message_types_published = _workspace_kafka_message_types(endpoints, "produce")
+    kafka_message_types_consumed = _workspace_kafka_message_types(endpoints, "consume")
     return WorkspaceServiceInfo(
         name=service.name,
         kind=service.kind,
@@ -2136,8 +2143,21 @@ def _workspace_service_info(
             endpoint.topic for endpoint in endpoints
             if endpoint.system == "kafka" and endpoint.role == "consume"
         }),
+        kafka_message_types_published=kafka_message_types_published,
+        kafka_message_types_consumed=kafka_message_types_consumed,
         mongo_collections=list(module.mongo_collections) if module else [],
     )
+
+
+def _workspace_kafka_message_types(
+    endpoints: list[MessageEndpoint], role: str
+) -> dict[str, list[str]]:
+    message_types: dict[str, set[str]] = {}
+    for endpoint in endpoints:
+        if endpoint.system != "kafka" or endpoint.role != role or not endpoint.message_type:
+            continue
+        message_types.setdefault(endpoint.topic, set()).add(endpoint.message_type)
+    return {topic: sorted(values) for topic, values in sorted(message_types.items())}
 
 
 def render_workspace_text(result: WorkspaceResult) -> str:
@@ -2159,6 +2179,11 @@ def render_workspace_text(result: WorkspaceResult) -> str:
             f"Kafka consommés: {', '.join(info['kafka_topics_consumed']) or '-'} | "
             f"Mongo: {', '.join(info['mongo_collections']) or '-'}"
         )
+        if info["kafka_message_types_published"] or info["kafka_message_types_consumed"]:
+            lines.append(
+                f"  Types Kafka publiés: {info['kafka_message_types_published'] or '-'} | "
+                f"Types Kafka consommés: {info['kafka_message_types_consumed'] or '-'}"
+            )
     for warning in result["warnings"]:
         lines.append(f"⚠ {warning}")
     return "\n".join(lines)

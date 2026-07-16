@@ -27,7 +27,7 @@ def endpoint_to_text(e: MessageEndpoint) -> str:
     endpoints (résolution `cccr topics search` ou `cccr resources search` en dernier recours, quand aucune
     correspondance textuelle exacte/non ambiguë n'existe)."""
     return (
-        f"{e.role} {e.system} | {e.topic} | {e.framework or ''} | "
+        f"{e.role} {e.system} | {e.topic} | {e.message_type or ''} | {e.framework or ''} | "
         f"{' '.join(e.snippet.split())[:500]}"
     )
 

@@ -4,11 +4,14 @@ import pytest
 
 from ccc_radar.config import Config
 from ccc_radar.scanner import (
+    apply_kafka_topic_strategy1,
+    infer_kafka_topic_strategy1_endpoints,
     infer_json_kafka_flow_graph_endpoints,
     infer_markdown_topic_manifest_endpoints,
     resolve_spring_property,
     run_semgrep_endpoints,
 )
+from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 
 # Le pack de règles vit dans le repo skill (ccc-radar-skill/skills/cccr/
 # rules/kafka/), pas dans ce repo (ADR-24). Cible d'analyse : Java + Spring
@@ -36,6 +39,7 @@ def test_kafka_consume_extracts_literal_topic_from_annotation() -> None:
     assert literal.framework == "spring-kafka"
     assert literal.topic == "orders.created"
     assert literal.topic_dynamic is False
+    assert literal.message_type == "String"
     # BACKLOG-13 M1 : kafka_repo n'a pas de pom.xml -> pas de module Maven ;
     # OrderConsumer.java déclare `package com.example.app;`.
     assert literal.module is None
@@ -95,6 +99,7 @@ def test_kafka_produce_template_and_record_extract_topics() -> None:
     assert literal_send.framework == "spring-kafka"
     assert literal_send.topic == "orders.created"
     assert literal_send.topic_dynamic is False
+    assert literal_send.message_type == "String"
 
     placeholder_send = by_line[19]  # send("${app.kafka.topics.payments}", key, payload)
     assert placeholder_send.topic == "payments.received"
@@ -104,6 +109,7 @@ def test_kafka_produce_template_and_record_extract_topics() -> None:
     assert producer_record.framework == "kafka-clients"
     assert producer_record.topic == "orders.updated"
     assert producer_record.topic_dynamic is False
+    assert producer_record.message_type == "String"
 
     dynamic_send = by_line[28]  # send(topic, payload) : variable, aucun littéral
     assert dynamic_send.topic == "<dynamic>"
@@ -167,6 +173,69 @@ def test_kafka_send_keeps_value_annotated_field_dynamic_when_unresolvable() -> N
     assert unresolved.topic_dynamic is True
 
 
+def test_kafka_topic_strategy1_reads_get_topics_accessors_and_listener_keys(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "EventAdapter.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
+
+class EventAdapter {
+  private KafkaTemplate<String, OrderCreated> kafkaTemplate;
+
+  void publish(OrderCreated event) {
+    kafkaTemplate.send(properties.getTopics().getAbcDefGhiJkl(), event);
+  }
+
+  @KafkaListener(topics = "${kafka.topics.abc_def_ghi_jkl.name}")
+  void consume(OrderCreated event) {}
+}
+"""
+    )
+
+    endpoints = infer_kafka_topic_strategy1_endpoints(tmp_path)
+
+    assert {(endpoint.role, endpoint.topic, endpoint.message_type) for endpoint in endpoints} == {
+        ("produce", "ABC_DEF_GHI_JKL", "OrderCreated"),
+        ("consume", "ABC_DEF_GHI_JKL", "OrderCreated"),
+    }
+    assert {endpoint.framework for endpoint in endpoints} == {"kafka-topic-strategy1"}
+
+
+def test_kafka_topic_strategy1_replaces_standard_extraction_at_covered_sites(tmp_path: Path) -> None:
+    standard = MessageEndpoint(
+        id=compute_endpoint_id("produce", "<dynamic>", "EventAdapter.java", 7, 7),
+        role="produce",
+        system="kafka",
+        topic="<dynamic>",
+        topic_dynamic=True,
+        source="code",
+        framework="spring-kafka",
+        path="EventAdapter.java",
+        start_line=7,
+        end_line=7,
+        snippet="kafkaTemplate.send(properties.getTopics().getOrdersCreated(), event)",
+    )
+    strategy = MessageEndpoint(
+        id=compute_endpoint_id("produce", "ORDERS_CREATED", "EventAdapter.java", 7, 7),
+        role="produce",
+        system="kafka",
+        topic="ORDERS_CREATED",
+        topic_dynamic=False,
+        source="code",
+        framework="kafka-topic-strategy1",
+        path="EventAdapter.java",
+        start_line=7,
+        end_line=7,
+        snippet="kafkaTemplate.send(properties.getTopics().getOrdersCreated(), event)",
+        message_type="OrderCreated",
+    )
+
+    endpoints = apply_kafka_topic_strategy1([standard], [strategy])
+
+    assert endpoints == [strategy]
+
+
 @pytest.mark.integration
 def test_kafka_raw_consumer_subscribe_extracts_literal_topic() -> None:
     """API bas niveau (confluent-kafka / kafka-clients, hors Spring) :
@@ -193,6 +262,10 @@ def test_kafka_streams_consume_and_produce_extract_topics() -> None:
     endpoints = run_semgrep_endpoints(
         KAFKA_REPO, make_config(), files=["app/java/KafkaStreamsApp.java"]
     )
+
+    by_line = {endpoint.start_line: endpoint for endpoint in endpoints}
+    assert by_line[17].message_type == "Order"
+    assert by_line[26].message_type == "Order"
 
     by_line = {e.start_line: e for e in endpoints}
     assert len(endpoints) == 4

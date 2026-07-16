@@ -18,8 +18,10 @@ from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
     infer_framework_endpoints,
+    infer_kafka_topic_strategy1_endpoints,
     infer_json_kafka_flow_graph_endpoints,
     infer_markdown_topic_manifest_endpoints,
+    apply_kafka_topic_strategy1,
     invoke_semgrep_raw,
     parse_semgrep_endpoints,
     parse_semgrep_json,
@@ -299,6 +301,7 @@ def index_repo(
     index_code_chunks: bool = False,
     disabled: frozenset[str] = frozenset(),
     extra_files: list[str] | None = None,
+    topic_strategy: str = "default",
     progress: ProgressCallback | None = None,
 ) -> IndexReport:
     # BACKLOG-16 P2 : purge les lru_cache d'analyse best-effort (package
@@ -307,7 +310,10 @@ def index_repo(
     # `reindex_findings` doit voir les fichiers tels qu'ils sont maintenant,
     # pas tels qu'un `cccr index` précédent les avait mémorisés.
     clear_analysis_caches()
-    _trace("index_repo.begin", root=repo_root, full=full, disabled=",".join(sorted(disabled)))
+    _trace(
+        "index_repo.begin", root=repo_root, full=full, disabled=",".join(sorted(disabled)),
+        topic_strategy=topic_strategy,
+    )
     discovered_modules = []
     if "properties" not in disabled:
         _report_progress(progress, "→ Indexation : découverte des modules Maven/Gradle...")
@@ -328,6 +334,8 @@ def index_repo(
             _report_progress(progress, "  • aucun module Maven/Gradle détecté ; scan de la racine.")
     endpoint_signature = current_endpoint_inventory_signature()
     if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
+        full = True
+    if store.get_meta("topic_strategy") != topic_strategy:
         full = True
     analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
     if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
@@ -403,6 +411,10 @@ def index_repo(
         endpoints.extend(infer_framework_endpoints(repo_root, changed))
         endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, changed))
         endpoints.extend(infer_json_kafka_flow_graph_endpoints(repo_root, changed))
+        if topic_strategy == "strategy1":
+            endpoints = apply_kafka_topic_strategy1(
+                endpoints, infer_kafka_topic_strategy1_endpoints(repo_root, changed)
+            )
         _trace("endpoint_inference.end", findings=len(findings), endpoints=len(endpoints))
 
         _report_progress(
@@ -423,6 +435,7 @@ def index_repo(
 
     if "semgrep" not in disabled:
         store.set_meta("endpoint_inventory_signature", endpoint_signature)
+        store.set_meta("topic_strategy", topic_strategy)
     store.set_meta("analysis_inputs_signature", analysis_inputs_signature)
 
     # Persist only after the scan path has completed.  The inventory remains

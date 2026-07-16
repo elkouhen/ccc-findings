@@ -133,6 +133,40 @@ def test_index_repo_imports_json_kafka_flow_graph_manifest(
     assert {endpoint.framework for endpoint in endpoints} == {"json-kafka-flow-graph"}
 
 
+def test_index_repo_strategy1_forces_a_full_rescan_and_indexes_logical_topics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src" / "main" / "java" / "EventAdapter.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
+class EventAdapter {
+  private KafkaTemplate<String, OrderCreated> kafkaTemplate;
+  void publish(OrderCreated event) { kafkaTemplate.send(properties.getTopics().getAbcDefGhiJkl(), event); }
+  @KafkaListener(topics = "${kafka.topics.abc_def_ghi_jkl.name}")
+  void consume(OrderCreated event) {}
+}
+"""
+    )
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", lambda *_args, **_kwargs: [])
+
+    with Store(tmp_path) as store:
+        first = index_repo(tmp_path, make_config(), store, FakeEmbedder())
+        report = index_repo(
+            tmp_path, make_config(), store, FakeEmbedder(), topic_strategy="strategy1"
+        )
+        endpoints = store.all_endpoints()
+
+    assert first.scanned == 1
+    assert report.scanned == 1
+    assert {(endpoint.role, endpoint.topic, endpoint.message_type) for endpoint in endpoints} == {
+        ("produce", "ABC_DEF_GHI_JKL", "OrderCreated"),
+        ("consume", "ABC_DEF_GHI_JKL", "OrderCreated"),
+    }
+
+
 def test_index_repo_can_disable_only_module_architecture_enrichment(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

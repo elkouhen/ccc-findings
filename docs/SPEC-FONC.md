@@ -97,8 +97,11 @@ the local embedding model and index state. Any blocking check yields exit code
 2. A graph must not be interpreted as a full REST/Kafka topology while the
 architecture-pack check fails.
 
-### `cccr index [--full] [--engine manual|cocoindex]`
-Indexes the project (Semgrep findings **and** REST/Kafka endpoints).
+### `cccr index [--full] [--engine manual|cocoindex] [--topic-strategy default|strategy1]`
+Indexes the project (Semgrep findings **and** REST/Kafka endpoints). Kafka
+endpoints also retain a source-level Java payload type when it is explicit in a
+listener parameter or Kafka client generic signature. An unavailable type stays
+empty; it is never inferred from a topic name or serializer configuration.
 
 - Default: incremental — only re-scans files added or modified since the last
   indexing (SHA-256 hash per file); files deleted from disk have their findings
@@ -115,6 +118,12 @@ Indexes the project (Semgrep findings **and** REST/Kafka endpoints).
   `cccr index` implicitly forces a full repo re-scan even without modified
   files, to refresh the REST/Kafka inventory before rewriting
   `meta.endpoint_inventory_signature`.
+- `--topic-strategy strategy1` is an opt-in Kafka convention extractor for the
+  manual engine. It maps `getTopics().getAbcDefGhiJkl()` and
+  `${kafka.topics.abc_def_ghi_jkl.name}` to physical topic `ABC_DEF_GHI_JKL`.
+  It replaces the standard Kafka extraction at the same source location and a
+  strategy change forces a full inventory refresh. It is rejected with
+  `--engine cocoindex`.
 - Exactly one Semgrep scan per indexing: `config.rules` may mix findings rules
   (`default`, `liveness`) and endpoint inventory rules (`rest`, `kafka`,
   `metadata.category: endpoint-inventory`) — each ends up in the proper table
@@ -493,10 +502,11 @@ The same command is the architecture explorer. Its navigation remains on
 business objects and never includes source paths or snippets by default:
 
 - `cccr microservices show <service>` returns the summary of one microservice:
-  build tool, language, APIs, Kafka topics, MongoDB collections, technologies,
-  OpenAPI presence and direct dependencies.
+  build tool, language, APIs, Kafka topics and their published/consumed Java
+  payload types, MongoDB collections, technologies, OpenAPI presence and direct
+  dependencies.
 - `cccr microservices topics <service>` lists published and consumed Kafka
-  topics.
+  topics, grouped with their statically inferred Java payload types.
 - `cccr microservices apis <service>` lists exposed and consumed HTTP APIs.
 - `cccr microservices mongodb <service>` lists indexed MongoDB collections
   used by the microservice.
@@ -518,7 +528,8 @@ with `list`, it returns the discovered topics. The remaining subcommands take
 one exact topic name. `consumers`, `producers` and `trace` respectively return
 one side of the relation or potential Kafka flows; a trace is never runtime data.
 
-- `show` returns the topic summary;
+- `show` returns the topic summary, including the published and consumed Java
+  payload types when they are statically known;
 - `neighbors` returns its producer and consumer microservices;
 - `consumers` and `producers` return one side of that relation;
 - `search` resolves an exact name or a unique case-insensitive substring; on a
@@ -871,6 +882,13 @@ of scope. `cccr` also adds local inference for Spring producers built through
 `KafkaHeaders.TOPIC` header, then resolved as a literal, Spring placeholder, or
 `@Value` field with the same rules; if nothing is resolvable, it remains
 `<dynamic>`.
+
+For each Kafka integration, `cccr` also captures the payload type only when a
+Java signature makes it explicit: the first non-header `@KafkaListener`
+parameter, the value generic of `KafkaTemplate`, `ProducerRecord`, or
+`KafkaConsumer`, or the value generic of a `KStream`/`KTable` declaration.
+This value is a source-level Java type, may be absent, and is never guessed
+from a topic name, serializer, or configuration property.
 
 ## 9. Kafka security rule pack
 

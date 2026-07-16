@@ -20,7 +20,7 @@ from ccc_radar.modules import (
 )
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "12"
+SCHEMA_VERSION = "13"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -197,7 +197,8 @@ class Store:
                 end_line INTEGER NOT NULL,
                 snippet TEXT NOT NULL,
                 module TEXT,
-                qualified_name TEXT
+                qualified_name TEXT,
+                message_type TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_endpoints_path ON endpoints(path);
             CREATE INDEX IF NOT EXISTS idx_endpoints_topic ON endpoints(topic);
@@ -225,6 +226,7 @@ class Store:
         )
         self._migrate_legacy_embeddings()
         self._migrate_module_columns()
+        self._migrate_endpoint_message_type()
         self._migrate_module_architecture_columns()
         if self.get_meta("schema_version") != SCHEMA_VERSION:
             self.set_meta("schema_version", SCHEMA_VERSION)
@@ -271,6 +273,12 @@ class Store:
                 default = "0" if name == "starts_application" else "'[]'"
                 column_type = "INTEGER" if name == "starts_application" else "TEXT"
                 self.conn.execute(f"ALTER TABLE modules ADD COLUMN {name} {column_type} NOT NULL DEFAULT {default}")
+
+    def _migrate_endpoint_message_type(self) -> None:
+        """Schema v12 -> v13: payload Java type on Kafka integration sites."""
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(endpoints)")}
+        if "message_type" not in cols:
+            self.conn.execute("ALTER TABLE endpoints ADD COLUMN message_type TEXT")
 
     # -- meta --
 
@@ -530,8 +538,8 @@ class Store:
                 """
                 INSERT INTO endpoints
                     (id, role, system, topic, topic_dynamic, source, framework,
-                     path, start_line, end_line, snippet, module, qualified_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     path, start_line, end_line, snippet, module, qualified_name, message_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     role = excluded.role,
                     system = excluded.system,
@@ -544,7 +552,8 @@ class Store:
                     end_line = excluded.end_line,
                     snippet = excluded.snippet,
                     module = excluded.module,
-                    qualified_name = excluded.qualified_name
+                    qualified_name = excluded.qualified_name,
+                    message_type = excluded.message_type
                 """,
                 (
                     endpoint.id,
@@ -560,6 +569,7 @@ class Store:
                     endpoint.snippet,
                     endpoint.module,
                     endpoint.qualified_name,
+                    endpoint.message_type,
                 ),
             )
 
@@ -888,4 +898,5 @@ def _row_to_endpoint(row: sqlite3.Row) -> MessageEndpoint:
         snippet=row["snippet"],
         module=row["module"],
         qualified_name=row["qualified_name"],
+        message_type=row["message_type"],
     )
