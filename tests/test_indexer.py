@@ -106,6 +106,33 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
     assert any("propriétés et inventaire" in message for message in messages)
 
 
+def test_index_repo_imports_json_kafka_flow_graph_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "kafka-flow-graph-anonymous.json").write_text(
+        """{
+  "topics": {"topic_a": "TOPIC_A"},
+  "producers": {"service-alpha": ["topic_a"]},
+  "consumers": {"service-beta": ["topic_a"]}
+}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", lambda *_args, **_kwargs: [])
+
+    with Store(tmp_path) as store:
+        report = index_repo(tmp_path, make_config(), store, FakeEmbedder())
+        endpoints = store.all_endpoints()
+
+    assert report.endpoints_added == 2
+    assert {(endpoint.role, endpoint.topic, endpoint.module) for endpoint in endpoints} == {
+        ("produce", "TOPIC_A", "service-alpha"),
+        ("consume", "TOPIC_A", "service-beta"),
+    }
+    assert {endpoint.framework for endpoint in endpoints} == {"json-kafka-flow-graph"}
+
+
 def test_index_repo_can_disable_only_module_architecture_enrichment(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

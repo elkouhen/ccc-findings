@@ -175,6 +175,7 @@ Semgrep scan, persistence, embedding) before the final
 ```bash
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr integrations               # indexed HTTP/Kafka integrations
+cccr index --manifest kafka-flow-graph-anonymous.json  # import Kafka JSON: topics, producers and consumers
 cccr graph                      # inter-service REST/Kafka topology
 cccr export microservices --drawio graph.drawio     # microservices, Kafka topics and MongoDB collections
 cccr export microservices --html graph.html

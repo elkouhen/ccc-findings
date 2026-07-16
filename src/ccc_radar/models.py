@@ -57,8 +57,8 @@ class MessageEndpoint:
 
     `topic` porte le nom du topic Kafka, ou "METHODE /chemin" pour REST (ex.
     "GET /orders/{id}"). `path`/`start_line`/`end_line` localisent le site :
-    pour `source="manifest"`, `path` est le chemin du manifeste (`TOPICS.md`,
-    K10) et `start_line`/`end_line` pointent l'entrée déclarative, pas un
+    pour `source="manifest"`, `path` est le chemin du manifeste (`TOPICS.md`
+    ou `kafka-flow-graph.json`) et `start_line`/`end_line` pointent l'entrée déclarative, pas un
     site de code.
     """
 

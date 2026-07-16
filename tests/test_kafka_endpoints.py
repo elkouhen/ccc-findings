@@ -4,6 +4,7 @@ import pytest
 
 from ccc_radar.config import Config
 from ccc_radar.scanner import (
+    infer_json_kafka_flow_graph_endpoints,
     infer_markdown_topic_manifest_endpoints,
     resolve_spring_property,
     run_semgrep_endpoints,
@@ -280,6 +281,38 @@ def test_markdown_topic_manifest_declares_producers_and_consumers(tmp_path: Path
     assert {e.source for e in endpoints} == {"manifest"}
     assert {e.framework for e in endpoints} == {"markdown-topic-manifest"}
     assert {e.topic_dynamic for e in endpoints} == {False}
+
+
+def test_json_kafka_flow_graph_manifest_declares_producers_and_consumers(tmp_path: Path) -> None:
+    manifest = tmp_path / "kafka-flow-graph-anonymous.json"
+    manifest.write_text(
+        """{
+  "topics": {"topic_a": "TOPIC_A", "topic_b": "TOPIC_B"},
+  "categories": {"service-alpha": "acquisition"},
+  "producers": {"service-alpha": ["topic_a"]},
+  "consumers": {"service-beta": ["topic_a", "topic_b"]}
+}
+""",
+        encoding="utf-8",
+    )
+
+    endpoints = infer_json_kafka_flow_graph_endpoints(tmp_path)
+
+    assert {(e.role, e.topic, e.module) for e in endpoints} == {
+        ("produce", "TOPIC_A", "service-alpha"),
+        ("consume", "TOPIC_A", "service-beta"),
+        ("consume", "TOPIC_B", "service-beta"),
+    }
+    assert {e.source for e in endpoints} == {"manifest"}
+    assert {e.framework for e in endpoints} == {"json-kafka-flow-graph"}
+    assert {e.path for e in endpoints} == {"kafka-flow-graph-anonymous.json"}
+    assert all(endpoint.start_line > 0 for endpoint in endpoints)
+
+
+def test_json_kafka_flow_graph_manifest_ignores_unrelated_json(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "sample"}\n', encoding="utf-8")
+
+    assert infer_json_kafka_flow_graph_endpoints(tmp_path) == []
 
 
 # -- resolve_spring_property (unitaire, sans Semgrep) --

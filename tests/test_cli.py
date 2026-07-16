@@ -158,14 +158,14 @@ def test_index_accepts_markdown_manifest_as_positional_argument(
     assert captured["extra_files"] == ["TOPICS.md"]
 
 
-def test_index_accepts_markdown_manifest_option(
+def test_index_accepts_topic_manifest_option(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cccr").mkdir()
     (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules.yml']\n")
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "topics.md").write_text("### module-a\n")
+    (tmp_path / "docs" / "kafka-flow-graph.json").write_text('{"topics": {}}\n')
     captured: dict[str, object] = {}
 
     def fake_index_repo(*args: object, **kwargs: object) -> IndexReport:
@@ -176,10 +176,10 @@ def test_index_accepts_markdown_manifest_option(
     monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
     monkeypatch.setattr("ccc_radar.cli.index_repo", fake_index_repo)
 
-    result = runner.invoke(app, ["index", "--manifest", "docs/topics.md"])
+    result = runner.invoke(app, ["index", "--manifest", "docs/kafka-flow-graph.json"])
 
     assert result.exit_code == 0
-    assert captured["extra_files"] == ["docs/topics.md"]
+    assert captured["extra_files"] == ["docs/kafka-flow-graph.json"]
 
 
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(

@@ -136,7 +136,7 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
     Pas d'auto-arête : un service qui s'appelle lui-même n'entre pas dans le
     graphe inter-services.
 
-    Les entrées Kafka provenant d'un manifeste Markdown sont autoritatives
+    Les entrées Kafka provenant d'un manifeste sont autoritatives
     pour le service décrit : elles remplacent les détections de code de ce
     service, qui peuvent être incomplètes ou produire des faux positifs. Les
     services absents du manifeste conservent leurs endpoints détectés."""

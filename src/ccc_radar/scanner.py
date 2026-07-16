@@ -1514,6 +1514,89 @@ def infer_markdown_topic_manifest_endpoints(
     return list(inferred.values())
 
 
+def _json_manifest_line_number(text: str, section: str, module: str, topic: str) -> int:
+    """Return the best-effort line of a topic declaration in a JSON manifest."""
+    section_index = text.find(json.dumps(section, ensure_ascii=False))
+    module_index = text.find(json.dumps(module, ensure_ascii=False), max(section_index, 0))
+    topic_index = text.find(json.dumps(topic, ensure_ascii=False), max(module_index, 0))
+    if topic_index < 0:
+        return 1
+    return text.count("\n", 0, topic_index) + 1
+
+
+def _parse_json_kafka_flow_graph_manifest(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    """Parse the `topics`/`producers`/`consumers` JSON flow-graph schema."""
+    try:
+        text = (repo_root / rel_path).read_text(encoding="utf-8", errors="replace")
+        data = json.loads(text)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    raw_topics = data.get("topics")
+    if not isinstance(raw_topics, dict):
+        return []
+    topics = {
+        logical: physical.strip() or logical
+        for logical, physical in raw_topics.items()
+        if isinstance(logical, str) and isinstance(physical, str)
+    }
+
+    endpoints: dict[str, MessageEndpoint] = {}
+    for section, role in (("producers", "produce"), ("consumers", "consume")):
+        declarations = data.get(section)
+        if not isinstance(declarations, dict):
+            continue
+        for module, declared_topics in declarations.items():
+            if not isinstance(module, str) or not isinstance(declared_topics, list):
+                continue
+            for logical_topic in declared_topics:
+                if not isinstance(logical_topic, str) or not logical_topic.strip():
+                    continue
+                topic = topics.get(logical_topic, logical_topic)
+                line_no = _json_manifest_line_number(text, section, module, logical_topic)
+                endpoint = MessageEndpoint(
+                    id=compute_endpoint_id(
+                        role, topic, f"{rel_path}:{module}", line_no, line_no
+                    ),
+                    role=role,
+                    system="kafka",
+                    topic=topic,
+                    topic_dynamic=False,
+                    source="manifest",
+                    framework="json-kafka-flow-graph",
+                    path=rel_path,
+                    start_line=line_no,
+                    end_line=line_no,
+                    snippet=f"{section}.{module}: {logical_topic} -> {topic}",
+                    module=module,
+                    qualified_name=None,
+                )
+                endpoints[endpoint.id] = endpoint
+    return list(endpoints.values())
+
+
+def infer_json_kafka_flow_graph_endpoints(
+    repo_root: Path, files: list[str] | None = None
+) -> list[MessageEndpoint]:
+    """Infer Kafka endpoints from compatible JSON flow graph manifests."""
+    if files is None:
+        candidate_files = [
+            path.relative_to(repo_root).as_posix()
+            for path in repo_root.rglob("*.json")
+            if path.is_file()
+        ]
+    else:
+        candidate_files = sorted(path for path in files if path.endswith(".json"))
+
+    inferred: dict[str, MessageEndpoint] = {}
+    for rel_path in candidate_files:
+        for endpoint in _parse_json_kafka_flow_graph_manifest(repo_root, rel_path):
+            inferred[endpoint.id] = endpoint
+    return list(inferred.values())
+
+
 @lru_cache(maxsize=512)
 def _load_value_annotated_fields(path_str: str) -> dict[str, str]:
     """Champs `@Value("${clé}")` d'un fichier source Java — variable ->

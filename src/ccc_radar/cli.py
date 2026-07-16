@@ -133,8 +133,10 @@ def _manifest_rel_paths(repo_root: Path, paths: list[Path]) -> list[str]:
             ) from exc
         if not path.is_file():
             raise typer.BadParameter(f"Manifeste introuvable : {raw_path}")
-        if path.suffix.lower() != ".md":
-            raise typer.BadParameter(f"Le manifeste doit être un fichier Markdown .md : {raw_path}")
+        if path.suffix.lower() not in {".md", ".json"}:
+            raise typer.BadParameter(
+                f"Le manifeste doit être un fichier Markdown (.md) ou un flux Kafka JSON (.json) : {raw_path}"
+            )
         if rel_path not in seen:
             seen.add(rel_path)
             manifests.append(rel_path)
@@ -570,11 +572,11 @@ def init(
 @app.command(name="index")
 def index_cmd(
     manifest_args: Optional[list[Path]] = typer.Argument(  # noqa: UP007
-        None, help="Manifeste(s) Markdown de topics Kafka à indexer explicitement."
+        None, help="Manifeste(s) Kafka Markdown ou JSON à indexer explicitement."
     ),
     full: bool = typer.Option(False, "--full", help="Force un scan complet."),
     manifests: Optional[list[Path]] = typer.Option(  # noqa: UP007
-        None, "--manifest", help="Manifeste Markdown de topics Kafka (répétable)."
+        None, "--manifest", help="Manifeste Kafka Markdown ou JSON (répétable)."
     ),
     engine: Literal["manual", "cocoindex"] = typer.Option(
         "manual",
@@ -593,7 +595,8 @@ def index_cmd(
     """Indexe le code et les findings du projet (incrémental par défaut).
 
     Exemples : `cccr index`, `cccr index --full`,
-    `cccr index --manifest TOPICS.md`.
+    `cccr index --manifest TOPICS.md`,
+    `cccr index --manifest kafka-flow-graph-anonymous.json`.
     """
     repo_root = Path.cwd()
     _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)

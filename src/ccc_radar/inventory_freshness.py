@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v10-module-application-projection"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v11-json-kafka-flow-manifest"
 
 
 def current_endpoint_inventory_signature() -> str:
