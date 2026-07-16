@@ -11,6 +11,7 @@ import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_RULE_PACKS, app
 from ccc_radar.indexer import IndexReport
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.modules import DiscoveredModule
 from ccc_radar.store import Store
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -743,6 +744,104 @@ def test_endpoints_text_reports_none_when_empty(
 
     assert result.exit_code == 0
     assert "Aucun endpoint indexé." in result.output
+
+
+def test_architecture_commands_explore_business_objects_without_source_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    orders = tmp_path / "orders"
+    payments = tmp_path / "payments"
+    orders.mkdir()
+    payments.mkdir()
+    modules = [
+        DiscoveredModule(
+            name="orders",
+            path=orders,
+            build_system="maven",
+            version="1.0.0",
+            kind="library",
+            starts_application=True,
+            configuration_example="",
+            mongo_collections=("orders",),
+            openapi_files=("openapi.yml",),
+        ),
+        DiscoveredModule(
+            name="payments",
+            path=payments,
+            build_system="gradle",
+            version=None,
+            kind="library",
+            starts_application=True,
+            configuration_example="",
+        ),
+    ]
+
+    def endpoint(role: str, system: str, topic: str, module: str, path: str, snippet: str = "") -> MessageEndpoint:
+        return MessageEndpoint(
+            id=compute_endpoint_id(role, topic, path),
+            role=role,
+            system=system,
+            topic=topic,
+            topic_dynamic=False,
+            source="code",
+            framework="spring",
+            path=path,
+            start_line=10,
+            end_line=10,
+            snippet=snippet,
+            module=module,
+        )
+
+    publish = endpoint("produce", "kafka", "orders.created", "orders", "OrderPublisher.java", "send")
+    consume = endpoint("consume", "kafka", "orders.created", "payments", "PaymentConsumer.java", "listen")
+    call = endpoint("call", "rest", "POST /payments", "orders", "PaymentClient.java", "http://payments/payments")
+    serve = endpoint("serve", "rest", "POST /payments", "payments", "PaymentController.java")
+    with Store(tmp_path) as store:
+        store.replace_modules(modules)
+        store.replace_endpoints_for_files(
+            [publish.path, consume.path, call.path, serve.path], [publish, consume, call, serve]
+        )
+
+    listed = runner.invoke(app, ["architecture", "list", "microservices", "--json"])
+    assert listed.exit_code == 0
+    listed_payload = json.loads(listed.output)
+    assert [item["name"] for item in listed_payload] == ["orders", "payments"]
+    assert "path" not in listed_payload[0]
+    assert "snippet" not in listed.output
+
+    summary = runner.invoke(app, ["architecture", "show", "module", "orders", "--json"])
+    assert summary.exit_code == 0
+    summary_payload = json.loads(summary.output)
+    assert summary_payload["http_apis_exposed"] == []
+    assert summary_payload["http_apis_consumed"] == ["POST /payments"]
+    assert summary_payload["kafka_topics_published"] == ["orders.created"]
+    assert summary_payload["databases"]["mongodb_collections"] == ["orders"]
+
+    topic_neighbors = runner.invoke(
+        app, ["architecture", "neighbors", "topic", "orders.created", "--json"]
+    )
+    assert topic_neighbors.exit_code == 0
+    assert json.loads(topic_neighbors.output) == [
+        {"kind": "module", "name": "orders", "relation": "producer"},
+        {"kind": "module", "name": "payments", "relation": "consumer"},
+    ]
+
+    endpoints = runner.invoke(app, ["architecture", "list", "endpoints", "--json"])
+    assert endpoints.exit_code == 0
+    assert publish.id in {item["id"] for item in json.loads(endpoints.output)}
+
+    consumers = runner.invoke(
+        app, ["architecture", "analyze", "consumers", "orders.created", "--json"]
+    )
+    assert consumers.exit_code == 0
+    assert json.loads(consumers.output)["microservices"] == ["payments"]
+
+    implementation = runner.invoke(
+        app, ["architecture", "implementation", "endpoint", publish.id, "--json"]
+    )
+    assert implementation.exit_code == 0
+    assert json.loads(implementation.output)["implementation"]["snippet"] == "send"
 
 
 @pytest.mark.integration

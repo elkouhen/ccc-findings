@@ -312,6 +312,30 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
+### `cccr architecture <list|show|neighbors|analyze|implementation>`
+
+The architecture explorer is the object-oriented navigation surface for the
+indexed domain model. It works with business objects rather than source files:
+`module`, `microservice`, `endpoint`, `topic`, `api` and MongoDB `collection`.
+
+- `architecture list [kind]`: discovery-level inventory. The default kind is
+  `microservices`.
+- `architecture show <kind> <name>`: concise object summary. A module includes
+  its build tool, language, exposed and consumed HTTP APIs, produced and
+  consumed Kafka topics, MongoDB collections, technologies, OpenAPI presence
+  and direct dependencies.
+- `architecture neighbors <kind> <name>`: direct graph relations, allowing a
+  user to move from a module to its APIs/topics/collections or from a topic to
+  its producers and consumers.
+- `architecture analyze <consumers|producers|calls|external-apis|orphan-endpoints|impact> [target]`:
+  architecture questions based on the same relationships.
+- `architecture implementation endpoint <id>`: the only navigation command
+  that exposes source evidence (path, line range, qualified class when known,
+  and indexed snippet), because the user explicitly requested implementation.
+
+All commands support `--json`. Except `implementation`, neither text nor JSON
+output includes source file paths or source snippets.
+
 ### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE]`
 *Java/Spring microservices extension — beta.*
 

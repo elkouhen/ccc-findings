@@ -182,6 +182,27 @@ cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka
 cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
 ```
 
+### Architecture explorer
+
+`architecture` is the object-oriented entry point. Its default views contain
+only architecture facts: they never return file paths or source code. Source
+evidence is available only through the explicit `implementation` command.
+
+```bash
+cccr architecture list microservices
+cccr architecture show module order-service
+cccr architecture list topics
+cccr architecture neighbors topic orders.created
+cccr architecture analyze consumers orders.created
+cccr architecture analyze calls order-service
+cccr architecture analyze orphan-endpoints
+cccr architecture implementation endpoint <endpoint-id>
+```
+
+The available objects are `module`, `microservice`, `endpoint`, `topic`, `api`
+and `collection`. Use `--json` for a structured representation of the same
+object graph.
+
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `cccr init` first tries to copy these packs from the skill repo into
 `.cccr/rules/`, then enables them in `rules:`. The audit workflow then remains

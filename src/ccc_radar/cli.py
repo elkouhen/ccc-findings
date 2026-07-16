@@ -10,6 +10,16 @@ from typing import Literal, Optional
 import typer
 
 from ccc_radar import __version__
+from ccc_radar.architecture import (
+    analyze as analyze_architecture,
+    build_catalog,
+    endpoint_implementation,
+    list_objects as list_architecture_objects,
+    neighbors as architecture_neighbors,
+    normalize_kind as normalize_architecture_kind,
+    render_text as render_architecture_text,
+    show_object as show_architecture_object,
+)
 from ccc_radar.code_search import search_code_with_findings
 from ccc_radar.audit import assess_architecture, render_audit_json, render_audit_text
 from ccc_radar.config import ConfigError, init_config, load_config
@@ -66,6 +76,10 @@ from ccc_radar.doctor import has_errors, run_doctor
 app = typer.Typer(
     help="ccc-radar: indexe findings, code associé et signaux d'architecture exploitables par agent"
 )
+architecture_app = typer.Typer(
+    help="Exploration orientée objets métier : modules, APIs, topics et collections."
+)
+app.add_typer(architecture_app, name="architecture")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_PACK = "p/security-audit"
@@ -119,6 +133,103 @@ def _manifest_rel_paths(repo_root: Path, paths: list[Path]) -> list[str]:
 @app.callback()
 def main() -> None:
     """ccc-radar: indexe findings, code associé et signaux d'architecture."""
+
+
+def _architecture_catalog():
+    repo_root = Path.cwd()
+    _require_index(repo_root)
+    with Store(repo_root, readonly=True) as store:
+        return build_catalog(store.all_modules(), store.all_endpoints())
+
+
+def _architecture_kind_or_error(kind: str) -> str:
+    normalized = normalize_architecture_kind(kind)
+    if normalized is None:
+        typer.echo(
+            "Type inconnu : utilisez module, microservice, endpoint, topic, api ou collection.", err=True
+        )
+        raise typer.Exit(code=2)
+    return normalized
+
+
+def _emit_architecture(result: object, json_output: bool) -> None:
+    typer.echo(json.dumps(result) if json_output else render_architecture_text(result))
+
+
+@architecture_app.command("list")
+def architecture_list_cmd(
+    kind: str = typer.Argument("microservices", help="Type d'objet à lister."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Niveau découverte : liste les objets métier sans afficher les fichiers."""
+    catalog = _architecture_catalog()
+    _emit_architecture(list_architecture_objects(catalog, _architecture_kind_or_error(kind)), json_output)
+
+
+@architecture_app.command("show")
+def architecture_show_cmd(
+    kind: str = typer.Argument(..., help="module, microservice, endpoint, topic, api ou collection"),
+    name: str = typer.Argument(..., help="Nom métier exact de l'objet."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Niveau résumé : décrit le rôle et les capacités d'un objet métier."""
+    catalog = _architecture_catalog()
+    result = show_architecture_object(catalog, _architecture_kind_or_error(kind), name)
+    if result is None:
+        typer.echo(f"Objet d'architecture introuvable : {kind} {name}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+@architecture_app.command("neighbors")
+def architecture_neighbors_cmd(
+    kind: str = typer.Argument(..., help="module, microservice, endpoint, topic, api ou collection"),
+    name: str = typer.Argument(..., help="Nom métier exact de l'objet."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Niveau navigation : affiche les objets directement reliés."""
+    catalog = _architecture_catalog()
+    result = architecture_neighbors(catalog, _architecture_kind_or_error(kind), name)
+    if result is None:
+        typer.echo(f"Objet d'architecture introuvable : {kind} {name}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+@architecture_app.command("analyze")
+def architecture_analyze_cmd(
+    query: str = typer.Argument(..., help="consumers, producers, calls, external-apis, orphan-endpoints ou impact"),
+    target: Optional[str] = typer.Argument(None, help="Topic ou objet cible selon l'analyse."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Répond à des questions d'architecture sur les relations indexées."""
+    catalog = _architecture_catalog()
+    result = analyze_architecture(catalog, query, target)
+    if result is None:
+        typer.echo(
+            "Analyse impossible : vérifiez la question et sa cible (consumers/producers/calls/"
+            "external-apis/orphan-endpoints/impact).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+@architecture_app.command("implementation")
+def architecture_implementation_cmd(
+    kind: str = typer.Argument(..., help="Seul le type endpoint est actuellement disponible."),
+    identifier: str = typer.Argument(..., help="Identifiant de l'endpoint retourné par l'inventaire."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Niveau implémentation : affiche explicitement la localisation et l'extrait d'un endpoint."""
+    if kind.casefold() != "endpoint":
+        typer.echo("Seule l'implémentation d'un endpoint est disponible.", err=True)
+        raise typer.Exit(code=2)
+    result = endpoint_implementation(_architecture_catalog(), identifier)
+    if result is None:
+        typer.echo(f"Endpoint introuvable : {identifier}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
 
 
 @app.command()
