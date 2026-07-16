@@ -812,6 +812,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "function shortestPathThrough(stops)" in document
     assert "Chemin le plus court" in document
     assert "Chemin avec noeuds intermediaires" in document
+    assert "Messages publies" in document
+    assert "function persistState()" in document
+    assert "function restoreState()" in document
+    assert "history.replaceState" in document
     assert "mongodb_collection:order-service:orders" in document
     assert '"complexity": {"score": 2' in document
     assert "Complexite elevee" in document

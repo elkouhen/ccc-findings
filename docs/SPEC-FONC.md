@@ -437,10 +437,12 @@ relation uses a stable `source -> target : action` wording rather than a
 selection-relative direction. Two microservice selectors can highlight the
 shortest directed path between them, preserving REST call direction and Kafka
 `producer -> topic -> consumer` steps; producer-to-topic path relations include
-their statically inferred published Java message types. An ordered list of intermediate service
+their statically inferred published Java message types, also grouped in a
+dedicated path-details section. An ordered list of intermediate service
 or Kafka-topic nodes can constrain the path; each adjacent pair uses its own
 shortest directed segment. The
-generated document embeds graph data locally and loads Sigma.js from its CDN
+generated document persists the current node selection or path in its URL
+fragment, so a browser refresh restores it, embeds graph data locally and loads Sigma.js from its CDN
 when opened. Microservices are hexagons, Kafka topics circles and MongoDB
 collections squares; a blue, orange or red border reflects the node's number
 of direct relations.

@@ -1147,6 +1147,27 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
       details.append(heading, list);
     }
+    function persistState() {
+      const params = new URLSearchParams();
+      if (pathFrom.value) params.set("from", pathFrom.value);
+      if (pathTo.value) params.set("to", pathTo.value);
+      viaNodes.forEach(id => params.append("via", id));
+      if (!pathFrom.value && !pathTo.value && !viaNodes.length && selectedId) {
+        params.set("selected", selectedId);
+      }
+      const fragment = params.toString();
+      try {
+        history.replaceState(null, "", fragment ? `#${fragment}` : location.pathname);
+      } catch (_error) {
+        location.hash = fragment;
+      }
+    }
+    function clearPathControls() {
+      pathFrom.value = "";
+      pathTo.value = "";
+      viaNodes.splice(0, viaNodes.length);
+      renderViaNodes();
+    }
     function relationText(link) {
       const source = nodeDataById.get(link.source);
       const target = nodeDataById.get(link.target);
@@ -1207,7 +1228,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         stop.className = "path-stop";
         stop.title = "Retirer ce noeud intermediaire";
         stop.setAttribute("aria-label", `Retirer ${nodeDataById.get(id).name} des noeuds intermediaires`);
-        stop.textContent = `${nodeDataById.get(id).name} ×`;
+        stop.textContent = `${nodeDataById.get(id).name} x`;
         stop.addEventListener("click", () => {
           viaNodes.splice(index, 1);
           renderViaNodes();
@@ -1223,12 +1244,23 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       details.append(title, document.createTextNode(
         path.nodes.map(id => nodeDataById.get(id).name).join(" -> ")
       ));
+      const publishedMessages = path.edges.flatMap(step => {
+        const source = nodeDataById.get(step.link.source);
+        const target = nodeDataById.get(step.link.target);
+        return (step.link.published_message_types || []).map(
+          type => `${source.name} -> ${target.name} : ${type}`
+        );
+      });
+      appendList("Messages publies", publishedMessages);
       appendList("Relations", path.edges.map(step => relationText(step.link)));
     }
     function showShortestPath() {
       const sourceId = pathFrom.value;
       const targetId = pathTo.value;
-      if (!sourceId || !targetId) return;
+      if (!sourceId || !targetId) {
+        persistState();
+        return;
+      }
       const stops = [sourceId, ...viaNodes, targetId];
       if (new Set(stops).size !== stops.length) {
         reset();
@@ -1247,6 +1279,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       renderer.refresh();
       renderPathDetails(path);
       renderer.getCamera().animatedReset({ duration: 220 });
+      persistState();
     }
     function renderDetails(id) {
       const node = nodeDataById.get(id);
@@ -1271,6 +1304,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       appendList("Relations", edges.map(relationText));
     }
     function selectNode(id) {
+      clearPathControls();
       selectedId = id;
       relatedNodes = new Set([id]);
       relatedEdges = new Set();
@@ -1283,16 +1317,41 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       renderDetails(id);
       const position = renderer.getNodeDisplayData(id);
       if (position) renderer.getCamera().animate({ x: position.x, y: position.y, ratio: .55 }, { duration: 260 });
+      persistState();
     }
     function reset() {
       selectedId = null; relatedNodes = null; relatedEdges = null;
       renderer.refresh();
       details.textContent = "Selectionnez un noeud pour isoler ses relations et afficher ses APIs.";
       search.value = "";
-      pathFrom.value = "";
-      pathTo.value = "";
-      viaNodes.splice(0, viaNodes.length);
+      clearPathControls();
+      persistState();
+    }
+    function restoreState() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const sourceId = params.get("from");
+      const targetId = params.get("to");
+      if (sourceId && nodeDataById.get(sourceId)?.kind === "microservice") pathFrom.value = sourceId;
+      if (targetId && nodeDataById.get(targetId)?.kind === "microservice") pathTo.value = targetId;
+      params.getAll("via").forEach(id => {
+        const node = nodeDataById.get(id);
+        if (
+          node
+          && (node.kind === "microservice" || node.kind === "kafka_topic")
+          && !viaNodes.includes(id)
+          && id !== pathFrom.value
+          && id !== pathTo.value
+        ) {
+          viaNodes.push(id);
+        }
+      });
       renderViaNodes();
+      if (pathFrom.value || pathTo.value || viaNodes.length) {
+        showShortestPath();
+        return;
+      }
+      const selectedIdFromUrl = params.get("selected");
+      if (selectedIdFromUrl && nodeDataById.has(selectedIdFromUrl)) selectNode(selectedIdFromUrl);
     }
     renderer.on("clickNode", ({ node }) => selectNode(node));
     renderer.on("clickStage", reset);
@@ -1311,6 +1370,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       renderViaNodes();
       showShortestPath();
     });
+    restoreState();
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
       const node = graphData.nodes.find(item => item.name.toLocaleLowerCase().includes(query));
