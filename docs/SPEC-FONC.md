@@ -434,18 +434,19 @@ nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice, and the published and consumed Java
 message types of a selected Kafka topic when statically known, as well as direct relations. Each
 relation uses a stable `source -> target : action` wording rather than a
-selection-relative direction. Two microservice selectors can highlight the
-shortest directed path between them, preserving REST call direction and Kafka
-`producer -> topic -> consumer` steps; producer-to-topic path relations include
+selection-relative direction. A text field accepts a path such as
+`service-a -> topic-1 -> service-b` and highlights the shortest directed path
+between every pair of consecutive entries, preserving REST call direction and
+Kafka `producer -> topic -> consumer` steps; producer-to-topic path relations include
 their statically inferred published Java message types, also grouped in a
 dedicated path-details section and rendered beside the Kafka topic in the path
-description (`producer -> TOPIC (JavaType) -> consumer`). An unknown type is
+description (`producer -> TOPIC (JavaType) -> consumer`). The `Verrouiller`
+toggle preserves the path form while a node is selected for inspection, so the
+path can be shown again without entering its stops anew. An unknown type is
 rendered explicitly rather than silently omitted; when publication has no
-known type, the topic falls back to its statically known consumer type. The source, target and
-intermediate-node selectors are alphabetically sorted; intermediate choices are
-grouped into microservices and Kafka topics. An ordered list of intermediate service
-or Kafka-topic nodes can constrain the path; each adjacent pair uses its own
-shortest directed segment. The
+known type, the topic falls back to its statically known consumer type. The first
+and last entries must be microservices; intermediate entries can be
+microservices or Kafka topics. The
 generated document persists the current node selection or path in its URL
 fragment, so a browser refresh restores it, embeds graph data locally and loads Sigma.js from its CDN
 when opened. Microservices are hexagons, Kafka topics circles and MongoDB

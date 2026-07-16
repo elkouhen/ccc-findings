@@ -805,12 +805,11 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "link.published_message_types" in document
     assert "publie${types.length" in document
     assert 'link.source === id ? "vers"' not in document
-    assert 'id="path-from"' in document
-    assert 'id="path-to"' in document
-    assert 'id="path-via"' in document
-    assert "function sortNodes(nodes)" in document
-    assert "Microservices" in document
-    assert "Topics Kafka" in document
+    assert 'id="path-query"' in document
+    assert 'id="path-lock"' in document
+    assert 'placeholder="service-a -> topic-1 -> service-b"' in document
+    assert "function parsePathQuery()" in document
+    assert "nodesByNormalizedName" in document
     assert "function shortestPath(sourceId, targetId)" in document
     assert "function shortestPathThrough(stops)" in document
     assert "Chemin le plus court" in document
@@ -822,6 +821,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "type Java non indexe" in document
     assert "function persistState()" in document
     assert "function restoreState()" in document
+    assert "if (!pathLock.checked) clearPathControls();" in document
+    assert 'pathQuery.addEventListener("keydown"' in document
     assert "history.replaceState" in document
     assert "mongodb_collection:order-service:orders" in document
     assert '"complexity": {"score": 2' in document

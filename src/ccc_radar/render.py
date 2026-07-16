@@ -853,12 +853,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     #graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
     .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
-    .toolbar input { width: 220px; height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
-    .toolbar select { width: 168px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    .toolbar input { height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    #search { width: 220px; }
+    #path-query { width: min(430px, calc(100vw - 64px)); }
     .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
-    #path-via-nodes { display: flex; flex-wrap: wrap; gap: 4px; }
-    .toolbar button.path-stop { width: auto; padding: 0 7px; color: #315f9b; font-size: 12px; }
+    .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+    .path-lock input { margin: 0; accent-color: #315f9b; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     #details strong { display: block; color: #172033; font-size: 14px; }
     #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -874,10 +875,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div class="toolbar">
     <strong>CCC Radar</strong>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
-    <select id="path-from" aria-label="Microservice source du chemin"><option value="">Service source</option></select>
-    <select id="path-via" aria-label="Noeud intermediaire du chemin"><option value="">Noeud intermediaire</option></select>
-    <span id="path-via-nodes" aria-label="Noeuds intermediaires selectionnes"></span>
-    <select id="path-to" aria-label="Microservice cible du chemin"><option value="">Service cible</option></select>
+    <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
+    <label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label>
     <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
     <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
     <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
@@ -1113,39 +1112,17 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     const details = document.getElementById("details");
     const search = document.getElementById("search");
-    const pathFrom = document.getElementById("path-from");
-    const pathVia = document.getElementById("path-via");
-    const pathViaNodes = document.getElementById("path-via-nodes");
-    const pathTo = document.getElementById("path-to");
-    const viaNodes = [];
-    function sortNodes(nodes) {
-      return [...nodes].sort((left, right) => left.name.localeCompare(
-        right.name, "fr", { sensitivity: "base", numeric: true }
-      ));
+    const pathQuery = document.getElementById("path-query");
+    const pathLock = document.getElementById("path-lock");
+    const pathStops = [];
+    const nodesByNormalizedName = new Map();
+    function normalizeNodeName(name) {
+      return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
     }
-    const microservices = sortNodes(graphData.nodes.filter(node => node.kind === "microservice"));
-    const kafkaTopics = sortNodes(graphData.nodes.filter(node => node.kind === "kafka_topic"));
-    microservices.forEach(node => {
-      for (const select of [pathFrom, pathTo]) {
-        const option = document.createElement("option");
-        option.value = node.id;
-        option.textContent = node.name;
-        select.append(option);
-      }
+    graphData.nodes.forEach(node => {
+      const key = normalizeNodeName(node.name);
+      nodesByNormalizedName.set(key, [...(nodesByNormalizedName.get(key) || []), node]);
     });
-    function appendViaOptions(label, nodes) {
-      const group = document.createElement("optgroup");
-      group.label = label;
-      nodes.forEach(node => {
-        const option = document.createElement("option");
-        option.value = node.id;
-        option.textContent = node.name;
-        group.append(option);
-      });
-      pathVia.append(group);
-    }
-    appendViaOptions("Microservices", microservices);
-    appendViaOptions("Topics Kafka", kafkaTopics);
 
     function appendList(title, values) {
       if (!values.length) return;
@@ -1157,10 +1134,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function persistState() {
       const params = new URLSearchParams();
-      if (pathFrom.value) params.set("from", pathFrom.value);
-      if (pathTo.value) params.set("to", pathTo.value);
-      viaNodes.forEach(id => params.append("via", id));
-      if (!pathFrom.value && !pathTo.value && !viaNodes.length && selectedId) {
+      if (pathStops.length) params.set("from", pathStops[0]);
+      if (pathStops.length > 1) params.set("to", pathStops[pathStops.length - 1]);
+      pathStops.slice(1, -1).forEach(id => params.append("via", id));
+      if (pathLock.checked) params.set("lock", "1");
+      if (!pathStops.length && selectedId) {
         params.set("selected", selectedId);
       }
       const fragment = params.toString();
@@ -1171,10 +1149,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       }
     }
     function clearPathControls() {
-      pathFrom.value = "";
-      pathTo.value = "";
-      viaNodes.splice(0, viaNodes.length);
-      renderViaNodes();
+      pathQuery.value = "";
+      pathStops.splice(0, pathStops.length);
     }
     function relationText(link) {
       const source = nodeDataById.get(link.source);
@@ -1228,27 +1204,36 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       }
       return path;
     }
-    function renderViaNodes() {
-      pathViaNodes.replaceChildren();
-      viaNodes.forEach((id, index) => {
-        const stop = document.createElement("button");
-        stop.type = "button";
-        stop.className = "path-stop";
-        stop.title = "Retirer ce noeud intermediaire";
-        stop.setAttribute("aria-label", `Retirer ${nodeDataById.get(id).name} des noeuds intermediaires`);
-        stop.textContent = `${nodeDataById.get(id).name} x`;
-        stop.addEventListener("click", () => {
-          viaNodes.splice(index, 1);
-          renderViaNodes();
-          showShortestPath();
-        });
-        pathViaNodes.append(stop);
-      });
+    function parsePathQuery() {
+      const names = pathQuery.value.split("->").map(name => name.trim()).filter(Boolean);
+      if (names.length < 2) return { error: "Saisissez au moins un service source et un service cible separes par ->." };
+      const stops = [];
+      for (const name of names) {
+        const candidates = nodesByNormalizedName.get(normalizeNodeName(name)) || [];
+        if (!candidates.length) return { error: `Noeud introuvable : ${name}.` };
+        if (candidates.length > 1) return { error: `Nom ambigu : ${name}.` };
+        stops.push(candidates[0].id);
+      }
+      const source = nodeDataById.get(stops[0]);
+      const target = nodeDataById.get(stops[stops.length - 1]);
+      if (source.kind !== "microservice" || target.kind !== "microservice") {
+        return { error: "Le premier et le dernier noeud doivent etre des microservices." };
+      }
+      if (stops.slice(1, -1).some(id => !["microservice", "kafka_topic"].includes(nodeDataById.get(id).kind))) {
+        return { error: "Les noeuds intermediaires doivent etre des microservices ou des topics Kafka." };
+      }
+      if (new Set(stops).size !== stops.length) {
+        return { error: "Les noeuds du chemin doivent etre distincts." };
+      }
+      return { stops };
+    }
+    function renderPathQuery() {
+      pathQuery.value = pathStops.map(id => nodeDataById.get(id).name).join(" -> ");
     }
     function renderPathDetails(path) {
       details.replaceChildren();
       const title = document.createElement("strong");
-      title.textContent = viaNodes.length ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
+      title.textContent = pathStops.length > 2 ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
       const pathNodeLabel = (id, index) => {
         const node = nodeDataById.get(id);
         if (node.kind !== "kafka_topic") return node.name;
@@ -1271,25 +1256,26 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       appendList("Relations", path.edges.map(step => relationText(step.link)));
     }
     function showShortestPath() {
-      const sourceId = pathFrom.value;
-      const targetId = pathTo.value;
-      if (!sourceId || !targetId) {
+      const parsed = parsePathQuery();
+      if (parsed.error) {
+        selectedId = null; relatedNodes = null; relatedEdges = null;
+        renderer.refresh();
+        details.textContent = parsed.error;
+        pathStops.splice(0, pathStops.length);
         persistState();
         return;
       }
-      const stops = [sourceId, ...viaNodes, targetId];
-      if (new Set(stops).size !== stops.length) {
-        reset();
-        details.textContent = "Les services source/cible et les noeuds intermediaires doivent etre distincts.";
-        return;
-      }
+      const stops = parsed.stops;
+      pathStops.splice(0, pathStops.length, ...stops);
       const path = shortestPathThrough(stops);
       if (path === null) {
-        reset();
+        selectedId = null; relatedNodes = null; relatedEdges = null;
+        renderer.refresh();
         details.textContent = "Aucun chemin oriente entre les deux microservices.";
+        persistState();
         return;
       }
-      selectedId = sourceId;
+      selectedId = stops[0];
       relatedNodes = new Set(path.nodes);
       relatedEdges = new Set(path.edges.map(step => step.edge));
       renderer.refresh();
@@ -1320,7 +1306,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       appendList("Relations", edges.map(relationText));
     }
     function selectNode(id) {
-      clearPathControls();
+      if (!pathLock.checked) clearPathControls();
       selectedId = id;
       relatedNodes = new Set([id]);
       relatedEdges = new Set();
@@ -1347,22 +1333,17 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const params = new URLSearchParams(location.hash.slice(1));
       const sourceId = params.get("from");
       const targetId = params.get("to");
-      if (sourceId && nodeDataById.get(sourceId)?.kind === "microservice") pathFrom.value = sourceId;
-      if (targetId && nodeDataById.get(targetId)?.kind === "microservice") pathTo.value = targetId;
-      params.getAll("via").forEach(id => {
-        const node = nodeDataById.get(id);
-        if (
-          node
-          && (node.kind === "microservice" || node.kind === "kafka_topic")
-          && !viaNodes.includes(id)
-          && id !== pathFrom.value
-          && id !== pathTo.value
-        ) {
-          viaNodes.push(id);
-        }
-      });
-      renderViaNodes();
-      if (pathFrom.value || pathTo.value || viaNodes.length) {
+      pathLock.checked = params.get("lock") === "1";
+      const restoredStops = [sourceId, ...params.getAll("via"), targetId];
+      if (
+        sourceId
+        && targetId
+        && nodeDataById.get(sourceId)?.kind === "microservice"
+        && nodeDataById.get(targetId)?.kind === "microservice"
+        && restoredStops.every(id => nodeDataById.has(id))
+      ) {
+        pathStops.push(...restoredStops);
+        renderPathQuery();
         showShortestPath();
         return;
       }
@@ -1376,15 +1357,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
-    pathFrom.addEventListener("change", showShortestPath);
-    pathTo.addEventListener("change", showShortestPath);
-    pathVia.addEventListener("change", event => {
-      const id = event.target.value;
-      event.target.value = "";
-      if (!id || viaNodes.includes(id) || id === pathFrom.value || id === pathTo.value) return;
-      viaNodes.push(id);
-      renderViaNodes();
-      showShortestPath();
+    pathLock.addEventListener("change", persistState);
+    pathQuery.addEventListener("keydown", event => {
+      if (event.key === "Enter") showShortestPath();
     });
     restoreState();
     search.addEventListener("input", event => {
