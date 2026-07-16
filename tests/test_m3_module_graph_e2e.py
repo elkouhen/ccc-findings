@@ -25,7 +25,7 @@ def single_index_cycle_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.chdir(dest)
     init_result = runner.invoke(app, ["init", "--rules", "service-x/rules/java.yaml"])
     assert init_result.exit_code == 0
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
     assert index_result.exit_code == 0, index_result.output
     return dest
 
@@ -75,7 +75,7 @@ def single_index_kafka_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.chdir(dest)
     init_result = runner.invoke(app, ["init", "--rules", "order-service/rules/java.yaml"])
     assert init_result.exit_code == 0
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
     assert index_result.exit_code == 0, index_result.output
     return dest
 

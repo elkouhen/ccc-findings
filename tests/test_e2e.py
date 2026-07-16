@@ -28,7 +28,7 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
         "cccr init n'a pas créé .cccr/config.yml"
     )
 
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
     assert index_result.exit_code == 0, f"cccr index a échoué : {index_result.output}"
     assert "+findings=4" in index_result.output, (
         f"cccr index n'a pas trouvé les 4 findings attendus : {index_result.output}"
@@ -53,7 +53,7 @@ def test_full_init_index_search_fix_reindex_summary_scenario(
         "    return cursor.fetchall()\n"
     )
 
-    reindex_result = runner.invoke(app, ["index"])
+    reindex_result = runner.invoke(app, ["index", "--semgrep"])
     assert reindex_result.exit_code == 0, (
         f"cccr index (après correction) a échoué : {reindex_result.output}"
     )

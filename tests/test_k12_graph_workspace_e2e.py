@@ -25,7 +25,7 @@ def indexed_cycle_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch.chdir(dest / service)
         init_result = runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
         assert init_result.exit_code == 0
-        index_result = runner.invoke(app, ["index"])
+        index_result = runner.invoke(app, ["index", "--semgrep"])
         assert index_result.exit_code == 0, index_result.output
     return dest
 

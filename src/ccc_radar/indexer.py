@@ -333,11 +333,18 @@ def index_repo(
                 )
         else:
             _report_progress(progress, "  • aucun module Maven/Gradle détecté ; scan de la racine.")
-    endpoint_signature = current_endpoint_inventory_signature()
-    if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
-        full = True
-    if store.get_meta("topic_strategy") != topic_strategy:
-        full = True
+    # Les signatures d'inventaire d'endpoints (version du code d'inférence,
+    # stratégie de topic) ne sont lues/écrites que quand Semgrep tourne : ce
+    # sont des états du scan d'endpoints, pas de l'inventaire de fichiers.
+    # Les consulter avec Semgrep désactivé forcerait un `full=True` à chaque
+    # exécution (la meta n'est jamais écrite — voir plus bas), cassant
+    # l'incrémentalité de `cccr index` lancé sans `--semgrep`.
+    if "semgrep" not in disabled:
+        endpoint_signature = current_endpoint_inventory_signature()
+        if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
+            full = True
+        if store.get_meta("topic_strategy") != topic_strategy:
+            full = True
     analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
     if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
         full = True
@@ -378,12 +385,13 @@ def index_repo(
         f"{len(deleted)} supprimé(s)).",
     )
 
-    findings_removed = 0
-    endpoints_removed = 0
-    if "semgrep" not in disabled:
-        findings_removed = store.count_findings_for_paths(deleted)
-        endpoints_removed = store.count_endpoints_for_paths(deleted)
-        store.remove_files(deleted)  # purge aussi les endpoints (K1)
+    # Les fichiers supprimés quittent toujours l'inventaire, même quand le
+    # scan Semgrep est désactivé : leurs empreintes disparaissent et leurs
+    # findings/endpoints/chunks sont purgés (K1) — indispensable pour que la
+    # prochaine exécution reste incrémentale.
+    findings_removed = store.count_findings_for_paths(deleted)
+    endpoints_removed = store.count_endpoints_for_paths(deleted)
+    store.remove_files(deleted)  # purge aussi les endpoints (K1)
 
     findings_added = 0
     endpoints_added = 0
@@ -428,11 +436,14 @@ def index_repo(
         _trace("store.endpoints_written", findings=len(findings), endpoints=len(endpoints))
         findings_added = len(findings)
         endpoints_added = len(endpoints)
-
-        for path in changed:
-            store.set_file_hash(path, current_hashes[path])
     elif changed:
         _report_progress(progress, "→ Indexation : Semgrep désactivé, findings et endpoints conservés.")
+
+    # Les empreintes de fichiers sont l'état de l'inventaire, indépendant du
+    # scan Semgrep : on les persiste toujours pour que la prochaine exécution
+    # reste incrémentale même quand les findings ne sont pas indexés.
+    for path in changed:
+        store.set_file_hash(path, current_hashes[path])
 
     if "semgrep" not in disabled:
         store.set_meta("endpoint_inventory_signature", endpoint_signature)

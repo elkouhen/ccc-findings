@@ -39,7 +39,7 @@ def indexed_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(dest)
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
     return dest
 
 
@@ -401,7 +401,7 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_topology(
     for service in ("service-x", "service-y", "service-z"):
         monkeypatch.chdir(dest / service)
         runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"])
-        index_result = runner.invoke(cli_app, ["index"])
+        index_result = runner.invoke(cli_app, ["index", "--semgrep"])
         assert index_result.exit_code == 0
 
     monkeypatch.chdir(dest / "service-x")
@@ -581,7 +581,7 @@ def test_trace_message_flow_tool_with_workspace_root_traces_across_services(
     for service in ("order-service", "payment-service"):
         monkeypatch.chdir(dest / service)
         runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
-        index_result = runner.invoke(app, ["index"])
+        index_result = runner.invoke(app, ["index", "--semgrep"])
         assert index_result.exit_code == 0
 
     monkeypatch.chdir(dest / "order-service")

@@ -322,7 +322,7 @@ def test_index_with_default_registry_rulesets_succeeds_end_to_end(
     init_result = runner.invoke(app, ["init"])
     assert init_result.exit_code == 0
 
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
 
     assert index_result.exit_code == 0
     assert "→ Indexation :" in index_result.output
@@ -366,7 +366,7 @@ def test_init_with_rules_then_index_reports_correctly(
     assert init_result.exit_code == 0
     assert (repo_copy / ".cccr" / "config.yml").is_file()
 
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
 
     assert index_result.exit_code == 0
     assert "→ Indexation :" in index_result.output
@@ -426,7 +426,7 @@ def test_findings_json_output_matches_contract(
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
 
     result = runner.invoke(app, ["findings", "injection sql", "--json"])
 
@@ -460,7 +460,7 @@ def test_findings_invalid_severity_fails_with_exit_code_2(
     stockée telle quelle) échouait auparavant avec un ValueError brut."""
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
 
     result = runner.invoke(app, ["findings", "injection sql", "--severity", "HIGH"])
 
@@ -474,7 +474,7 @@ def test_findings_context_includes_offending_source_line(
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
 
     result = runner.invoke(
         app, ["findings", "injection sql", "--path", "app/db.py", "--context", "--json"]
@@ -490,7 +490,7 @@ def test_findings_hybrid_query_can_match_exact_rule_id(
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
 
     result = runner.invoke(app, ["findings", "custom.subprocess-shell-true", "--json"])
 
@@ -560,7 +560,7 @@ def test_search_uses_ccc_even_when_experimental_code_index_is_available(
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    index_result = runner.invoke(app, ["index", "--engine", "cocoindex"])
+    index_result = runner.invoke(app, ["index", "--semgrep", "--engine", "cocoindex"])
     assert index_result.exit_code == 0
     (repo_copy / ".cocoindex_code").mkdir()
     (repo_copy / ".cocoindex_code" / "target_sqlite.db").write_text("")
@@ -658,7 +658,7 @@ def test_summary_json_has_expected_structure(
 ) -> None:
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    runner.invoke(app, ["index"])
+    runner.invoke(app, ["index", "--semgrep"])
 
     result = runner.invoke(app, ["summary", "--json"])
 
@@ -1209,7 +1209,7 @@ def test_graph_reflects_a_real_cccr_index_run(
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
 
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--semgrep"])
     assert index_result.exit_code == 0
 
     graph_result = runner.invoke(app, ["export", "microservices", "--json"])

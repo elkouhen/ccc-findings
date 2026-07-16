@@ -40,7 +40,7 @@ def test_two_independently_indexed_services_federate_with_a_kafka_edge_between_t
         monkeypatch.chdir(dest / service)
         init_result = runner.invoke(app, ["init", "--rules", "rules/java.yaml"])
         assert init_result.exit_code == 0
-        index_result = runner.invoke(app, ["index"])
+        index_result = runner.invoke(app, ["index", "--semgrep"])
         assert index_result.exit_code == 0, index_result.output
 
     services = discover_maven_services(dest)

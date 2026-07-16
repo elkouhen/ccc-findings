@@ -925,6 +925,10 @@ def init(
         raise typer.Exit(code=1) from exc
 
     typer.echo(f"Configuration créée : {path}")
+    typer.echo(
+        "Note : `cccr index` n'exécute pas Semgrep par défaut. "
+        "Passez `--semgrep` pour peupler les findings et les endpoints."
+    )
 
 
 @app.command(name="index")
@@ -954,10 +958,24 @@ def index_cmd(
             "ou module-tree-sitter. Répétable."
         ),
     ),
+    semgrep: bool = typer.Option(
+        False,
+        "--semgrep/--no-semgrep",
+        help=(
+            "Active le scan Semgrep : findings de sécurité et inventaire "
+            "d'endpoints REST/Kafka. Désactivé par défaut (plus rapide) ; "
+            "passez --semgrep pour l'activer."
+        ),
+    ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut).
 
-    Exemples : `cccr index`, `cccr index --full`, `cccr index --topic-strategy strategy1`,
+    Le scan Semgrep est désactivé par défaut : `cccr index` inventorier le
+    code et les modules sans exécuter Semgrep. Ajoutez `--semgrep` pour
+    peupler les findings et les endpoints REST/Kafka.
+
+    Exemples : `cccr index`, `cccr index --semgrep`, `cccr index --full`,
+    `cccr index --topic-strategy strategy1`,
     `cccr index --manifest TOPICS.md`,
     `cccr index --manifest kafka-flow-graph-anonymous.json`.
     """
@@ -976,6 +994,9 @@ def index_cmd(
             err=True,
         )
         raise typer.Exit(code=2)
+    # Semgrep est désormais opt-in : désactivé par défaut, sauf si `--semgrep`
+    # est passé (il l'emporte alors sur un éventuel `--disable semgrep`).
+    disabled = (disabled - {"semgrep"}) if semgrep else (disabled | {"semgrep"})
 
     try:
         config = load_config(repo_root)
