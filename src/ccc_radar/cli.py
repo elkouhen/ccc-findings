@@ -230,6 +230,44 @@ def resources_cmd(
     raise typer.Exit(code=2)
 
 
+@app.command(name="mongodb")
+def mongodb_cmd(
+    arguments: list[str] = typer.Argument(
+        None, help="Sous-commande et collection MongoDB à explorer."
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Explore les collections MongoDB et les modules qui les utilisent."""
+    arguments = arguments or []
+    catalog = _microservice_catalog((root or Path.cwd()).resolve())
+    if not arguments or arguments[0] == "list":
+        if len(arguments) > 1:
+            typer.echo("Usage : `cccr mongodb [list] --root <workspace>`.", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(list_architecture_objects(catalog, "collection"), json_output)
+        return
+    command = arguments[0]
+    if command not in {"show", "neighbors", "services", "search"} or len(arguments) != 2:
+        typer.echo("Usage : `cccr mongodb [list|show|neighbors|services|search] [collection]`.", err=True)
+        raise typer.Exit(code=2)
+    collection = arguments[1]
+    if command == "show":
+        result = show_architecture_object(catalog, "collection", collection)
+    elif command == "neighbors":
+        result = architecture_neighbors(catalog, "collection", collection)
+    elif command == "services":
+        result = _mongodb_services(catalog, collection)
+    else:
+        result = _search_mongodb_collection(catalog, collection)
+    if result is None:
+        typer.echo(f"Collection MongoDB introuvable : {collection}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
 @app.command()
 def version() -> None:
     """Affiche la version du package."""
@@ -742,10 +780,19 @@ def audit_cmd(
     if workspace is not None:
         federation = load_federation(discover_maven_services(workspace))
         endpoints_by_service = dict(federation.endpoints_by_service)
+        endpoints_by_module = dict(federation.endpoints_by_module)
+        modules = list(federation.modules_by_service.values())
     else:
         with Store(repo_root, readonly=True) as store:
-            endpoints_by_service = group_endpoints_by_module(store.all_endpoints())
-    risks = assess_architecture(endpoints_by_service, build_graph(endpoints_by_service))
+            endpoints_by_module = group_endpoints_by_module(store.all_endpoints())
+            modules = store.all_modules()
+        endpoints_by_service = endpoints_by_module
+    risks = assess_architecture(
+        endpoints_by_service,
+        build_graph(endpoints_by_service),
+        modules=modules,
+        endpoints_by_module=endpoints_by_module,
+    )
     typer.echo(json.dumps(render_audit_json(risks)) if json_output else render_audit_text(risks))
 
 
@@ -775,12 +822,12 @@ def microservices_cmd(
     """
     arguments = arguments or []
     commands = {
-        "topics", "resources", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
+        "topics", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
     }
     if arguments and arguments[0] in commands:
         workspace_root = (root or Path.cwd()).resolve()
         command = arguments[0]
-        if command in {"topics", "resources", "properties", "openapi", "show"}:
+        if command in {"topics", "resources", "mongodb", "properties", "openapi", "show"}:
             if len(arguments) != 2:
                 typer.echo(f"`microservices {command}` requiert un nom de microservice.", err=True)
                 raise typer.Exit(code=2)
@@ -800,6 +847,8 @@ def microservices_cmd(
             _render_microservice_topics(service, workspace_root, json_output)
         elif command == "resources":
             _render_microservice_resources(service, workspace_root, json_output)
+        elif command == "mongodb":
+            _render_microservice_mongodb(service, workspace_root, json_output)
         elif command == "properties":
             _render_microservice_properties(service, workspace_root, json_output)
         elif command == "openapi":
@@ -891,6 +940,31 @@ def _search_architecture_object(
     return {"query": query, "resolved": resolved, "object": summary} if summary else None
 
 
+def _search_mongodb_collection(catalog, query: str) -> dict[str, object] | None:
+    collections = {
+        collection
+        for module in catalog.modules
+        for collection in module.mongo_collections
+    }
+    resolved = resolve_topic(query, collections)
+    if resolved is None:
+        return None
+    summary = show_architecture_object(catalog, "collection", resolved)
+    return {"query": query, "resolved": resolved, "object": summary} if summary else None
+
+
+def _mongodb_services(catalog, collection: str) -> dict[str, object] | None:
+    summary = show_architecture_object(catalog, "collection", collection)
+    if summary is None:
+        return None
+    microservices = [
+        module.name
+        for module in catalog.modules
+        if module.starts_application and collection in module.mongo_collections
+    ]
+    return {"query": "services", "collection": collection, "microservices": microservices}
+
+
 def _render_microservice_summary(service: str, root: Path, json_output: bool) -> None:
     result = show_architecture_object(_microservice_catalog(root), "microservice", service)
     if result is None:
@@ -964,6 +1038,21 @@ def _render_microservice_resources(service: str, root: Path, json_output: bool) 
             "microservice": service,
             "exposed": summary["http_apis_exposed"],
             "consumed": summary["http_apis_consumed"],
+        },
+        json_output,
+    )
+
+
+def _render_microservice_mongodb(service: str, root: Path, json_output: bool) -> None:
+    """Liste les collections MongoDB utilisées par un microservice."""
+    summary = show_architecture_object(_microservice_catalog(root), "microservice", service)
+    if summary is None:
+        typer.echo(f"Microservice introuvable : {service}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(
+        {
+            "microservice": service,
+            "collections": summary["databases"]["mongodb_collections"],
         },
         json_output,
     )

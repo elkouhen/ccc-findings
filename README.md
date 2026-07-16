@@ -192,6 +192,9 @@ cccr topics trace orders.created  # potential Kafka flows, not runtime traces
 cccr resources                  # discovered HTTP resources
 cccr resources consumers "POST /payments"
 cccr resources search payments
+cccr mongodb                     # indexed MongoDB collections
+cccr mongodb services orders     # microservices using a collection
+cccr microservices mongodb order-service
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
 cccr modules graph              # declared local build dependencies between modules
 cccr modules graph --drawio modules.drawio

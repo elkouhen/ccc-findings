@@ -6,6 +6,13 @@ from dataclasses import asdict, dataclass
 
 from ccc_radar.graph import GraphEdge
 from ccc_radar.models import MessageEndpoint
+from ccc_radar.modules import DiscoveredModule
+
+
+_MONGO_WRITE_OPERATIONS = frozenset({
+    "bulkOps", "findAndModify", "findAndReplace", "insert", "remove", "save",
+    "updateFirst", "updateMulti", "upsert",
+})
 
 
 @dataclass(frozen=True)
@@ -19,7 +26,11 @@ class ArchitectureRisk:
 
 
 def assess_architecture(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    edges: list[GraphEdge],
+    *,
+    modules: list[DiscoveredModule] | None = None,
+    endpoints_by_module: dict[str, list[MessageEndpoint]] | None = None,
 ) -> list[ArchitectureRisk]:
     risks: list[ArchitectureRisk] = []
     edge_keys = {(edge.kind, edge.from_service, edge.to_service, edge.from_endpoint.topic) for edge in edges}
@@ -55,7 +66,55 @@ def assess_architecture(
                 "synchronous-rest-cycle", "ERROR", "Cycle de dépendance HTTP synchrone",
                 f"{source} appelle {target} et {target} appelle {source}.", (source, target),
             ))
+    for module in sorted(modules or [], key=lambda item: item.name):
+        if module.starts_application or module.kind == "aggregator":
+            continue
+        endpoints = (endpoints_by_module or {}).get(module.name, [])
+        risk = _non_runtime_module_activity_risk(module, endpoints)
+        if risk is not None:
+            risks.append(risk)
     return risks
+
+
+def _non_runtime_module_activity_risk(
+    module: DiscoveredModule, endpoints: list[MessageEndpoint]
+) -> ArchitectureRisk | None:
+    exposed_apis = sorted({
+        endpoint.topic for endpoint in endpoints if endpoint.system == "rest" and endpoint.role == "serve"
+    })
+    published_topics = sorted({
+        endpoint.topic for endpoint in endpoints if endpoint.system == "kafka" and endpoint.role == "produce"
+    })
+    consumed_topics = sorted({
+        endpoint.topic for endpoint in endpoints if endpoint.system == "kafka" and endpoint.role == "consume"
+    })
+    mongo_reads = sorted({
+        method.collection
+        for method in module.mongo_methods
+        if method.collection and method.operation not in _MONGO_WRITE_OPERATIONS
+    })
+    mongo_writes = sorted({
+        method.collection
+        for method in module.mongo_methods
+        if method.collection and method.operation in _MONGO_WRITE_OPERATIONS
+    })
+    responsibilities = [
+        ("APIs HTTP exposées", exposed_apis),
+        ("topics Kafka publiés", published_topics),
+        ("topics Kafka consommés", consumed_topics),
+        ("collections MongoDB lues", mongo_reads),
+        ("collections MongoDB écrites", mongo_writes),
+    ]
+    details = [f"{label}: {', '.join(values)}" for label, values in responsibilities if values]
+    if not details:
+        return None
+    return ArchitectureRisk(
+        "non-runtime-module-activity",
+        "WARNING",
+        "Module non microservice avec responsabilités d'exécution",
+        f"{module.name} est un module non runtime mais " + "; ".join(details) + ".",
+        (module.name,),
+    )
 
 
 def render_audit_text(risks: list[ArchitectureRisk]) -> str:

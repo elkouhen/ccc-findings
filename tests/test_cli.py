@@ -882,6 +882,34 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
         "microservice": "orders", "exposed": [], "consumed": ["POST /payments"]
     }
 
+    service_mongodb = runner.invoke(
+        app, ["microservices", "mongodb", "orders", "--root", str(tmp_path), "--json"]
+    )
+    assert service_mongodb.exit_code == 0
+    assert json.loads(service_mongodb.output) == {
+        "microservice": "orders", "collections": ["orders"]
+    }
+
+    mongodb_collections = runner.invoke(app, ["mongodb", "--root", str(tmp_path), "--json"])
+    assert mongodb_collections.exit_code == 0
+    assert json.loads(mongodb_collections.output) == [
+        {"kind": "collection", "name": "orders", "modules": ["orders"], "operations": 0}
+    ]
+
+    mongodb_services = runner.invoke(
+        app, ["mongodb", "services", "orders", "--root", str(tmp_path), "--json"]
+    )
+    assert mongodb_services.exit_code == 0
+    assert json.loads(mongodb_services.output) == {
+        "query": "services", "collection": "orders", "microservices": ["orders"]
+    }
+
+    mongodb_search = runner.invoke(
+        app, ["mongodb", "search", "ord", "--root", str(tmp_path), "--json"]
+    )
+    assert mongodb_search.exit_code == 0
+    assert json.loads(mongodb_search.output)["resolved"] == "orders"
+
     topic_neighbors = runner.invoke(
         app, ["topics", "neighbors", "orders.created", "--root", str(tmp_path), "--json"]
     )

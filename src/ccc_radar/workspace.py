@@ -32,6 +32,7 @@ class FederationResult:
     findings_by_service: dict[str, list[Finding]]
     warnings: list[str]
     modules_by_service: dict[str, DiscoveredModule] = field(default_factory=dict)
+    endpoints_by_module: dict[str, list[MessageEndpoint]] = field(default_factory=dict)
 
 
 def _dedupe_by_id(items: list[Finding] | list[MessageEndpoint]) -> list[Finding] | list[MessageEndpoint]:
@@ -94,6 +95,7 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
     endpoints_by_service: dict[str, list[MessageEndpoint]] = {}
     findings_by_service: dict[str, list[Finding]] = {}
     modules_by_service: dict[str, DiscoveredModule] = {}
+    endpoints_by_module: dict[str, list[MessageEndpoint]] = {}
     warnings: list[str] = []
 
     for service in services:
@@ -117,6 +119,7 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
                 findings = _dedupe_by_id(findings)
                 endpoints = _dedupe_by_id(endpoints)
                 findings_by_service[service.name] = findings
+                endpoints_by_module[service.name] = endpoints
                 if service.kind == "microservice":
                     endpoints_by_service[service.name] = endpoints
                 stale_warning = endpoint_inventory_warning(
@@ -127,4 +130,10 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
         except StoreError as exc:
             warnings.append(f"{service.name} : {exc}")
 
-    return FederationResult(endpoints_by_service, findings_by_service, warnings, modules_by_service)
+    return FederationResult(
+        endpoints_by_service,
+        findings_by_service,
+        warnings,
+        modules_by_service,
+        endpoints_by_module,
+    )

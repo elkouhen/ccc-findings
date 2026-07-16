@@ -491,6 +491,8 @@ business objects and never includes source paths or snippets by default:
   topics.
 - `cccr microservices resources <service>` lists exposed and consumed HTTP
   resources.
+- `cccr microservices mongodb <service>` lists indexed MongoDB collections
+  used by the microservice.
 - `cccr microservices neighbors <service>` lists direct relations of that
   microservice.
 - `cccr microservices analyze <calls|external-apis|orphan-endpoints|impact> [target]`
@@ -517,6 +519,15 @@ one exact topic name:
   transition is an exploration hypothesis, not proof of a runtime causal link.
 
 The command returns business objects only, without source paths or snippets.
+
+### `cccr mongodb [list|show|neighbors|services|search] [collection]`
+
+Explores indexed MongoDB collection objects from the same architecture graph.
+With no argument or `list`, it returns each collection with its indexed modules
+and known operation count. `show` returns that summary, `neighbors` returns the
+modules using it, `services` restricts that relation to runtime microservices,
+and `search` resolves an exact name or a unique case-insensitive substring.
+The command does not return source paths or snippets.
 
 ### `cccr resources [list|show|neighbors|providers|consumers|search] [resource]`
 
@@ -573,9 +584,11 @@ same no-real-values policy as `microservices properties`.
 
 Produces conservative architecture risks from the static inventory: Kafka
 producer or consumer with no indexed counterpart, dynamic Kafka/HTTP targets,
-and synchronous HTTP dependency cycles. Every result carries evidence and a
-confidence level; it is not an execution trace and never claims to prove a
-runtime path.
+and synchronous HTTP dependency cycles. It also reports non-runtime modules
+that expose HTTP APIs, publish or consume Kafka topics, or read/write indexed
+MongoDB collections. This last signal is a `WARNING` for architectural review,
+not proof of an error. Every result carries evidence and a confidence level;
+it is not an execution trace and never claims to prove a runtime path.
 
 ```json
 [
