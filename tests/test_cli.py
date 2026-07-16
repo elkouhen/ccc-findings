@@ -62,6 +62,37 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "--c4" in export_help.output
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["topics", "--help"],
+        ["apis", "--help"],
+        ["mongodb", "--help"],
+        ["analyze", "--help"],
+        ["version", "--help"],
+        ["doctor", "--help"],
+        ["init", "--help"],
+        ["index", "--help"],
+        ["search", "--help"],
+        ["findings", "--help"],
+        ["summary", "--help"],
+        ["integrations", "--help"],
+        ["graph", "--help"],
+        ["microservices", "--help"],
+        ["modules", "--help"],
+        ["mcp", "--help"],
+        ["export", "--help"],
+        ["export", "microservices", "--help"],
+        ["export", "modules", "--help"],
+    ],
+)
+def test_visible_command_help_includes_examples(command: list[str]) -> None:
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 0
+    assert "Exemple" in result.output
+
+
 def install_fake_skill_rules(home: Path, packs: tuple[str, ...] = DEFAULT_RULE_PACKS) -> Path:
     rules_root = home / "ccc-radar-skill" / "skills" / "cccr" / "rules"
     for pack in packs:

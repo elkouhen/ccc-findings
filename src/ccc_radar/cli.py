@@ -77,9 +77,19 @@ from ccc_radar.workspace import discover_maven_services, load_federation
 from ccc_radar.doctor import has_errors, run_doctor
 
 app = typer.Typer(
-    help="Explorer l'architecture et les constats d'un projet indexé."
+    help=(
+        "Explorer l'architecture et les constats d'un projet indexé.\n\n"
+        "Exemples : `cccr microservices`, `cccr analyze audit`, "
+        "`cccr export microservices --html graph.html`."
+    )
 )
-export_app = typer.Typer(help="Exporter les graphes de dépendances d'architecture.")
+export_app = typer.Typer(
+    help=(
+        "Exporter les graphes de dépendances d'architecture.\n\n"
+        "Exemples : `cccr export microservices --drawio graph.drawio`, "
+        "`cccr export modules --html modules.html`."
+    )
+)
 app.add_typer(export_app, name="export")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
@@ -156,7 +166,11 @@ def topics_cmd(
         50, "--limit", min=1, max=200, help="Nombre maximal de chemins retournés par trace.", hidden=True
     ),
 ) -> None:
-    """Parcourir les topics Kafka et les services qui les publient ou consomment."""
+    """Parcourir les topics Kafka et les services qui les publient ou consomment.
+
+    Exemples : `cccr topics`, `cccr topics show orders.created`,
+    `cccr topics neighbors orders.created`.
+    """
     arguments = arguments or []
     workspace_root = (root or Path.cwd()).resolve()
     catalog = _microservice_catalog(workspace_root)
@@ -201,7 +215,11 @@ def apis_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Parcourir les APIs HTTP et les services qui les exposent ou appellent."""
+    """Parcourir les APIs HTTP et les services qui les exposent ou appellent.
+
+    Exemples : `cccr apis`, `cccr apis show "POST /payments"`,
+    `cccr apis search payments`.
+    """
     arguments = arguments or []
     workspace_root = (root or Path.cwd()).resolve()
     catalog = _microservice_catalog(workspace_root)
@@ -259,7 +277,11 @@ def mongodb_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Parcourir les collections MongoDB et les microservices qui les utilisent."""
+    """Parcourir les collections MongoDB et les microservices qui les utilisent.
+
+    Exemples : `cccr mongodb`, `cccr mongodb show orders`,
+    `cccr mongodb neighbors orders`.
+    """
     arguments = arguments or []
     catalog = _microservice_catalog((root or Path.cwd()).resolve())
     if not arguments or arguments[0] == "list":
@@ -306,7 +328,17 @@ def analyze_cmd(
         20, "--limit", min=1, max=100, help="Nombre maximal de chemins ou flux retournés."
     ),
 ) -> None:
-    """Répondre aux questions d'architecture à partir du graphe indexé."""
+    """Répondre aux questions d'architecture à partir du graphe indexé.
+
+    Exemples :
+    `cccr analyze microservices path order-service shipping-service`
+    `cccr analyze microservices impact order-service`
+    `cccr analyze topics consumers orders.created`
+    `cccr analyze topics trace orders.created`
+    `cccr analyze apis providers "POST /payments"`
+    `cccr analyze mongodb services orders`
+    `cccr analyze audit`
+    """
     arguments = arguments or []
     if not arguments:
         typer.echo(
@@ -387,13 +419,19 @@ def analyze_cmd(
 
 @app.command()
 def version() -> None:
-    """Affiche la version du package."""
+    """Affiche la version du package.
+
+    Exemple : `cccr version`.
+    """
     typer.echo(__version__)
 
 
 @app.command(name="doctor")
 def doctor_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
-    """Vérifie les prérequis d'un audit d'architecture, sans modifier le projet."""
+    """Vérifie les prérequis d'un audit d'architecture, sans modifier le projet.
+
+    Exemples : `cccr doctor`, `cccr doctor --json`.
+    """
     checks = run_doctor(Path.cwd())
     result = [
         {"name": check.name, "status": check.status, "detail": check.detail}
@@ -481,7 +519,10 @@ def init(
         None, "--rules-root", help="Répertoire contenant les packs cccr (default/, rest/, kafka/, ...)."
     ),
 ) -> None:
-    """Initialise la configuration .cccr/config.yml du projet."""
+    """Initialise la configuration .cccr/config.yml du projet.
+
+    Exemples : `cccr init`, `cccr init --rules rules/java.yml`.
+    """
     repo_root = Path.cwd()
     if config_path(repo_root).exists():
         typer.echo(f"Une configuration existe déjà : {config_path(repo_root)}.", err=True)
@@ -549,7 +590,11 @@ def index_cmd(
         ),
     ),
 ) -> None:
-    """Indexe le code et les findings du projet (incrémental par défaut)."""
+    """Indexe le code et les findings du projet (incrémental par défaut).
+
+    Exemples : `cccr index`, `cccr index --full`,
+    `cccr index --manifest TOPICS.md`.
+    """
     repo_root = Path.cwd()
     _trace_index("cli.index.begin", root=repo_root, full=full, engine=engine)
     explicit_manifests = _manifest_rel_paths(repo_root, list(manifest_args or []) + list(manifests or []))
@@ -630,6 +675,8 @@ def search(
 ) -> None:
     """Recherche de code via `ccc`, dans le même ordre et avec la même limite,
     annotée des findings du même fichier ou de la même classe.
+
+    Exemples : `cccr search "payment flow"`, `cccr search "MongoTemplate" --limit 10`.
     """
     repo_root = Path.cwd()
 
@@ -667,6 +714,8 @@ def findings_cmd(
 ) -> None:
     """Liste les findings indexés ou les filtre par requête précision-first,
     sans recherche de code — pour la recherche code + findings, voir `search`.
+
+    Exemples : `cccr findings`, `cccr findings "sql injection" --json`.
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
@@ -695,7 +744,10 @@ def findings_cmd(
 
 @app.command(name="summary")
 def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
-    """Vue agrégée des findings (sévérités, top règles, top répertoires)."""
+    """Vue agrégée des findings (sévérités, top règles, top répertoires).
+
+    Exemples : `cccr summary`, `cccr summary --json`.
+    """
     repo_root = Path.cwd()
     _require_index(repo_root)
 
@@ -719,7 +771,11 @@ def integrations_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Lister les intégrations HTTP et Kafka détectées dans le projet indexé."""
+    """Lister les intégrations HTTP et Kafka détectées dans le projet indexé.
+
+    Exemples : `cccr integrations`, `cccr integrations --system kafka`,
+    `cccr integrations --role call --module order-service`.
+    """
     repo_root = Path.cwd()
     _require_index(repo_root)
 
@@ -790,6 +846,9 @@ def graph_cmd(
     """Afficher les interactions HTTP et Kafka entre microservices.
 
     Utilisez `cccr export microservices` pour générer Draw.io, HTML ou LikeC4.
+
+    Exemples : `cccr graph`, `cccr graph --workspace ../services`,
+    `cccr graph --json`.
     """
     if sum(output is not None for output in (drawio, html, d2)) > 1:
         typer.echo("Choisissez un seul rendu parmi --drawio, --html ou --d2.", err=True)
@@ -905,7 +964,12 @@ def export_microservices_cmd(
     html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
     c4: Optional[Path] = typer.Option(None, "--c4", help="Fichier source LikeC4 à produire."),
 ) -> None:
-    """Exporter les dépendances microservices, topics Kafka et collections MongoDB."""
+    """Exporter les dépendances microservices, topics Kafka et collections MongoDB.
+
+    Exemples : `cccr export microservices --drawio graph.drawio`,
+    `cccr export microservices --html graph.html`,
+    `cccr export microservices --c4 architecture.c4`.
+    """
     outputs = [output for output in (drawio, html, c4) if output is not None]
     if len(outputs) != 1:
         typer.echo("Choisissez un seul format parmi --drawio, --html ou --c4.", err=True)
@@ -947,7 +1011,11 @@ def export_modules_cmd(
     drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
     html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
 ) -> None:
-    """Exporter les dépendances de build entre modules indexés."""
+    """Exporter les dépendances de build entre modules indexés.
+
+    Exemples : `cccr export modules --drawio modules.drawio`,
+    `cccr export modules --html modules.html`.
+    """
     outputs = [output for output in (drawio, html) if output is not None]
     if len(outputs) != 1:
         typer.echo("Choisissez un seul format parmi --drawio ou --html.", err=True)
@@ -1025,7 +1093,7 @@ def microservices_cmd(
 
     Exemples : `cccr microservices`, `cccr microservices orders`,
     `cccr microservices topics orders`, `cccr microservices apis orders`,
-    `cccr microservices mongodb orders`.
+    `cccr microservices mongodb orders`, `cccr microservices neighbors orders`.
     """
     arguments = arguments or []
     commands = {
@@ -1356,6 +1424,9 @@ def modules_cmd(
     `integrations`, `properties` et `openapi` prennent un module dans le
     répertoire courant déjà indexé. `graph` affiche les dépendances de build
     entre modules. Utilisez `cccr export modules` pour générer Draw.io ou HTML.
+
+    Exemples : `cccr modules`, `cccr modules order-service`,
+    `cccr modules integrations order-service`, `cccr modules graph`.
     """
     arguments = arguments or []
     commands = {"integrations", "endpoints", "properties", "openapi", "graph"}
@@ -1466,6 +1537,8 @@ def mcp_cmd() -> None:
     Enregistrement client (ex. Claude Code), à ajouter à la config MCP :
 
     {"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
+
+    Exemple : `cccr mcp`.
     """
     from ccc_radar.mcp_server import mcp as fastmcp_app
 
