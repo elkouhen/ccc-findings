@@ -20,7 +20,7 @@ from ccc_radar.modules import (
 )
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "14"
+SCHEMA_VERSION = "15"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -284,7 +284,7 @@ class Store:
 
     def _migrate_module_architecture_columns(self) -> None:
         cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(modules)")}
-        for name in ("starts_application", "application_entrypoint", "mongo_collections", "mongo_methods", "openapi_files", "kafka_methods", "blocking_points"):
+        for name in ("starts_application", "application_entrypoint", "mongo_collections", "mongo_methods", "openapi_files", "kafka_methods", "blocking_points", "rest_controllers", "openapi_generated_clients"):
             if name not in cols:
                 if name == "application_entrypoint":
                     self.conn.execute("ALTER TABLE modules ADD COLUMN application_entrypoint TEXT")
@@ -324,8 +324,8 @@ class Store:
             self.conn.execute(
                 """
                 INSERT INTO modules (path, name, build_system, version, kind, starts_application, configuration_example, application_entrypoint,
-                                     mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points, rest_controllers, openapi_generated_clients)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     relative_path,
@@ -341,12 +341,14 @@ class Store:
                     json.dumps(module.openapi_files),
                     json.dumps([_method_to_json(method) for method in module.kafka_methods]),
                     json.dumps([_method_to_json(point) for point in module.blocking_points]),
+                    json.dumps(module.rest_controllers),
+                    json.dumps(module.openapi_generated_clients),
                 ),
             )
 
     def all_modules(self) -> list[DiscoveredModule]:
         rows = self.conn.execute(
-            "SELECT path, name, build_system, version, kind, starts_application, configuration_example, application_entrypoint, mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points "
+            "SELECT path, name, build_system, version, kind, starts_application, configuration_example, application_entrypoint, mongo_collections, mongo_methods, openapi_files, kafka_methods, blocking_points, rest_controllers, openapi_generated_clients "
             "FROM modules ORDER BY path"
         ).fetchall()
         return [
@@ -364,6 +366,8 @@ class Store:
                 openapi_files=tuple(json.loads(row["openapi_files"])),
                 kafka_methods=tuple(_kafka_method_from_json(method) for method in json.loads(row["kafka_methods"])),
                 blocking_points=tuple(_blocking_point_from_json(point) for point in json.loads(row["blocking_points"])),
+                rest_controllers=tuple(json.loads(row["rest_controllers"])),
+                openapi_generated_clients=tuple(json.loads(row["openapi_generated_clients"])),
             )
             for row in rows
         ]

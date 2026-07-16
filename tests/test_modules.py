@@ -166,6 +166,8 @@ def test_modules_cli_lists_then_returns_module_detail(tmp_path: Path, monkeypatc
             "kafka_method_count": 0,
             "blocking_point_count": 0,
             "openapi_files": [],
+            "rest_controllers": [],
+            "openapi_generated_clients": [],
         }
     ]
 

@@ -76,6 +76,61 @@ def is_runtime_service(packaging: str | None, is_spring_boot_app: bool) -> bool:
     return packaging != "pom" and is_spring_boot_app
 
 
+def _has_openapi_generator_plugin(pom_path: Path) -> bool:
+    """Détecte la présence du plugin openapi-generator-maven-plugin dans le pom.xml."""
+    try:
+        text = pom_path.read_text(encoding="utf-8", errors="replace")
+        root = ET.fromstring(text)
+    except (ET.ParseError, OSError):
+        return False
+
+    # Chercher dans les plugins
+    for artifact_id in root.findall(f".//{_MAVEN_NS}artifactId"):
+        if artifact_id.text and "openapi-generator" in artifact_id.text.lower():
+            return True
+
+    return False
+
+
+def detect_openapi_generated_clients(pom_path: Path) -> tuple[str, ...]:
+    """Détecte les clients OpenAPI générés par openapi-generator-maven-plugin.
+
+    Retourne un tuple des chemins relatifs des fichiers Java générés.
+    """
+    if not _has_openapi_generator_plugin(pom_path):
+        return ()
+
+    module_dir = pom_path.parent
+
+    # Chemins typiques pour les sources générées par openapi-generator
+    possible_paths = [
+        module_dir / "target" / "generated-sources" / "openapi",
+        module_dir / "target" / "generated-sources" / "openapi-mapstruct",
+        module_dir / "target" / "generated-sources" / "openapi-nullable",
+    ]
+
+    generated_sources = None
+    for path in possible_paths:
+        if path.exists() and path.is_dir():
+            generated_sources = path
+            break
+
+    if not generated_sources:
+        return ()
+
+    client_files = []
+    for java_file in generated_sources.rglob("*.java"):
+        # Calculer le chemin relatif par rapport au module
+        try:
+            rel_path = java_file.relative_to(module_dir)
+            client_files.append(str(rel_path))
+        except ValueError:
+            # Si le fichier n'est pas relatif au module, on l'ignore
+            continue
+
+    return tuple(sorted(set(client_files)))
+
+
 @lru_cache(maxsize=512)
 def _cached_module_name(pom_path_str: str) -> str:
     pom_path = Path(pom_path_str)

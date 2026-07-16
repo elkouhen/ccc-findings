@@ -2390,6 +2390,8 @@ class ModuleSummary(TypedDict):
     kafka_method_count: int
     blocking_point_count: int
     openapi_files: list[str]
+    rest_controllers: list[str]
+    openapi_generated_clients: list[str]
 
 
 class ModuleDetail(ModuleSummary):
@@ -2508,6 +2510,8 @@ def render_modules_list_json(modules: list[DiscoveredModule]) -> list[ModuleSumm
             kafka_method_count=len(module.kafka_methods),
             blocking_point_count=len(module.blocking_points),
             openapi_files=list(module.openapi_files),
+            rest_controllers=list(module.rest_controllers),
+            openapi_generated_clients=list(module.openapi_generated_clients),
         )
         for module in modules
     ]
@@ -2524,7 +2528,9 @@ def render_modules_list_text(modules: list[ModuleSummary]) -> str:
             f"version={version} mongo={len(module['mongo_collections'])} "
             f"mongo_ops={module['mongo_method_count']} kafka_ops={module['kafka_method_count']} "
             f"blocking={module['blocking_point_count']} app={module['starts_application']} "
-            f"openapi={len(module['openapi_files'])}  {module['path']}"
+            f"openapi={len(module['openapi_files'])} "
+            f"rest_controllers={len(module['rest_controllers'])} "
+            f"generated_clients={len(module['openapi_generated_clients'])}  {module['path']}"
         )
     return "\n".join(lines)
 
@@ -2733,6 +2739,8 @@ def render_module_detail_json(module: DiscoveredModule) -> ModuleDetail:
         kafka_method_count=len(module.kafka_methods),
         blocking_point_count=len(module.blocking_points),
         openapi_files=list(module.openapi_files),
+        rest_controllers=list(module.rest_controllers),
+        openapi_generated_clients=list(module.openapi_generated_clients),
         mongo_methods=[
             {
                 "operation": method.operation,
@@ -2780,7 +2788,9 @@ def render_module_detail_text(module: ModuleDetail) -> str:
         f"opérations Mongo={module['mongo_method_count']}\n"
         f"opérations Kafka={module['kafka_method_count']}\n"
         f"points bloquants={module['blocking_point_count']}\n"
-        f"OpenAPI={', '.join(module['openapi_files']) or 'aucun'}"
+        f"OpenAPI={', '.join(module['openapi_files']) or 'aucun'}\n"
+        f"Contrôleurs REST ({len(module['rest_controllers'])})={', '.join(module['rest_controllers']) or 'aucun'}\n"
+        f"Clients OpenAPI générés ({len(module['openapi_generated_clients'])})={', '.join(module['openapi_generated_clients']) or 'aucun'}"
     )
 
 

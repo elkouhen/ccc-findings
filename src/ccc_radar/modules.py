@@ -34,6 +34,9 @@ class DiscoveredModule:
     openapi_files: tuple[str, ...] = ()
     kafka_methods: tuple["KafkaMethod", ...] = ()
     blocking_points: tuple["BlockingPoint", ...] = ()
+    # REST controllers and OpenAPI-generated clients
+    rest_controllers: tuple[str, ...] = ()
+    openapi_generated_clients: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, order=True)
@@ -559,6 +562,38 @@ def _discover_openapi_files(module_dir: Path, module_roots: set[Path]) -> tuple[
     )
 
 
+def _has_rest_controllers(module_dir: Path, module_roots: set[Path]) -> tuple[str, ...]:
+    """Détecte les classes Java annotées avec @RestController.
+
+    Retourne une tuple de chaînes au format "ClassName (relative/path.java)".
+    """
+    _REST_CONTROLLER_RE = re.compile(r"@(?:org\.springframework\.web\.bind\.annotation\.)?RestController\b")
+    _CLASS_DECL_RE = re.compile(
+        r'@(?:org\.springframework\.web\.bind\.annotation\.)?RestController\b.*?(?:public\s+|protected\s+|private\s+)?(?:final\s+)?(?:static\s+)?(?:abstract\s+)?class\s+(\w+)',
+        re.DOTALL
+    )
+
+    controller_classes = []
+
+    for java_file in _module_files(module_dir, module_roots, "*.java"):
+        try:
+            content = java_file.read_text(encoding="utf-8", errors="replace")
+            if _REST_CONTROLLER_RE.search(content):
+                class_match = _CLASS_DECL_RE.search(content)
+                if class_match:
+                    class_name = class_match.group(1)
+                    rel_path = _module_relative(module_dir, java_file)
+                    controller_classes.append(f"{class_name} ({rel_path})")
+                else:
+                    # Fallback: utilise le nom du fichier si la classe n'est pas détectée
+                    rel_path = _module_relative(module_dir, java_file)
+                    controller_classes.append(f"Unknown ({rel_path})")
+        except OSError:
+            continue
+
+    return tuple(sorted(set(controller_classes)))
+
+
 def _enrich_module(
     module: DiscoveredModule,
     module_roots: set[Path],
@@ -574,10 +609,23 @@ def _enrich_module(
         methods = ()
         kafka_methods = ()
         blocking_points = ()
+
+    # Détecter les contrôleurs REST
+    rest_controllers = _has_rest_controllers(module.path, module_roots)
+
+    # Détecter les clients OpenAPI générés (Maven uniquement)
+    openapi_generated_clients = ()
+    if module.build_system == "maven":
+        from ccc_radar.maven import detect_openapi_generated_clients
+        pom_path = module.path / "pom.xml"
+        if pom_path.exists():
+            openapi_generated_clients = detect_openapi_generated_clients(pom_path)
+
     enriched = DiscoveredModule(
         **{**module.__dict__, "mongo_collections": collections, "mongo_methods": methods,
            "openapi_files": _discover_openapi_files(module.path, module_roots),
-           "kafka_methods": kafka_methods, "blocking_points": blocking_points}
+           "kafka_methods": kafka_methods, "blocking_points": blocking_points,
+           "rest_controllers": rest_controllers, "openapi_generated_clients": openapi_generated_clients}
     )
     _trace("module.enrich.end", module=module.path)
     return enriched
