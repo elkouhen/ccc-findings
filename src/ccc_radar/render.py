@@ -498,6 +498,7 @@ def render_graph_html(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     edges: list[GraphEdge],
     collections_by_service: dict[str, list[str]] | None = None,
+    findings_by_service: dict[str, list[Finding]] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -554,6 +555,7 @@ def render_graph_html(
             "source": f"{source_kind}:{source_name}",
             "target": f"{target_kind}:{target_name}",
             "kind": kind,
+            "direction": "outgoing" if kind == "rest" or source_kind == "microservice" else "incoming",
             "label": label.replace("<br/>", "\\n"),
         }
         for source_kind, source_name, target_kind, target_name, label, kind in _drawio_visual_graph_edges(
@@ -565,12 +567,51 @@ def render_graph_html(
             "source": f"{source_kind}:{source_name}",
             "target": f"{target_kind}:{target_name}",
             "kind": kind,
+            "direction": "data_access",
             "label": label,
         }
         for source_kind, source_name, target_kind, target_name, label, kind in _mongodb_visual_graph_edges(
             collections_by_service
         )
     ]
+    complexity_relations = [
+        (f"{source_kind}:{source_name}", f"{target_kind}:{target_name}")
+        for source_kind, source_name, target_kind, target_name, _label, _kind in _visual_graph_edges(edges)
+    ] + [
+        (f"{source_kind}:{source_name}", f"{target_kind}:{target_name}")
+        for source_kind, source_name, target_kind, target_name, _label, _kind in _mongodb_visual_graph_edges(
+            collections_by_service
+        )
+    ]
+    relation_counts = {node["id"]: 0 for node in nodes}
+    for source, target in complexity_relations:
+        relation_counts[source] += 1
+        relation_counts[target] += 1
+    severity_weights = {"ERROR": 3, "WARNING": 2, "INFO": 1}
+    for node in nodes:
+        findings = (
+            findings_by_service.get(node["name"], [])
+            if node["kind"] == "microservice" and findings_by_service
+            else []
+        )
+        severity_counts = {
+            severity: sum(1 for finding in findings if finding.severity == severity)
+            for severity in severity_weights
+        }
+        score = relation_counts[node["id"]] + sum(
+            severity_weights[severity] * count for severity, count in severity_counts.items()
+        )
+        level = "high" if score >= 7 else "medium" if score >= 4 else "low"
+        node["complexity"] = {
+            "score": score,
+            "level": level,
+            "relations": relation_counts[node["id"]],
+            "findings": len(findings),
+            "severity_counts": severity_counts,
+        }
+        node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
+        base_size = 20 if node["kind"] == "microservice" else 17 if node["kind"] == "mongodb_collection" else 15
+        node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
     graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
     return _SIGMA_GRAPH_HTML_TEMPLATE.replace("__GRAPH_DATA__", graph_data)
 
@@ -805,6 +846,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     #details ul { margin: 0; padding-left: 18px; }
     #details li { margin: 2px 0; }
+    .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; display: grid; gap: 5px; padding: 8px 10px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .legend-row { display: flex; align-items: center; gap: 6px; }
+    .legend-mark { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    .legend-line { width: 18px; height: 2px; }
   </style>
 </head>
 <body>
@@ -815,6 +860,16 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
     <button id="fit-view" type="button" aria-label="Ajuster a l'ecran" title="Ajuster a l'ecran">o</button>
     <button id="reset" type="button" aria-label="Reinitialiser la selection" title="Reinitialiser">x</button>
+  </div>
+  <div class="legend" aria-label="Legende du graphe">
+    <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
+    <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
+    <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
+    <div class="legend-row"><span class="legend-mark" style="border-radius:2px;background:#64748b"></span>Microservice</div>
+    <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Topic Kafka</div>
+    <div class="legend-row"><span class="legend-mark" style="width:12px;border-radius:50%;background:#64748b"></span>Collection MongoDB</div>
+    <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Sortant</div>
+    <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Entrant Kafka</div>
   </div>
   <div id="details">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div>
   <div id="graph" aria-label="Graphe des interactions"></div>
@@ -866,20 +921,163 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       label: node.name,
       x: node.x,
       y: node.y,
-      size: node.kind === "kafka_topic" ? 9 : node.kind === "mongodb_collection" ? 10 : 13,
-      color: node.kind === "kafka_topic" ? "#d18b20" : node.kind === "mongodb_collection" ? "#2f855a" : "#4f79b5",
+      size: node.size,
+      color: node.color,
+      type: node.kind,
     }));
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
       size: 1.2,
-      color: link.kind === "kafka" ? "#d18b20" : link.kind === "mongodb" ? "#2f855a" : "#4f79b5",
+      color: link.direction === "incoming" ? "#d97706" : link.direction === "data_access" ? "#2563eb" : "#0f766e",
       kind: link.kind,
+      type: "arrow",
     }));
 
     let selectedId = null;
     let relatedNodes = null;
     let relatedEdges = null;
+    const NODE_VERTEX_SHADER = `
+      attribute vec2 a_position;
+      attribute float a_size;
+      attribute vec4 a_color;
+      uniform float u_ratio;
+      uniform float u_scale;
+      uniform mat3 u_matrix;
+      varying vec4 v_color;
+      void main() {
+        gl_Position = vec4((u_matrix * vec3(a_position, 1.0)).xy, 0.0, 1.0);
+        gl_PointSize = a_size * u_ratio * u_scale * 2.0;
+        v_color = a_color;
+      }
+    `;
+    const MICROSERVICE_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      float roundedBox(vec2 point, vec2 halfSize, float radius) {
+        vec2 delta = abs(point) - halfSize + radius;
+        return min(max(delta.x, delta.y), 0.0) + length(max(delta, 0.0)) - radius;
+      }
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float distance = roundedBox(point, vec2(.47, .30), .08);
+        float alpha = 1.0 - smoothstep(-.012, .012, distance);
+        if (alpha < .01) discard;
+        gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
+      }
+    `;
+    const KAFKA_TOPIC_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float distance = max(abs(point.x) * .866025 + abs(point.y) * .5, abs(point.y)) - .42;
+        float alpha = 1.0 - smoothstep(-.012, .012, distance);
+        if (alpha < .01) discard;
+        gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
+      }
+    `;
+    const MONGODB_COLLECTION_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      float ellipseDistance(vec2 point, vec2 radii) {
+        return length(point / radii) - 1.0;
+      }
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float body = max(abs(point.x) - .37, abs(point.y) - .25);
+        float top = ellipseDistance(point - vec2(0.0, .25), vec2(.37, .12));
+        float bottom = ellipseDistance(point + vec2(0.0, .25), vec2(.37, .12));
+        float distance = min(body, min(top, bottom));
+        float alpha = 1.0 - smoothstep(-.012, .012, distance);
+        if (alpha < .01) discard;
+        float topRim = abs(top);
+        vec3 color = mix(v_color.rgb, vec3(.08, .12, .20), .22 * (1.0 - smoothstep(.0, .022, topRim)));
+        gl_FragColor = vec4(color, v_color.a * alpha);
+      }
+    `;
+    const packedColorBuffer = new ArrayBuffer(4);
+    const packedColorBytes = new Uint8Array(packedColorBuffer);
+    const packedColorFloat = new Float32Array(packedColorBuffer);
+    function packColor(color) {
+      const value = color.startsWith("#") ? color.slice(1) : color;
+      packedColorBytes[0] = parseInt(value.slice(0, 2), 16) || 0;
+      packedColorBytes[1] = parseInt(value.slice(2, 4), 16) || 0;
+      packedColorBytes[2] = parseInt(value.slice(4, 6), 16) || 0;
+      packedColorBytes[3] = 254;
+      return packedColorFloat[0];
+    }
+    function compileShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(`Impossible de compiler le shader WebGL: ${gl.getShaderInfoLog(shader)}`);
+      }
+      return shader;
+    }
+    function createNodeProgram(fragmentShader) {
+      return class ShapeNodeProgram {
+        constructor(gl) {
+          this.gl = gl;
+          this.array = new Float32Array();
+          this.buffer = gl.createBuffer();
+          const vertexShader = compileShader(gl, gl.VERTEX_SHADER, NODE_VERTEX_SHADER);
+          const pixelShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentShader);
+          this.program = gl.createProgram();
+          gl.attachShader(this.program, vertexShader);
+          gl.attachShader(this.program, pixelShader);
+          gl.linkProgram(this.program);
+          if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+            throw new Error(`Impossible d'associer le shader WebGL: ${gl.getProgramInfoLog(this.program)}`);
+          }
+          this.positionLocation = gl.getAttribLocation(this.program, "a_position");
+          this.sizeLocation = gl.getAttribLocation(this.program, "a_size");
+          this.colorLocation = gl.getAttribLocation(this.program, "a_color");
+          this.matrixLocation = gl.getUniformLocation(this.program, "u_matrix");
+          this.ratioLocation = gl.getUniformLocation(this.program, "u_ratio");
+          this.scaleLocation = gl.getUniformLocation(this.program, "u_scale");
+          this.bind();
+        }
+        allocate(capacity) { this.array = new Float32Array(capacity * 4); }
+        process(data, hidden, offset) {
+          const index = offset * 4;
+          if (hidden) {
+            this.array.fill(0, index, index + 4);
+            return;
+          }
+          this.array[index] = data.x;
+          this.array[index + 1] = data.y;
+          this.array[index + 2] = data.size;
+          this.array[index + 3] = packColor(data.color);
+        }
+        bind() {
+          const gl = this.gl;
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+          gl.enableVertexAttribArray(this.positionLocation);
+          gl.enableVertexAttribArray(this.sizeLocation);
+          gl.enableVertexAttribArray(this.colorLocation);
+          gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 16, 0);
+          gl.vertexAttribPointer(this.sizeLocation, 1, gl.FLOAT, false, 16, 8);
+          gl.vertexAttribPointer(this.colorLocation, 4, gl.UNSIGNED_BYTE, true, 16, 12);
+        }
+        bufferData() { this.gl.bufferData(this.gl.ARRAY_BUFFER, this.array, this.gl.DYNAMIC_DRAW); }
+        render(params) {
+          if (!this.array.length) return;
+          const gl = this.gl;
+          gl.useProgram(this.program);
+          gl.uniform1f(this.ratioLocation, 1 / Math.sqrt(params.ratio));
+          gl.uniform1f(this.scaleLocation, params.scalingRatio);
+          gl.uniformMatrix3fv(this.matrixLocation, false, params.matrix);
+          gl.drawArrays(gl.POINTS, 0, this.array.length / 4);
+        }
+      };
+    }
     const renderer = new Sigma(network, document.getElementById("graph"), {
+      nodeProgramClasses: {
+        microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
+        kafka_topic: createNodeProgram(KAFKA_TOPIC_FRAGMENT_SHADER),
+        mongodb_collection: createNodeProgram(MONGODB_COLLECTION_FRAGMENT_SHADER),
+      },
       renderEdgeLabels: false,
       labelDensity: .08,
       labelGridCellSize: 110,
@@ -911,8 +1109,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const title = document.createElement("strong");
       title.textContent = node.name;
       const kindLabel = node.kind === "kafka_topic" ? "Topic Kafka" : node.kind === "mongodb_collection" ? "Collection MongoDB" : "Microservice";
-      details.append(title, document.createTextNode(`${kindLabel} - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
+      const complexity = node.complexity;
+      details.append(title, document.createTextNode(`${kindLabel} - score ${complexity.score} (${complexity.level}) - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
       if (node.kind === "microservice") appendList("APIs exposees", node.resources);
+      if (node.kind === "microservice" && complexity.findings) {
+        appendList("Findings", Object.entries(complexity.severity_counts)
+          .filter(([, count]) => count)
+          .map(([severity, count]) => `${severity}: ${count}`));
+      }
       if (node.kind === "mongodb_collection") appendList("Stockee par", [node.owner]);
       appendList("Relations", edges.map(link => `${link.source === id ? "vers" : "depuis"} ${nodeDataById.get(link.source === id ? link.target : link.source).name} : ${link.label}`));
     }

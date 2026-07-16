@@ -884,7 +884,13 @@ def graph_cmd(
 
     if html is not None:
         html.write_text(
-            render_graph_html(services_by_name, edges, collections_by_service), encoding="utf-8"
+            render_graph_html(
+                services_by_name,
+                edges,
+                collections_by_service,
+                graph_data.findings_by_service,
+            ),
+            encoding="utf-8",
         )
         typer.echo(f"Graphe écrit dans {html} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
@@ -1080,7 +1086,10 @@ def export_microservices_cmd(
     elif html is not None:
         html.write_text(
             render_graph_html(
-                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
+                graph_data.services_by_name,
+                graph_data.edges,
+                graph_data.collections_by_service,
+                graph_data.findings_by_service,
             ),
             encoding="utf-8",
         )

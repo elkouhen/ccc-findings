@@ -305,6 +305,39 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
     )
 
     assert [link["kind"] for link in graph_data["links"]] == ["rest", "kafka", "kafka"]
+    assert [link["direction"] for link in graph_data["links"]] == ["outgoing", "outgoing", "incoming"]
+
+
+def test_render_graph_html_colors_complexity_from_findings() -> None:
+    endpoints_by_service = _fixture()
+    findings = [
+        Finding("finding-1", "rule-1", "ERROR", "Failure", "a/Client.java", 1, 1, "", None, [], [], "service-a"),
+        Finding("finding-2", "rule-2", "ERROR", "Failure", "a/Producer.java", 1, 1, "", None, [], [], "service-a"),
+    ]
+
+    document = render_graph_html(
+        endpoints_by_service, build_graph(endpoints_by_service), findings_by_service={"service-a": findings}
+    )
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+    service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:service-a")
+
+    assert service["complexity"] == {
+        "score": 8,
+        "level": "high",
+        "relations": 2,
+        "findings": 2,
+        "severity_counts": {"ERROR": 2, "WARNING": 0, "INFO": 0},
+    }
+    assert service["color"] == "#dc2626"
+    assert "Complexite elevee" in document
+    assert 'type: "arrow"' in document
+    assert 'type: node.kind,' in document
+    assert "nodeProgramClasses:" in document
+    assert "MICROSERVICE_FRAGMENT_SHADER" in document
+    assert "KAFKA_TOPIC_FRAGMENT_SHADER" in document
+    assert "MONGODB_COLLECTION_FRAGMENT_SHADER" in document
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:

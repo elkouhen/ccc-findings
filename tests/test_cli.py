@@ -767,6 +767,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "order-service" in document
     assert "orders.created" in document
     assert "mongodb_collection:order-service:orders" in document
+    assert '"complexity": {"score": 5' in document
+    assert "Complexite elevee" in document
 
     c4_project = tmp_path / "architecture-likec4"
     c4_export = runner.invoke(app, ["export", "microservices", "--c4", str(c4_project)])
