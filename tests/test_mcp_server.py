@@ -9,6 +9,8 @@ from typer.testing import CliRunner
 from ccc_radar.cli import app
 from ccc_radar.flow import FlowError
 from ccc_radar.mcp_server import (
+    audit_dependency_graph,
+    dependency_graph,
     findings_summary,
     graph,
     list_endpoints,
@@ -19,6 +21,7 @@ from ccc_radar.mcp_server import (
     trace_message_flow,
 )
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.modules import DiscoveredModule, MongoMethod
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.store import Store
 
@@ -195,6 +198,79 @@ def test_graph_tool_returns_outbound_calls_in_kafka_consumer_handlers(
     assert result["edges"] == []
     assert len(result["outbound_calls_in_consumers"]) == 1
     assert result["outbound_calls_in_consumers"][0]["call"]["topic"] == "POST /payments"
+
+
+def test_dependency_graph_and_audit_tools_report_data_access_and_event_cycles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    order_producer = MessageEndpoint(
+        compute_endpoint_id("produce", "orders.created", "orders/Publisher.java", 10, 10),
+        "produce", "kafka", "orders.created", False, "code", "spring-kafka",
+        "orders/Publisher.java", 10, 10, "", "orders", message_type="OrderCreated",
+    )
+    order_consumer = MessageEndpoint(
+        compute_endpoint_id("consume", "payments.completed", "orders/Consumer.java", 10, 30),
+        "consume", "kafka", "payments.completed", False, "code", "spring-kafka",
+        "orders/Consumer.java", 10, 30, "", "orders", message_type="PaymentCompleted",
+    )
+    external_call = MessageEndpoint(
+        compute_endpoint_id("call", "GET /ledger", "orders/Consumer.java", 20, 20),
+        "call", "rest", "GET /ledger", False, "code", "resttemplate",
+        "orders/Consumer.java", 20, 20, "", "orders",
+    )
+    payment_consumer = MessageEndpoint(
+        compute_endpoint_id("consume", "orders.created", "payments/Consumer.java", 5, 15),
+        "consume", "kafka", "orders.created", False, "code", "spring-kafka",
+        "payments/Consumer.java", 5, 15, "", "payments", message_type="OrderCreated",
+    )
+    payment_producer = MessageEndpoint(
+        compute_endpoint_id("produce", "payments.completed", "payments/Publisher.java", 20, 20),
+        "produce", "kafka", "payments.completed", False, "code", "spring-kafka",
+        "payments/Publisher.java", 20, 20, "", "payments", message_type="PaymentCompleted",
+    )
+    modules = [
+        DiscoveredModule(
+            "orders", tmp_path / "orders", "maven", None, "library", True, "",
+            mongo_collections=("orders",),
+            mongo_methods=(MongoMethod("save", "repository", "orders/Repository.java", 8, "orders"),),
+        ),
+        DiscoveredModule(
+            "payments", tmp_path / "payments", "maven", None, "library", True, "",
+            mongo_collections=("payments",),
+            mongo_methods=(MongoMethod("find", "repository", "payments/Repository.java", 8, "payments"),),
+        ),
+    ]
+    with Store(tmp_path) as store:
+        store.replace_modules(modules)
+        endpoints = [order_producer, order_consumer, external_call, payment_consumer, payment_producer]
+        store.replace_endpoints_for_files([endpoint.path for endpoint in endpoints], endpoints)
+
+    topology = dependency_graph()
+
+    assert topology["summary"] == {
+        "microservices": 2,
+        "topics": 2,
+        "mongodb_collections": 2,
+        "external_apis": 1,
+        "relations": 7,
+    }
+    assert {edge["kind"] for edge in topology["edges"]} == {
+        "publishes", "consumes", "calls_external", "writes", "reads",
+    }
+    assert any(edge["label"] == "publishes OrderCreated" for edge in topology["edges"])
+    assert any(node["id"] == "mongodb_collection:orders:orders" for node in topology["nodes"])
+
+    audit = audit_dependency_graph()
+
+    assert audit["cycles"][0]["services"] == ["orders", "payments"]
+    assert {node["kind"] for node in audit["cycles"][0]["nodes"]} == {"microservice", "topic"}
+    assert {issue["id"] for issue in audit["issues"]} >= {
+        "event-dependency-cycle", "synchronous-http-in-kafka-consumer",
+    }
+
+    protocol_result = asyncio.run(mcp.call_tool("audit_dependency_graph", {}))
+    assert protocol_result[1]["cycles"][0]["services"] == ["orders", "payments"]
 
 
 def test_graph_tool_on_unindexed_repo_surfaces_as_mcp_tool_error(

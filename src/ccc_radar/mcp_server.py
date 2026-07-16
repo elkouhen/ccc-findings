@@ -6,6 +6,12 @@ from ccc_radar.code_search import CodeSearchResult
 from ccc_radar.code_search import search_code_with_findings as run_code_search
 from ccc_radar.coco_indexer import ENGINE_META_VALUE, index_repo_with_cocoindex
 from ccc_radar.config import ConfigError, load_config
+from ccc_radar.dependency_analysis import (
+    DependencyAuditResult,
+    DependencyGraphResult,
+    audit_dependency_graph as run_dependency_audit,
+    build_dependency_graph,
+)
 from ccc_radar.embedder import EmbeddingError, make_embedder
 from ccc_radar.flow import (
     FlowError,
@@ -40,6 +46,7 @@ from ccc_radar.render import (
 from ccc_radar.search import search_findings as run_search_findings
 from ccc_radar.search import summary as compute_summary
 from ccc_radar.store import Store
+from ccc_radar.modules import DiscoveredModule
 from ccc_radar.workspace import discover_maven_services, load_federation
 
 mcp = FastMCP("cccr")
@@ -58,6 +65,36 @@ def _current_repo_endpoint_warning(store: Store) -> str | None:
     return endpoint_inventory_warning(
         store.get_meta("endpoint_inventory_signature"), scope="ce projet"
     )
+
+
+def _dependency_inventory(
+    workspace_root: str | None,
+) -> tuple[dict[str, list], dict[str, DiscoveredModule], list[str]]:
+    """Load runtime services and module metadata for graph-oriented MCP tools."""
+    repo_root = _repo_root()
+    _require_index(repo_root)
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints()
+        modules = store.all_modules()
+        warning = _current_repo_endpoint_warning(store)
+    warnings = [warning] if warning else []
+    if workspace_root is not None:
+        federation = load_federation(discover_maven_services(Path(workspace_root)))
+        warnings.extend(federation.warnings)
+        return (
+            dict(federation.endpoints_by_service),
+            {
+                service: module
+                for service, module in federation.modules_by_service.items()
+                if service in federation.endpoints_by_service
+            },
+            warnings,
+        )
+    endpoints_by_service = group_endpoints_by_module(endpoints)
+    modules_by_service = {
+        module.name: module for module in modules if module.name in endpoints_by_service
+    }
+    return endpoints_by_service, modules_by_service, warnings
 
 
 @mcp.tool()
@@ -216,6 +253,36 @@ def graph(workspace_root: str | None = None) -> GraphResult:
         warnings=([repo_warning] if repo_warning else []) + federation.warnings,
         cross_module_data_available=True,
     )
+
+
+@mcp.tool()
+def dependency_graph(workspace_root: str | None = None) -> DependencyGraphResult:
+    """Retourne la topologie de dépendances statique exploitable par un agent.
+
+    Les nœuds sont les microservices, topics Kafka, collections MongoDB
+    (scopées par microservice) et APIs HTTP externes. Les relations indiquent
+    appels HTTP internes/externes, publications et consommations Kafka avec les
+    types Java connus, ainsi que lectures/écritures MongoDB. Utiliser avant un
+    audit ou pour reconstruire une dépendance service -> topic -> stockage.
+    Avec `workspace_root`, fédère les services déjà indexés séparément.
+    """
+    endpoints_by_service, modules_by_service, warnings = _dependency_inventory(workspace_root)
+    return build_dependency_graph(endpoints_by_service, modules_by_service, warnings=warnings)
+
+
+@mcp.tool()
+def audit_dependency_graph(workspace_root: str | None = None) -> DependencyAuditResult:
+    """Audite le graphe de dépendances statique pour les mauvaises pratiques.
+
+    Retourne la topologie analysée, les risques déjà détectés (orphans Kafka,
+    cibles dynamiques, incompatibilités de DTO, cycles HTTP synchrones et
+    activités runtime de bibliothèques), les cycles événementiels entre
+    microservices et les appels HTTP synchrones depuis un consumer Kafka.
+    Les résultats sont des signaux statiques avec un niveau de confiance, pas
+    des traces d'exécution. Avec `workspace_root`, fédère les services indexés.
+    """
+    endpoints_by_service, modules_by_service, warnings = _dependency_inventory(workspace_root)
+    return run_dependency_audit(endpoints_by_service, modules_by_service, warnings=warnings)
 
 
 @mcp.tool()

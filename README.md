@@ -180,8 +180,9 @@ uv run pytest
 
 - **Semgrep findings**: `search_findings`, `findings_summary`, `search`, and
   `reindex_findings`.
-- **Java/Spring exploration**: `list_endpoints`, `graph`,
-  `list_workspace_services`, and `trace_message_flow`.
+- **Java/Spring exploration**: `list_endpoints`, `graph`, `dependency_graph`,
+  `audit_dependency_graph`, `list_workspace_services`, `list_modules`, and
+  `trace_message_flow`.
 
 ### Prerequisites
 

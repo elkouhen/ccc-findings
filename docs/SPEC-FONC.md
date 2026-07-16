@@ -602,7 +602,7 @@ Restart the client after registering the server.
 
 ## 3. MCP server
 
-Eight tools, each annotated with a concrete return type (`TypedDict` or
+Eleven tools, each annotated with a concrete return type (`TypedDict` or
 dataclass, never `str`) — FastMCP derives an `outputSchema` from it field by
 field, exposed to MCP clients in addition to the usual JSON text
 (`structuredContent` *and* text `content`, both in the same response; a client
@@ -613,7 +613,7 @@ on the protocol side — the standard signal an MCP client can detect without
 parsing the response text (before: `{"error": "<message>"}` returned as a
 normal result, indistinguishable from success without a client-side convention).
 
-The first four tools below form the **core product**; the next four belong to
+The first four tools below form the **core product**; the next seven belong to
 the **Java/Spring microservices extension**.
 
 | Tool | Return type | Role | Notes |
@@ -624,7 +624,10 @@ the **Java/Spring microservices extension**.
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable raw HTTP/Kafka endpoint inventory | Use `cccr apis` or `cccr topics` for CLI architecture exploration |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr export microservices --json` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
+| `dependency_graph(workspace_root=None)` | `DependencyGraphResult` | Typed topology of microservices, Kafka topics, scoped MongoDB collections and external HTTP APIs | Includes HTTP, Kafka, MongoDB read/write and external-call relations with static confidence |
+| `audit_dependency_graph(workspace_root=None)` | `DependencyAuditResult` | Static dependency audit | Combines existing inventory risks with event-flow cycles and synchronous HTTP calls inside Kafka consumers |
 | `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
+| `list_modules()` | `list[ModuleSummary]` | Indexed module inventory | Includes persisted MongoDB and OpenAPI metadata |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Detailed MCP-only trace of a topic/route and its sites (producers/consumers, or servers/callers), including overlapping findings | No-match or ambiguous query → `ToolError` |
 
 `search` adds to each code result:

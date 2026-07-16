@@ -20,14 +20,15 @@
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (precision-first lexical), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
+| `dependency_analysis.py` | Typed runtime dependency topology and static graph audit: Kafka/HTTP/MongoDB relations, event cycles and blocking calls | `audit`, `graph`, `models`, `modules` |
 | `workspace.py` | Read-only federation of a multi-service Maven/Gradle directory (BACKLOG-11 A2, ADR-30/33): `discover_workspace_services`, `load_federation` | `models`, `store` |
-| `render.py` | Text/JSON serialization of findings, architecture objects, graphs and workspace discovery; Draw.io, Sigma.js HTML and LikeC4 graph exports | `search`, `ccc_bridge`, `graph`, `workspace` |
+| `render.py` | Text/JSON serialization of findings, architecture objects, graphs and workspace discovery; Sigma.js HTML and LikeC4 graph exports | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `configuration.py` | Extracts Spring property keys from production code and constructs a synthetic typed YAML template (`<secret>` for sensitive keys) | — |
 | `modules.py` | Discovers every Maven/Gradle module and creates its persisted audit snapshot for `cccr modules` | `configuration`, `maven`, `gradle` |
 | `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings`: code (via `ccc`) + findings annotation + degraded modes orchestration — implementation shared by CLI/MCP | `ccc_bridge`, `render`, `store` |
 | `cli.py` | Typer application for setup, findings, code search and architecture exploration (`microservices`, `topics`, `apis`, `mongodb`, `modules`, `analyze`, `export`) | all modules above |
-| `mcp_server.py` | `FastMCP` stdio server, tools | `code_search`, `config`, `embedder`, `graph`, `indexer`, `render`, `search`, `store`, `workspace` |
+| `mcp_server.py` | `FastMCP` stdio server, tools | `code_search`, `config`, `dependency_analysis`, `embedder`, `graph`, `indexer`, `render`, `search`, `store`, `workspace` |
 
 The overall dependency direction is broadly `cli.py`/`mcp_server.py` → business
 logic → `store.py`. The public embedder factory lives in `embedder.py` and is
