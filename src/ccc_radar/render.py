@@ -695,6 +695,119 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
 """
 
 
+_SIGMA_MODULE_GRAPH_HTML_TEMPLATE = """<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCC Radar module dependencies</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+  <style>
+    :root { color: #172033; background: #f5f7fb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; }
+    #graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
+    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
+    .toolbar input { width: 220px; height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
+    .toolbar button:hover { background: #eaf2ff; }
+    #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(340px, calc(100vw - 32px)); max-height: min(56vh, 440px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    #details strong { display: block; color: #172033; font-size: 14px; }
+    #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    #details ul { margin: 0; padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <strong>Modules</strong>
+    <input id="search" type="search" placeholder="Rechercher un module" autocomplete="off" aria-label="Rechercher un module">
+    <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
+    <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
+    <button id="fit-view" type="button" aria-label="Ajuster a l'ecran" title="Ajuster a l'ecran">o</button>
+    <button id="reset" type="button" aria-label="Reinitialiser la selection" title="Reinitialiser">x</button>
+  </div>
+  <div id="details">Selectionnez un module pour explorer ses dependances directes.</div>
+  <div id="graph" aria-label="Graphe des dependances de modules"></div>
+  <script id="module-graph-data" type="application/json">__MODULE_GRAPH_DATA__</script>
+  <script>
+    const graphData = JSON.parse(document.getElementById("module-graph-data").textContent);
+    const nodeById = new Map(graphData.nodes.map(node => [node.id, node]));
+    const network = new graphology.MultiDirectedGraph();
+    graphData.nodes.forEach(node => network.addNode(node.id, {
+      label: node.name, x: node.x, y: node.y, size: node.kind === "microservice" ? 13 : 10,
+      color: node.kind === "microservice" ? "#4f79b5" : "#718096",
+    }));
+    graphData.links.forEach((link, index) => network.addEdgeWithKey(`dependency-${index}`, link.source, link.target, {
+      size: 1.4, color: "#52616b",
+    }));
+    let selectedId = null;
+    let relatedNodes = null;
+    let relatedEdges = null;
+    const renderer = new Sigma(network, document.getElementById("graph"), {
+      labelDensity: .1, labelGridCellSize: 120, labelRenderedSizeThreshold: 7,
+      nodeReducer: (node, data) => !selectedId || relatedNodes.has(node)
+        ? data : { ...data, color: "#d8e0ea", label: "" },
+      edgeReducer: (edge, data) => !selectedId || relatedEdges.has(edge)
+        ? data : { ...data, color: "#e5eaf0", size: .35 },
+    });
+    const details = document.getElementById("details");
+    const search = document.getElementById("search");
+    function appendList(title, values) {
+      if (!values.length) return;
+      const heading = document.createElement("h2"); heading.textContent = title;
+      const list = document.createElement("ul");
+      values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
+      details.append(heading, list);
+    }
+    function selectModule(id) {
+      selectedId = id; relatedNodes = new Set([id]); relatedEdges = new Set();
+      const dependencies = [];
+      const dependents = [];
+      network.forEachEdge((edge, attributes, source, target) => {
+        if (source === id || target === id) {
+          relatedEdges.add(edge); relatedNodes.add(source); relatedNodes.add(target);
+          if (source === id) dependencies.push(nodeById.get(target).name);
+          else dependents.push(nodeById.get(source).name);
+        }
+      });
+      renderer.refresh();
+      const node = nodeById.get(id);
+      details.replaceChildren();
+      const title = document.createElement("strong"); title.textContent = node.name;
+      details.append(title, document.createTextNode(`${node.kind} - ${relatedEdges.size} dependance${relatedEdges.size > 1 ? "s" : ""}`));
+      appendList("APIs exposees", node.httpApisExposed);
+      appendList("Topics publies", node.kafkaTopicsPublished);
+      appendList("Topics consommes", node.kafkaTopicsConsumed);
+      appendList("Depend de", dependencies);
+      appendList("Utilise par", dependents);
+      const position = renderer.getNodeDisplayData(id);
+      if (position) renderer.getCamera().animate({ x: position.x, y: position.y, ratio: .55 }, { duration: 260 });
+    }
+    function reset() {
+      selectedId = null; relatedNodes = null; relatedEdges = null; renderer.refresh();
+      details.textContent = "Selectionnez un module pour explorer ses dependances directes.";
+      search.value = "";
+    }
+    renderer.on("clickNode", ({ node }) => selectModule(node));
+    renderer.on("clickStage", reset);
+    document.getElementById("zoom-in").addEventListener("click", () => renderer.getCamera().animatedZoom({ duration: 180 }));
+    document.getElementById("zoom-out").addEventListener("click", () => renderer.getCamera().animatedUnzoom({ duration: 180 }));
+    document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
+    document.getElementById("reset").addEventListener("click", reset);
+    search.addEventListener("input", event => {
+      const query = event.target.value.trim().toLocaleLowerCase();
+      const node = graphData.nodes.find(item => item.name.toLocaleLowerCase().includes(query));
+      if (node) selectModule(node.id); else if (!query) reset();
+    });
+    window.addEventListener("resize", () => renderer.refresh());
+  </script>
+</body>
+</html>
+"""
+
+
 def _d2_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
@@ -1574,6 +1687,63 @@ def render_module_graph_text(result: ModuleGraphResult) -> str:
     return "\n".join(lines)
 
 
+def _module_dependency_layout(
+    modules: list[DiscoveredModule], dependencies: list[ModuleDependency]
+) -> dict[str, tuple[float, float]]:
+    """Positionne les dépendances locales en niveaux, de l'appelant vers sa cible.
+
+    Les graphes de dépendances sont le plus souvent des DAG. Les rares cycles
+    sont conservés dans une dernière couche plutôt que de bloquer le rendu.
+    """
+    names = sorted(module.name for module in modules)
+    known = set(names)
+    outgoing = {name: [] for name in names}
+    incoming = {name: [] for name in names}
+    for dependency in dependencies:
+        if dependency.source not in known or dependency.target not in known:
+            continue
+        outgoing[dependency.source].append(dependency.target)
+        incoming[dependency.target].append(dependency.source)
+    indegree = {name: len(incoming[name]) for name in names}
+    levels = {name: 0 for name in names if indegree[name] == 0}
+    pending = sorted(levels)
+    cursor = 0
+    while cursor < len(pending):
+        source = pending[cursor]
+        cursor += 1
+        for target in sorted(outgoing[source]):
+            levels[target] = max(levels.get(target, 0), levels[source] + 1)
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                pending.append(target)
+    unresolved = [name for name in names if name not in levels]
+    if unresolved:
+        cycle_level = max(levels.values(), default=-1) + 1
+        levels.update({name: cycle_level for name in unresolved})
+
+    layers: dict[int, list[str]] = {}
+    for name, level in levels.items():
+        layers.setdefault(level, []).append(name)
+    order = {name: index for index, name in enumerate(names)}
+    for level in sorted(layers):
+        layers[level].sort(
+            key=lambda name: (
+                sum(order[parent] for parent in incoming[name] if parent in order)
+                / max(1, sum(parent in order for parent in incoming[name])),
+                name,
+            )
+        )
+        order.update({name: index for index, name in enumerate(layers[level])})
+
+    widest = max((len(layer) for layer in layers.values()), default=1)
+    positions: dict[str, tuple[float, float]] = {}
+    for level, layer in layers.items():
+        offset = (widest - len(layer)) * 0.5
+        for index, name in enumerate(layer):
+            positions[name] = (offset + index, level)
+    return positions
+
+
 def render_module_graph_drawio(
     modules: list[DiscoveredModule], dependencies: list[ModuleDependency]
 ) -> str:
@@ -1584,11 +1754,12 @@ def render_module_graph_drawio(
     """
     ordered_modules = sorted(modules, key=lambda module: module.name)
     node_ids = {module.name: f"module-{index}" for index, module in enumerate(ordered_modules)}
-    columns = max(1, math.ceil(math.sqrt(len(ordered_modules))))
+    positions = _module_dependency_layout(modules, dependencies)
     cells = ['<mxCell id="0"/>', '<mxCell id="1" parent="0"/>']
-    for index, module in enumerate(ordered_modules):
-        x = 80 + (index % columns) * 260
-        y = 80 + (index // columns) * 150
+    for module in ordered_modules:
+        horizontal, level = positions.get(module.name, (0, 0))
+        x = 80 + horizontal * 260
+        y = 80 + level * 150
         kind = "microservice" if module.starts_application else module.kind
         label = f"<b>{html_escape(module.name)}</b><br/><font color=\"#5f6b7a\">{html_escape(kind)}</font>"
         style = (
@@ -1620,6 +1791,51 @@ def render_module_graph_drawio(
         + "".join(cells)
         + "</root></mxGraphModel></diagram></mxfile>"
     )
+
+
+def render_module_graph_html(
+    modules: list[DiscoveredModule],
+    dependencies: list[ModuleDependency],
+    endpoints: list[MessageEndpoint],
+) -> str:
+    """Rend les dépendances de build dans une vue Sigma.js hiérarchique."""
+    positions = _module_dependency_layout(modules, dependencies)
+    endpoints_by_module = {
+        module.name: [endpoint for endpoint in endpoints if endpoint.module == module.name]
+        for module in modules
+    }
+    nodes = [
+        {
+            "id": module.name,
+            "name": module.name,
+            "kind": "microservice" if module.starts_application else module.kind,
+            "x": positions.get(module.name, (0, 0))[0],
+            "y": -positions.get(module.name, (0, 0))[1],
+            "httpApisExposed": sorted({
+                endpoint.topic
+                for endpoint in endpoints_by_module[module.name]
+                if endpoint.system == "rest" and endpoint.role == "serve"
+            }),
+            "kafkaTopicsPublished": sorted({
+                endpoint.topic
+                for endpoint in endpoints_by_module[module.name]
+                if endpoint.system == "kafka" and endpoint.role == "produce"
+            }),
+            "kafkaTopicsConsumed": sorted({
+                endpoint.topic
+                for endpoint in endpoints_by_module[module.name]
+                if endpoint.system == "kafka" and endpoint.role == "consume"
+            }),
+        }
+        for module in sorted(modules, key=lambda item: item.name)
+    ]
+    links = [
+        {"source": dependency.source, "target": dependency.target}
+        for dependency in dependencies
+        if dependency.source in positions and dependency.target in positions
+    ]
+    graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
+    return _SIGMA_MODULE_GRAPH_HTML_TEMPLATE.replace("__MODULE_GRAPH_DATA__", graph_data)
 
 
 def render_module_detail_json(module: DiscoveredModule) -> ModuleDetail:

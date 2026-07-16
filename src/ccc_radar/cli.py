@@ -51,6 +51,7 @@ from ccc_radar.render import (
     render_module_detail_json,
     render_module_detail_text,
     render_module_graph_drawio,
+    render_module_graph_html,
     render_module_graph_json,
     render_module_graph_text,
     render_modules_list_json,
@@ -984,13 +985,16 @@ def modules_cmd(
     drawio: Optional[Path] = typer.Option(
         None, "--drawio", help="Exporte le graphe de dépendances de modules en .drawio."
     ),
+    html: Optional[Path] = typer.Option(
+        None, "--html", help="Exporte le graphe de dépendances de modules en HTML Sigma.js."
+    ),
 ) -> None:
     """Liste les modules indexés ou détaille l'un d'eux.
 
     `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
     `endpoints`, `properties` et `openapi` prennent un module dans le
     répertoire courant déjà indexé. `graph` affiche les dépendances de build
-    entre modules et accepte `--drawio`.
+    entre modules et accepte `--drawio` ou `--html`.
     """
     arguments = arguments or []
     commands = {"endpoints", "properties", "openapi", "graph"}
@@ -999,7 +1003,7 @@ def modules_cmd(
             if len(arguments) != 1:
                 typer.echo("`modules graph` ne prend pas de nom de module.", err=True)
                 raise typer.Exit(code=2)
-            _render_module_graph(Path.cwd().resolve(), json_output, drawio)
+            _render_module_graph(Path.cwd().resolve(), json_output, drawio, html)
             return
         if len(arguments) != 2:
             typer.echo(f"`modules {arguments[0]}` requiert un nom de module.", err=True)
@@ -1047,7 +1051,9 @@ def modules_cmd(
     typer.echo(json.dumps(result) if json_output else render_module_detail_text(result))
 
 
-def _render_module_graph(repo_root: Path, json_output: bool, drawio: Path | None) -> None:
+def _render_module_graph(
+    repo_root: Path, json_output: bool, drawio: Path | None, html: Path | None
+) -> None:
     if not db_path(repo_root).is_file():
         typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
         raise typer.Exit(code=2)
@@ -1055,12 +1061,20 @@ def _render_module_graph(repo_root: Path, json_output: bool, drawio: Path | None
         with Store(repo_root, readonly=True) as store:
             modules = store.all_modules()
             dependencies = store.all_module_dependencies()
+            endpoints = store.all_endpoints()
     except StoreError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
+    if drawio is not None and html is not None:
+        typer.echo("Choisissez un seul rendu parmi --drawio ou --html.", err=True)
+        raise typer.Exit(code=2)
     if drawio is not None:
         drawio.write_text(render_module_graph_drawio(modules, dependencies), encoding="utf-8")
         typer.echo(f"Graphe écrit dans {drawio} ({len(modules)} modules, {len(dependencies)} dépendances).")
+        return
+    if html is not None:
+        html.write_text(render_module_graph_html(modules, dependencies, endpoints), encoding="utf-8")
+        typer.echo(f"Graphe écrit dans {html} ({len(modules)} modules, {len(dependencies)} dépendances).")
         return
     result = render_module_graph_json(modules, dependencies)
     typer.echo(json.dumps(result) if json_output else render_module_graph_text(result))

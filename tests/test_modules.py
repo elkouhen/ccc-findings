@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -403,22 +404,43 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
 
     shared = tmp_path / "shared"
     orders = tmp_path / "orders"
+    core = tmp_path / "core"
     shared.mkdir()
     orders.mkdir()
-    _write_pom(shared / "pom.xml", "shared-kernel", "1.0.0")
+    core.mkdir()
+    _write_pom(core / "pom.xml", "core-kernel", "1.0.0")
+    _write_pom(shared / "pom.xml", "shared-kernel", "1.0.0", dependencies=("core-kernel",))
     _write_pom(orders / "pom.xml", "orders-api", "1.0.0", dependencies=("shared-kernel",))
     modules = discover_modules(tmp_path)
+    serve = MessageEndpoint(
+        "serve-orders", "serve", "rest", "GET /orders", False, "code", "spring",
+        "OrderController.java", 1, 1, "", "orders-api",
+    )
+    publish = MessageEndpoint(
+        "publish-orders", "produce", "kafka", "orders.created", False, "code", "spring-kafka",
+        "OrderPublisher.java", 1, 1, "", "orders-api",
+    )
+    consume = MessageEndpoint(
+        "consume-orders", "consume", "kafka", "payments.completed", False, "code", "spring-kafka",
+        "PaymentConsumer.java", 1, 1, "", "orders-api",
+    )
     with Store(tmp_path) as store:
         store.replace_modules(modules)
         store.replace_module_dependencies(discover_module_dependencies(tmp_path, modules))
+        store.replace_endpoints_for_files(
+            [serve.path, publish.path, consume.path], [serve, publish, consume]
+        )
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["modules", "graph", "--json"])
 
     assert result.exit_code == 0
     assert json.loads(result.output) == {
-        "modules": ["orders-api", "shared-kernel"],
-        "dependencies": [{"source": "orders-api", "target": "shared-kernel"}],
+        "modules": ["core-kernel", "orders-api", "shared-kernel"],
+        "dependencies": [
+            {"source": "orders-api", "target": "shared-kernel"},
+            {"source": "shared-kernel", "target": "core-kernel"},
+        ],
     }
 
     # Le graphe d'interactions reste indépendant des dépendances de build.
@@ -430,8 +452,38 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
     export = runner.invoke(app, ["modules", "graph", "--drawio", str(drawio)])
     assert export.exit_code == 0
     root = ET.fromstring(drawio.read_text(encoding="utf-8"))
-    assert len([cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]) == 2
-    assert len([cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]) == 1
+    vertices = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]
+    assert len(vertices) == 3
+    assert len([cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]) == 2
+    y_by_module = {
+        next(name for name in ("orders-api", "shared-kernel", "core-kernel") if name in (cell.get("value") or "")):
+        float(next(child for child in cell if child.tag == "mxGeometry").get("y"))
+        for cell in vertices
+    }
+    assert y_by_module["orders-api"] < y_by_module["shared-kernel"] < y_by_module["core-kernel"]
+
+    html = tmp_path / "module-dependencies.html"
+    html_export = runner.invoke(app, ["modules", "graph", "--html", str(html)])
+    assert html_export.exit_code == 0
+    document = html.read_text(encoding="utf-8")
+    assert "new Sigma(network" in document
+    assert "G6" not in document
+    graph_data = json.loads(
+        re.search(r'<script id="module-graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+    y_by_module_html = {node["name"]: node["y"] for node in graph_data["nodes"]}
+    assert y_by_module_html["orders-api"] > y_by_module_html["shared-kernel"] > y_by_module_html["core-kernel"]
+    orders_node = next(node for node in graph_data["nodes"] if node["name"] == "orders-api")
+    assert orders_node["httpApisExposed"] == ["GET /orders"]
+    assert orders_node["kafkaTopicsPublished"] == ["orders.created"]
+    assert orders_node["kafkaTopicsConsumed"] == ["payments.completed"]
+    assert 'appendList("APIs exposees", node.httpApisExposed)' in document
+
+    both_formats = runner.invoke(
+        app, ["modules", "graph", "--drawio", str(drawio), "--html", str(html)]
+    )
+    assert both_formats.exit_code == 2
+    assert "--drawio ou --html" in both_formats.output
 
 
 def test_modules_are_read_from_the_persisted_index_snapshot(tmp_path: Path) -> None:

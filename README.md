@@ -193,6 +193,7 @@ cccr resources search payments
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
 cccr modules graph              # declared local build dependencies between modules
 cccr modules graph --drawio modules.drawio
+cccr modules graph --html modules.html
 ```
 
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,

@@ -536,7 +536,10 @@ error.
   source and target are both indexed modules. It is distinct from `cccr graph`:
   it never contains REST/Kafka interactions or topics.
 - `cccr modules graph --drawio modules.drawio` exports that module-dependency
-  graph in Draw.io format.
+  graph in Draw.io format, with sources and their dependencies arranged by
+  hierarchical levels.
+- `cccr modules graph --html modules.html` exports the same hierarchical view
+  as an interactive Sigma.js graph. `--drawio` and `--html` are exclusive.
 
 The configuration example is generated during that indexation and follows the
 same no-real-values policy as `microservices properties`.
