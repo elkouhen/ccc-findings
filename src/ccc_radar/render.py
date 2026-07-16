@@ -511,7 +511,8 @@ def render_graph_html(
     topic_message_types: dict[str, dict[str, set[str]]] = {
         topic: {"produce": set(), "consume": set()} for topic in kafka_topics
     }
-    for endpoints in endpoints_by_service.values():
+    published_message_types_by_relation: dict[tuple[str, str], set[str]] = {}
+    for service, endpoints in endpoints_by_service.items():
         for endpoint in endpoints:
             if (
                 endpoint.system == "kafka"
@@ -519,6 +520,10 @@ def render_graph_html(
                 and endpoint.message_type
             ):
                 topic_message_types[endpoint.topic][endpoint.role].add(endpoint.message_type)
+                if endpoint.role == "produce":
+                    published_message_types_by_relation.setdefault((service, endpoint.topic), set()).add(
+                        endpoint.message_type
+                    )
     nodes = []
     for name in ordered_services:
         resources = _rest_resources_served(endpoints_by_service.get(name, []))
@@ -563,18 +568,20 @@ def render_graph_html(
         }
         for service, collection, identity in _mongodb_collection_nodes(collections_by_service)
     ]
-    links = [
-        {
+    links = []
+    for source_kind, source_name, target_kind, target_name, label, kind in _drawio_visual_graph_edges(edges):
+        link = {
             "source": f"{source_kind}:{source_name}",
             "target": f"{target_kind}:{target_name}",
             "kind": kind,
             "direction": "outgoing" if kind == "rest" or source_kind == "microservice" else "incoming",
             "label": label.replace("<br/>", "\\n"),
         }
-        for source_kind, source_name, target_kind, target_name, label, kind in _drawio_visual_graph_edges(
-            edges
-        )
-    ]
+        if kind == "kafka" and source_kind == "microservice" and target_kind == "kafka_topic":
+            link["published_message_types"] = sorted(
+                published_message_types_by_relation.get((source_name, target_name), set())
+            )
+        links.append(link)
     links += [
         {
             "source": f"{source_kind}:{source_name}",
@@ -1146,7 +1153,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       let action;
       if (link.kind === "rest") action = `appelle ${link.label}`;
       else if (link.kind === "mongodb") action = "stocke dans";
-      else if (source.kind === "microservice") action = "publie";
+      else if (source.kind === "microservice") {
+        const types = link.published_message_types || [];
+        action = `publie${types.length ? ` <${types.join(", ")}>` : ""}`;
+      }
       else action = "est consomme par";
       return `${source.name} -> ${target.name} : ${action}`;
     }

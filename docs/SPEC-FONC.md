@@ -436,7 +436,8 @@ message types of a selected Kafka topic when statically known, as well as direct
 relation uses a stable `source -> target : action` wording rather than a
 selection-relative direction. Two microservice selectors can highlight the
 shortest directed path between them, preserving REST call direction and Kafka
-`producer -> topic -> consumer` steps. An ordered list of intermediate service
+`producer -> topic -> consumer` steps; producer-to-topic path relations include
+their statically inferred published Java message types. An ordered list of intermediate service
 or Kafka-topic nodes can constrain the path; each adjacent pair uses its own
 shortest directed segment. The
 generated document embeds graph data locally and loads Sigma.js from its CDN

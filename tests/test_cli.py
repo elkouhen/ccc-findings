@@ -802,6 +802,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Types publies" in document
     assert "Types consommes" in document
     assert "function relationText(link)" in document
+    assert "link.published_message_types" in document
+    assert "publie${types.length" in document
     assert 'link.source === id ? "vers"' not in document
     assert 'id="path-from"' in document
     assert 'id="path-to"' in document
