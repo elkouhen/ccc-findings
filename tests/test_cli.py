@@ -29,6 +29,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     graph_help = runner.invoke(app, ["graph", "--help"])
     topics_help = runner.invoke(app, ["topics", "--help"])
     apis_help = runner.invoke(app, ["apis", "--help"])
+    analyze_help = runner.invoke(app, ["analyze", "--help"])
     export_help = runner.invoke(app, ["export", "microservices", "--help"])
 
     assert root_help.exit_code == 0
@@ -37,6 +38,8 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "integrations" in root_help.output
     assert "apis" in root_help.output
     assert "export" in root_help.output
+    assert "analyze" in root_help.output
+    assert "│ audit" not in root_help.output
     assert "endpoints" not in root_help.output
     assert "resources" not in root_help.output
     assert microservices_help.exit_code == 0
@@ -47,9 +50,12 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "--drawio" not in graph_help.output
     assert topics_help.exit_code == 0
     assert "Commande : list, show, neighbors" in topics_help.output
+    assert "consumers" not in topics_help.output
     assert apis_help.exit_code == 0
-    assert "providers," in apis_help.output
-    assert "consumers ou search" in apis_help.output
+    assert "providers" not in apis_help.output
+    assert analyze_help.exit_code == 0
+    assert "microservices, topics, apis," in analyze_help.output
+    assert "mongodb ou audit" in analyze_help.output
     assert export_help.exit_code == 0
     assert "--drawio" in export_help.output
     assert "--html" in export_help.output
@@ -939,7 +945,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     ]
 
     mongodb_services = runner.invoke(
-        app, ["mongodb", "services", "orders", "--root", str(tmp_path), "--json"]
+        app, ["analyze", "mongodb", "services", "orders", "--root", str(tmp_path), "--json"]
     )
     assert mongodb_services.exit_code == 0
     assert json.loads(mongodb_services.output) == {
@@ -962,13 +968,38 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     ]
 
     consumers = runner.invoke(
-        app, ["topics", "consumers", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["analyze", "topics", "consumers", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert consumers.exit_code == 0
     assert json.loads(consumers.output)["microservices"] == ["payments"]
 
+    service_path = runner.invoke(
+        app, ["analyze", "microservices", "path", "payments", "shipping", "--root", str(tmp_path), "--json"]
+    )
+    assert service_path.exit_code == 0
+    assert json.loads(service_path.output) == {
+        "kind": "microservice_paths",
+        "source": "payments",
+        "target": "shipping",
+        "paths": [
+            {
+                "nodes": [
+                    {"kind": "microservice", "name": "payments"},
+                    {"kind": "topic", "name": "payments.accepted"},
+                    {"kind": "microservice", "name": "shipping"},
+                ],
+                "relations": [
+                    {"kind": "publishes", "label": "payments.accepted"},
+                    {"kind": "consumes", "label": "payments.accepted"},
+                ],
+            }
+        ],
+        "max_depth": 12,
+        "truncated": False,
+    }
+
     trace = runner.invoke(
-        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["analyze", "topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert trace.exit_code == 0
     trace_payload = json.loads(trace.output)
@@ -988,6 +1019,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     shallow_trace = runner.invoke(
         app,
         [
+            "analyze",
             "topics",
             "trace",
             "orders.created",
@@ -1016,7 +1048,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
             [cycle_publish.path], [cycle_publish]
         )
     cyclic_trace = runner.invoke(
-        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["analyze", "topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert cyclic_trace.exit_code == 0
     assert json.loads(cyclic_trace.output)["flows"] == [
@@ -1045,7 +1077,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert json.loads(resource_search.output)["resolved"] == "POST /payments"
 
     api_providers = runner.invoke(
-        app, ["apis", "providers", "POST /payments", "--root", str(tmp_path), "--json"]
+        app, ["analyze", "apis", "providers", "POST /payments", "--root", str(tmp_path), "--json"]
     )
     assert api_providers.exit_code == 0
     assert json.loads(api_providers.output) == {
@@ -1287,7 +1319,7 @@ def test_microservices_service_subcommands_render_apis_and_properties(
     }
 
     api_consumers = runner.invoke(
-        app, ["apis", "consumers", "GET /payments", "--root", str(workspace), "--json"]
+        app, ["analyze", "apis", "consumers", "GET /payments", "--root", str(workspace), "--json"]
     )
     assert api_consumers.exit_code == 0
     assert json.loads(api_consumers.output) == {

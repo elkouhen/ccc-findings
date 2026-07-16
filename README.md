@@ -110,7 +110,7 @@ functional behavior remains documented in
 ## Installation
 
 Prérequis : `uv` et `pipx`. `ccc` est optionnel : il ne sert qu'à
-`cccr search`; les commandes d'audit (`index`, `integrations`, `graph`, `audit`)
+`cccr search`; les commandes d'audit (`index`, `integrations`, `graph`, `analyze`)
 n'en dépendent pas.
 
 ```bash
@@ -134,7 +134,7 @@ export CCCR_RULES_ROOT="/chemin/vers/ccc-radar-skill/skills/cccr/rules"
 cccr init
 cccr doctor
 cccr index
-cccr audit
+cccr analyze audit
 ```
 
 `cccr doctor` doit confirmer les packs REST, Kafka, liveness et Kafka security
@@ -179,23 +179,24 @@ cccr graph                      # inter-service REST/Kafka topology
 cccr export microservices --drawio graph.drawio     # microservices, Kafka topics and MongoDB collections
 cccr export microservices --html graph.html
 cccr export microservices --c4 architecture.c4      # LikeC4 source
-cccr audit                      # high-confidence architectural risks
+cccr analyze audit              # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr microservices show order-service
 cccr microservices topics order-service
 cccr microservices apis order-service
+cccr analyze microservices path order-service shipping-service
 cccr microservices implementation integration <integration-id>
 cccr topics                     # discovered Kafka topics
-cccr topics consumers orders.created
-cccr topics producers orders.created
+cccr analyze topics consumers orders.created
+cccr analyze topics producers orders.created
 cccr topics neighbors orders.created
 cccr topics search created
-cccr topics trace orders.created  # potential Kafka flows, not runtime traces
+cccr analyze topics trace orders.created  # potential Kafka flows, not runtime traces
 cccr apis                       # discovered HTTP APIs
-cccr apis consumers "POST /payments"
+cccr analyze apis consumers "POST /payments"
 cccr apis search payments
 cccr mongodb                     # indexed MongoDB collections
-cccr mongodb services orders     # microservices using a collection
+cccr analyze mongodb services orders  # microservices using a collection
 cccr microservices mongodb order-service
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
 cccr modules graph              # declared local build dependencies between modules
@@ -206,7 +207,7 @@ cccr export modules --html modules.html
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `cccr init` first tries to copy these packs from the skill repo into
 `.cccr/rules/`, then enables them in `rules:`. The audit workflow then remains
-`cccr summary` → `cccr integrations` → `cccr graph` → `cccr findings` /
+`cccr summary` → `cccr integrations` → `cccr graph` → `cccr analyze audit` → `cccr findings` /
 `cccr search`.
 
 `cccr search` is a **presentation superset of `ccc search`**: same options

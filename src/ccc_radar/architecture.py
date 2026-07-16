@@ -5,6 +5,7 @@ stables (module, API, topic et collection), sans exposer les fichiers source.
 L'accès à une implantation reste une opération explicite de la CLI.
 """
 
+from collections import deque
 from dataclasses import dataclass
 
 from ccc_radar.graph import GraphEdge, build_graph
@@ -241,6 +242,84 @@ def neighbors(catalog: ArchitectureCatalog, kind: str, name: str) -> list[dict[s
     ]
 
 
+def find_microservice_paths(
+    catalog: ArchitectureCatalog,
+    source: str,
+    target: str,
+    *,
+    max_depth: int = 12,
+    limit: int = 20,
+) -> dict[str, object] | None:
+    """Return bounded shortest directed paths between two microservices.
+
+    Kafka is represented by an explicit topic node, preserving the same
+    topology as the interactive and Draw.io graph exports. REST stays a direct
+    service-to-service relation labelled with the matched API.
+    """
+    if (
+        show_object(catalog, "microservice", source) is None
+        or show_object(catalog, "microservice", target) is None
+    ):
+        return None
+    source_node = ("microservice", source)
+    target_node = ("microservice", target)
+    adjacency: dict[tuple[str, str], list[tuple[tuple[str, str], dict[str, str]]]] = {}
+
+    def add_edge(
+        origin: tuple[str, str], destination: tuple[str, str], relation: dict[str, str]
+    ) -> None:
+        adjacency.setdefault(origin, []).append((destination, relation))
+
+    for edge in catalog.edges:
+        origin = ("microservice", edge.from_service)
+        destination = ("microservice", edge.to_service)
+        if edge.kind == "rest":
+            add_edge(origin, destination, {"kind": "http", "label": edge.from_endpoint.topic})
+            continue
+        topic = ("topic", edge.from_endpoint.topic)
+        add_edge(origin, topic, {"kind": "publishes", "label": edge.from_endpoint.topic})
+        add_edge(topic, destination, {"kind": "consumes", "label": edge.from_endpoint.topic})
+    for entries in adjacency.values():
+        entries.sort(key=lambda item: (item[0], item[1]["kind"], item[1]["label"]))
+
+    queue = deque([(source_node, [source_node], [])])
+    paths: list[dict[str, object]] = []
+    shortest_depth: int | None = None
+    truncated = False
+    while queue:
+        node, nodes, relations = queue.popleft()
+        depth = len(relations)
+        if node == target_node:
+            if shortest_depth is None:
+                shortest_depth = depth
+            if depth != shortest_depth:
+                continue
+            if len(paths) >= limit:
+                truncated = True
+                continue
+            paths.append(
+                {
+                    "nodes": [{"kind": kind, "name": name} for kind, name in nodes],
+                    "relations": relations,
+                }
+            )
+            continue
+        if depth >= max_depth or (shortest_depth is not None and depth >= shortest_depth):
+            continue
+        for next_node, relation in adjacency.get(node, []):
+            if next_node in nodes:
+                continue
+            queue.append((next_node, [*nodes, next_node], [*relations, relation]))
+    return {
+        "kind": "microservice_paths",
+        "source": source,
+        "target": target,
+        "paths": paths,
+        "max_depth": max_depth,
+        "truncated": truncated,
+    }
+
+
 def analyze(catalog: ArchitectureCatalog, query: str, target: str | None) -> dict[str, object] | None:
     normalized = query.casefold()
     if normalized in {"consumers", "consumer"} and target:
@@ -386,6 +465,15 @@ def _render_item(item: dict[str, object]) -> str:
             path = " -> ".join(node["name"] for node in flow["nodes"])
             cycle = " (cycle)" if flow.get("cycle_detected") else ""
             lines.append(f"  {path}{cycle}")
+        if item["truncated"]:
+            lines.append("  Résultats tronqués par la limite demandée.")
+        return "\n".join(lines)
+    if kind == "microservice_paths":
+        lines = [f"[chemins] {item['source']} -> {item['target']}"]
+        if not item["paths"]:
+            lines.append("  Aucun chemin dirigé trouvé.")
+        for path in item["paths"]:
+            lines.append("  " + " -> ".join(node["name"] for node in path["nodes"]))
         if item["truncated"]:
             lines.append("  Résultats tronqués par la limite demandée.")
         return "\n".join(lines)

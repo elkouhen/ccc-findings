@@ -498,41 +498,40 @@ business objects and never includes source paths or snippets by default:
   used by the microservice.
 - `cccr microservices neighbors <service>` lists direct relations of that
   microservice.
-- `cccr microservices analyze <calls|external-apis|orphan-integrations|impact> [target]`
-  answers architecture questions centered on microservices.
+- `cccr analyze microservices path <source> <target>` returns the shortest
+  directed paths between two microservices. Kafka topics remain explicit
+  intermediate nodes; REST calls remain direct service-to-service relations.
+- `cccr analyze microservices <calls|external-apis|orphan-integrations|impact> [target]`
+  answers architecture questions centered on microservices. `--max-depth` and
+  `--limit` bound path and topic-flow exploration.
 - `cccr microservices implementation integration <id>` is the explicit final
   level that returns location and indexed source evidence.
 
-### `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`
+### `cccr topics [list|show|neighbors|search] [topic]`
 
 Explores Kafka topic objects from the same indexed graph. With no argument or
 with `list`, it returns the discovered topics. The remaining subcommands take
-one exact topic name:
+one exact topic name. Consumer/producer queries and potential flow tracing use
+`cccr analyze topics <consumers|producers|trace> <topic>`.
 
 - `show` returns the topic summary;
 - `neighbors` returns its producer and consumer microservices;
-- `consumers` answers which microservices consume the topic;
-- `producers` answers which microservices publish it.
 - `search` resolves an exact name or a unique case-insensitive substring; on a
   locally indexed project only, it falls back to endpoint vector similarity.
-- `trace` explores potential Kafka flows starting from a topic, following
-  `topic -> consumer microservice -> published topic`. It stops on a leaf,
-  repeated topic or `--max-depth` (default: 6), and returns at most `--limit`
-  paths (default: 50). Dynamic topics are excluded. A consumer-to-producer
-  transition is an exploration hypothesis, not proof of a runtime causal link.
 
 The command returns business objects only, without source paths or snippets.
 
-### `cccr mongodb [list|show|neighbors|services|search] [collection]`
+### `cccr mongodb [list|show|neighbors|search] [collection]`
 
 Explores indexed MongoDB collection objects from the same architecture graph.
 With no argument or `list`, it returns each collection with its indexed modules
 and known operation count. `show` returns that summary, `neighbors` returns the
-modules using it, `services` restricts that relation to runtime microservices,
-and `search` resolves an exact name or a unique case-insensitive substring.
+modules using it, and `search` resolves an exact name or a unique
+case-insensitive substring. `cccr analyze mongodb services <collection>`
+restricts that relation to runtime microservices.
 The command does not return source paths or snippets.
 
-### `cccr apis [list|show|neighbors|providers|consumers|search] [api]`
+### `cccr apis [list|show|neighbors|search] [api]`
 
 Explores HTTP API objects from the same indexed graph. With no argument or
 with `list`, it returns the discovered APIs. The remaining subcommands take
@@ -540,10 +539,11 @@ one API name:
 
 - `show` returns the API summary;
 - `neighbors` returns its provider and consumer microservices;
-- `providers` answers which microservices expose the API;
-- `consumers` answers which microservices call the API;
 - `search` resolves an exact name or a unique case-insensitive substring, then
   uses the same local vector-similarity fallback as `topics search`.
+
+`cccr analyze apis <providers|consumers> <api>` answers which microservices
+expose or call one API.
 
 The command returns business objects only, without source paths or snippets.
 
@@ -583,7 +583,7 @@ error.
 The configuration example is generated during that indexation and follows the
 same no-real-values policy as `microservices properties`.
 
-### `cccr audit [--workspace ROOT] [--json]`
+### `cccr analyze audit [--workspace ROOT] [--json]`
 
 Produces conservative architecture risks from the static inventory: Kafka
 producer or consumer with no indexed counterpart, dynamic Kafka/HTTP targets,

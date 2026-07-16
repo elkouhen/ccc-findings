@@ -15,6 +15,7 @@ from ccc_radar.architecture import (
     analyze as analyze_architecture,
     build_catalog,
     endpoint_implementation,
+    find_microservice_paths,
     list_objects as list_architecture_objects,
     neighbors as architecture_neighbors,
     render_text as render_architecture_text,
@@ -142,14 +143,18 @@ def _emit_architecture(result: object, json_output: bool) -> None:
 @app.command(name="topics")
 def topics_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Commande : list, show, neighbors, consumers, producers, search ou trace."
+        None, help="Commande : list, show, neighbors ou search."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
     ),
     json_output: bool = typer.Option(False, "--json"),
-    max_depth: int = typer.Option(6, "--max-depth", min=1, max=12, help="Nombre maximal de services suivis par trace."),
-    limit: int = typer.Option(50, "--limit", min=1, max=200, help="Nombre maximal de chemins retournés par trace."),
+    max_depth: int = typer.Option(
+        6, "--max-depth", min=1, max=12, help="Nombre maximal de services suivis par trace.", hidden=True
+    ),
+    limit: int = typer.Option(
+        50, "--limit", min=1, max=200, help="Nombre maximal de chemins retournés par trace.", hidden=True
+    ),
 ) -> None:
     """Parcourir les topics Kafka et les services qui les publient ou consomment."""
     arguments = arguments or []
@@ -182,14 +187,14 @@ def topics_cmd(
             raise typer.Exit(code=2)
         _emit_architecture(result, json_output)
         return
-    typer.echo("Usage : `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`.", err=True)
+    typer.echo("Usage : `cccr topics [list|show|neighbors|search] [topic]`.", err=True)
     raise typer.Exit(code=2)
 
 
 @app.command(name="apis")
 def apis_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Commande : list, show, neighbors, providers, consumers ou search."
+        None, help="Commande : list, show, neighbors ou search."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
@@ -230,7 +235,7 @@ def apis_cmd(
             raise typer.Exit(code=2)
         _emit_architecture(result, json_output)
         return
-    typer.echo("Usage : `cccr apis [list|show|neighbors|providers|consumers|search] [api]`.", err=True)
+    typer.echo("Usage : `cccr apis [list|show|neighbors|search] [api]`.", err=True)
     raise typer.Exit(code=2)
 
 
@@ -247,7 +252,7 @@ def resources_alias(
 @app.command(name="mongodb")
 def mongodb_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Commande : list, show, neighbors, services ou search."
+        None, help="Commande : list, show, neighbors ou search."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
@@ -265,7 +270,7 @@ def mongodb_cmd(
         return
     command = arguments[0]
     if command not in {"show", "neighbors", "services", "search"} or len(arguments) != 2:
-        typer.echo("Usage : `cccr mongodb [list|show|neighbors|services|search] [collection]`.", err=True)
+        typer.echo("Usage : `cccr mongodb [list|show|neighbors|search] [collection]`.", err=True)
         raise typer.Exit(code=2)
     collection = arguments[1]
     if command == "show":
@@ -280,6 +285,104 @@ def mongodb_cmd(
         typer.echo(f"Collection MongoDB introuvable : {collection}", err=True)
         raise typer.Exit(code=2)
     _emit_architecture(result, json_output)
+
+
+@app.command(name="analyze")
+def analyze_cmd(
+    arguments: list[str] = typer.Argument(
+        None, help="Cible et requête : microservices, topics, apis, mongodb ou audit."
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
+    ),
+    workspace: Optional[Path] = typer.Option(
+        None, "--workspace", help="Workspace de services indexés séparément, pour `audit`."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+    max_depth: int = typer.Option(
+        12, "--max-depth", min=1, max=32, help="Nombre maximal de relations ou étapes suivies."
+    ),
+    limit: int = typer.Option(
+        20, "--limit", min=1, max=100, help="Nombre maximal de chemins ou flux retournés."
+    ),
+) -> None:
+    """Répondre aux questions d'architecture à partir du graphe indexé."""
+    arguments = arguments or []
+    if not arguments:
+        typer.echo(
+            "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit> ...`.", err=True
+        )
+        raise typer.Exit(code=2)
+    subject = arguments[0]
+    workspace_root = (root or Path.cwd()).resolve()
+    if subject == "microservices":
+        if len(arguments) < 2:
+            typer.echo("Usage : `cccr analyze microservices <calls|external-apis|orphan-integrations|impact|path> ...`.", err=True)
+            raise typer.Exit(code=2)
+        query = arguments[1]
+        if query == "path":
+            if len(arguments) != 4:
+                typer.echo("`cccr analyze microservices path` requiert une source et une cible.", err=True)
+                raise typer.Exit(code=2)
+            _render_microservice_path(
+                arguments[2], arguments[3], workspace_root, json_output, max_depth=max_depth, limit=limit
+            )
+            return
+        if query in {"calls", "dependencies", "impact"} and len(arguments) != 3:
+            typer.echo(f"`cccr analyze microservices {query}` requiert une cible.", err=True)
+            raise typer.Exit(code=2)
+        if len(arguments) not in {2, 3}:
+            typer.echo(f"`cccr analyze microservices {query}` accepte une cible optionnelle.", err=True)
+            raise typer.Exit(code=2)
+        _render_microservice_analysis(
+            query, arguments[2] if len(arguments) == 3 else None, workspace_root, json_output
+        )
+        return
+    if subject == "topics":
+        if len(arguments) != 3 or arguments[1] not in {"consumers", "producers", "trace"}:
+            typer.echo("Usage : `cccr analyze topics <consumers|producers|trace> <topic>`.", err=True)
+            raise typer.Exit(code=2)
+        catalog = _microservice_catalog(workspace_root)
+        query, topic = arguments[1], arguments[2]
+        result = (
+            trace_topic_flows(catalog, topic, max_depth=max_depth, limit=limit)
+            if query == "trace"
+            else analyze_architecture(catalog, query, topic)
+        )
+        if result is None:
+            typer.echo(f"Topic introuvable : {topic}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(result, json_output)
+        return
+    if subject == "apis":
+        if len(arguments) != 3 or arguments[1] not in {"providers", "consumers"}:
+            typer.echo("Usage : `cccr analyze apis <providers|consumers> <api>`.", err=True)
+            raise typer.Exit(code=2)
+        query, api = arguments[1], arguments[2]
+        summary = show_architecture_object(_microservice_catalog(workspace_root), "api", api)
+        if summary is None:
+            typer.echo(f"API HTTP introuvable : {api}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture({"query": query, "api": api, "microservices": summary[query]}, json_output)
+        return
+    if subject == "mongodb":
+        if len(arguments) != 3 or arguments[1] != "services":
+            typer.echo("Usage : `cccr analyze mongodb services <collection>`.", err=True)
+            raise typer.Exit(code=2)
+        collection = arguments[2]
+        result = _mongodb_services(_microservice_catalog(workspace_root), collection)
+        if result is None:
+            typer.echo(f"Collection MongoDB introuvable : {collection}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(result, json_output)
+        return
+    if subject == "audit" and len(arguments) == 1:
+        _render_audit(workspace_root, workspace, json_output)
+        return
+    typer.echo(
+        "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit> ...`.", err=True
+    )
+    raise typer.Exit(code=2)
 
 
 @app.command()
@@ -868,15 +971,18 @@ def export_modules_cmd(
     )
 
 
-@app.command(name="audit")
+@app.command(name="audit", hidden=True)
 def audit_cmd(
     workspace: Optional[Path] = typer.Option(
         None, "--workspace", help="Workspace de services indexés séparément."
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Signaler les risques et responsabilités d'architecture détectés."""
-    repo_root = Path.cwd()
+    """Alias de compatibilité de `cccr analyze audit`."""
+    _render_audit(Path.cwd(), workspace, json_output)
+
+
+def _render_audit(repo_root: Path, workspace: Path | None, json_output: bool) -> None:
     _require_index(repo_root)
     if workspace is not None:
         federation = load_federation(discover_maven_services(workspace))
@@ -901,13 +1007,19 @@ def audit_cmd(
 def microservices_cmd(
     arguments: list[str] = typer.Argument(
         None,
-        help="Nom d'un service, ou commande : show, topics, apis, mongodb, neighbors ou analyze.",
+        help="Nom d'un service, ou commande : show, topics, apis, mongodb ou neighbors.",
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--root", help="Répertoire parent à explorer. Défaut : répertoire courant.",
     ),
     json_output: bool = typer.Option(False, "--json"),
+    max_depth: int = typer.Option(
+        12, "--max-depth", min=1, max=32, help="Nombre maximal de relations pour `path`.", hidden=True
+    ),
+    limit: int = typer.Option(
+        20, "--limit", min=1, max=100, help="Nombre maximal de chemins retournés par `path`.", hidden=True
+    ),
 ) -> None:
     """Lister les microservices ou résumer un microservice.
 
@@ -917,7 +1029,7 @@ def microservices_cmd(
     """
     arguments = arguments or []
     commands = {
-        "topics", "apis", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
+        "topics", "apis", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "path", "analyze", "implementation"
     }
     if arguments and arguments[0] in commands:
         workspace_root = (root or Path.cwd()).resolve()
@@ -930,6 +1042,10 @@ def microservices_cmd(
         elif command == "neighbors":
             if len(arguments) != 2:
                 typer.echo("`microservices neighbors` requiert un nom de microservice.", err=True)
+                raise typer.Exit(code=2)
+        elif command == "path":
+            if len(arguments) != 3:
+                typer.echo("`microservices path` requiert un microservice source et un microservice cible.", err=True)
                 raise typer.Exit(code=2)
         elif command == "implementation":
             if len(arguments) != 3:
@@ -952,6 +1068,10 @@ def microservices_cmd(
             _render_microservice_summary(service, workspace_root, json_output)
         elif command == "neighbors":
             _render_microservice_neighbors(arguments[1], workspace_root, json_output)
+        elif command == "path":
+            _render_microservice_path(
+                arguments[1], arguments[2], workspace_root, json_output, max_depth=max_depth, limit=limit
+            )
         elif command == "analyze":
             _render_microservice_analysis(
                 arguments[1], arguments[2] if len(arguments) == 3 else None, workspace_root, json_output
@@ -1076,17 +1196,42 @@ def _render_microservice_neighbors(name: str, root: Path, json_output: bool) -> 
     _emit_architecture(result, json_output)
 
 
+def _render_microservice_path(
+    source: str,
+    target: str,
+    root: Path,
+    json_output: bool,
+    *,
+    max_depth: int,
+    limit: int,
+) -> None:
+    if source == target:
+        typer.echo("La source et la cible doivent être deux microservices distincts.", err=True)
+        raise typer.Exit(code=2)
+    result = find_microservice_paths(
+        _microservice_catalog(root), source, target, max_depth=max_depth, limit=limit
+    )
+    if result is None:
+        typer.echo(f"Microservice source ou cible introuvable : {source} -> {target}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
 def _render_microservice_analysis(
     query: str, target: str | None, root: Path, json_output: bool
 ) -> None:
     if query.casefold() in {"consumers", "consumer", "producers", "producer"}:
-        typer.echo("Utilisez `cccr topics consumers <topic>` ou `cccr topics producers <topic>`.", err=True)
+        typer.echo(
+            "Utilisez `cccr analyze topics consumers <topic>` ou "
+            "`cccr analyze topics producers <topic>`.",
+            err=True,
+        )
         raise typer.Exit(code=2)
     result = analyze_architecture(_microservice_catalog(root), query, target)
     if result is None:
         typer.echo(
-            "Analyse impossible : vérifiez la question et sa cible (consumers/producers/calls/"
-            "external-apis/orphan-integrations/impact).",
+            "Analyse impossible : vérifiez la question et sa cible (calls/"
+            "external-apis/orphan-integrations/impact), ou utilisez `cccr analyze`.",
             err=True,
         )
         raise typer.Exit(code=2)

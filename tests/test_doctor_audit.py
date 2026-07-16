@@ -91,7 +91,7 @@ def test_audit_cli_reports_indexed_non_runtime_module_activity(
         store.replace_modules([module])
         store.replace_endpoints_for_files([produced.path], [produced])
 
-    result = CliRunner().invoke(app, ["audit", "--json"])
+    result = CliRunner().invoke(app, ["analyze", "audit", "--json"])
 
     assert result.exit_code == 0
     audit = next(item for item in json.loads(result.output) if item["id"] == "non-runtime-module-activity")
