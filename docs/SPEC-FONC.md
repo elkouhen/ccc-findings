@@ -431,7 +431,7 @@ when opened.
 static topology, never a runtime trace. No equivalent MCP tool — generated
 files are not agent-consumable results, unlike the JSON returned by `graph`.
 
-### `cccr microservices [--root ROOT] [--json]`
+### `cccr microservices [list|show|topics|apis|mongodb|neighbors|implementation]`
 *Java/Spring microservices extension — beta.*
 
 Discovers Maven modules and Gradle Spring Boot services under `root` (default:
@@ -490,7 +490,6 @@ business objects and never includes source paths or snippets by default:
 - `cccr microservices show <service>` returns the summary of one microservice:
   build tool, language, APIs, Kafka topics, MongoDB collections, technologies,
   OpenAPI presence and direct dependencies.
-- `cccr microservices <service>` is the short form of `show <service>`.
 - `cccr microservices topics <service>` lists published and consumed Kafka
   topics.
 - `cccr microservices apis <service>` lists exposed and consumed HTTP APIs.
@@ -507,31 +506,32 @@ business objects and never includes source paths or snippets by default:
 - `cccr microservices implementation integration <id>` is the explicit final
   level that returns location and indexed source evidence.
 
-### `cccr topics [list|show|neighbors|search] [topic]`
+### `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`
 
 Explores Kafka topic objects from the same indexed graph. With no argument or
 with `list`, it returns the discovered topics. The remaining subcommands take
-one exact topic name. Consumer/producer queries and potential flow tracing use
-`cccr analyze topics <consumers|producers|trace> <topic>`.
+one exact topic name. `consumers`, `producers` and `trace` respectively return
+one side of the relation or potential Kafka flows; a trace is never runtime data.
 
 - `show` returns the topic summary;
 - `neighbors` returns its producer and consumer microservices;
+- `consumers` and `producers` return one side of that relation;
 - `search` resolves an exact name or a unique case-insensitive substring; on a
   locally indexed project only, it falls back to endpoint vector similarity.
 
 The command returns business objects only, without source paths or snippets.
 
-### `cccr mongodb [list|show|neighbors|search] [collection]`
+### `cccr mongodb [list|show|neighbors|services|search] [collection]`
 
 Explores indexed MongoDB collection objects from the same architecture graph.
 With no argument or `list`, it returns each collection with its indexed modules
 and known operation count. `show` returns that summary, `neighbors` returns the
 modules using it, and `search` resolves an exact name or a unique
-case-insensitive substring. `cccr analyze mongodb services <collection>`
-restricts that relation to runtime microservices.
+case-insensitive substring. `cccr mongodb services <collection>` restricts
+that relation to runtime microservices.
 The command does not return source paths or snippets.
 
-### `cccr apis [list|show|neighbors|search] [api]`
+### `cccr apis [list|show|neighbors|providers|consumers|search] [api]`
 
 Explores HTTP API objects from the same indexed graph. With no argument or
 with `list`, it returns the discovered APIs. The remaining subcommands take
@@ -542,8 +542,7 @@ one API name:
 - `search` resolves an exact name or a unique case-insensitive substring, then
   uses the same local vector-similarity fallback as `topics search`.
 
-`cccr analyze apis <providers|consumers> <api>` answers which microservices
-expose or call one API.
+`providers` and `consumers` answer which microservices expose or call one API.
 
 The command returns business objects only, without source paths or snippets.
 
@@ -556,7 +555,7 @@ absent from the counts. An indexed module whose
 warning. No Maven module found → informational message, exit code 0 (not an
 error — `root` may legitimately not be a Maven directory).
 
-### `cccr modules [<module>] [--json]`
+### `cccr modules [list|show|integrations|properties|openapi|graph]`
 
 Reads the **module inventory materialized by `cccr index`** in the current
 directory, including libraries and aggregators, unlike
@@ -567,7 +566,7 @@ error.
 - `cccr modules` lists compact module summaries: Maven artifact or Gradle
   project/archive name, declared version (or `null`), build system,
   classification (`microservice`, `library`, `aggregator`) and absolute path.
-- `cccr modules <module>` returns the detailed record for one exact module name.
+- `cccr modules show <module>` returns the detailed record for one exact module name.
 - `cccr modules integrations|properties|openapi <module>` returns the targeted
   inventory, synthetic configuration example, or local API contracts for that
   module.

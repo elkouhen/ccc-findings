@@ -43,19 +43,19 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "endpoints" not in root_help.output
     assert "resources" not in root_help.output
     assert microservices_help.exit_code == 0
-    assert "Lister les microservices ou résumer un microservice." in microservices_help.output
-    assert "cccr microservices mongodb orders" in microservices_help.output
+    assert "Explorer les microservices indexés." in microservices_help.output
+    assert "mongodb" in microservices_help.output
     assert graph_help.exit_code == 0
     assert "Afficher les interactions HTTP et Kafka" in graph_help.output
     assert "--drawio" not in graph_help.output
     assert topics_help.exit_code == 0
-    assert "Commande : list, show, neighbors" in topics_help.output
-    assert "consumers" not in topics_help.output
+    assert "show" in topics_help.output
+    assert "consumers" in topics_help.output
     assert apis_help.exit_code == 0
-    assert "providers" not in apis_help.output
+    assert "providers" in apis_help.output
     assert analyze_help.exit_code == 0
-    assert "microservices, topics, apis," in analyze_help.output
-    assert "mongodb ou audit" in analyze_help.output
+    assert "audit" in analyze_help.output
+    assert "microservices" in analyze_help.output
     assert export_help.exit_code == 0
     assert "--drawio" in export_help.output
     assert "--html" in export_help.output
@@ -991,7 +991,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert summary_payload["kafka_topics_published"] == ["orders.created"]
     assert summary_payload["databases"]["mongodb_collections"] == ["orders"]
 
-    short_summary = runner.invoke(app, ["microservices", "orders", "--json"])
+    short_summary = runner.invoke(app, ["microservices", "show", "orders", "--json"])
     assert short_summary.exit_code == 0
     assert json.loads(short_summary.output)["name"] == "orders"
     assert json.loads(short_summary.output)["kafka_topics_published"] == ["orders.created"]
@@ -1027,7 +1027,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     ]
 
     mongodb_services = runner.invoke(
-        app, ["analyze", "mongodb", "services", "orders", "--root", str(tmp_path), "--json"]
+        app, ["mongodb", "services", "orders", "--root", str(tmp_path), "--json"]
     )
     assert mongodb_services.exit_code == 0
     assert json.loads(mongodb_services.output) == {
@@ -1050,7 +1050,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     ]
 
     consumers = runner.invoke(
-        app, ["analyze", "topics", "consumers", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["topics", "consumers", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert consumers.exit_code == 0
     assert json.loads(consumers.output)["microservices"] == ["payments"]
@@ -1081,7 +1081,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     }
 
     trace = runner.invoke(
-        app, ["analyze", "topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert trace.exit_code == 0
     trace_payload = json.loads(trace.output)
@@ -1101,7 +1101,6 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     shallow_trace = runner.invoke(
         app,
         [
-            "analyze",
             "topics",
             "trace",
             "orders.created",
@@ -1130,7 +1129,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
             [cycle_publish.path], [cycle_publish]
         )
     cyclic_trace = runner.invoke(
-        app, ["analyze", "topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
+        app, ["topics", "trace", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert cyclic_trace.exit_code == 0
     assert json.loads(cyclic_trace.output)["flows"] == [
@@ -1159,7 +1158,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert json.loads(resource_search.output)["resolved"] == "POST /payments"
 
     api_providers = runner.invoke(
-        app, ["analyze", "apis", "providers", "POST /payments", "--root", str(tmp_path), "--json"]
+        app, ["apis", "providers", "POST /payments", "--root", str(tmp_path), "--json"]
     )
     assert api_providers.exit_code == 0
     assert json.loads(api_providers.output) == {
@@ -1241,7 +1240,7 @@ def test_microservices_lists_only_runtime_services(
     with Store(dest / "service-a"):
         pass  # crée .cccr/findings.db, vide
 
-    result = runner.invoke(app, ["microservices", str(dest), "--json"])
+    result = runner.invoke(app, ["microservices", "--root", str(dest), "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -1256,7 +1255,7 @@ def test_microservices_text_reports_no_modules_for_empty_directory(
     empty = tmp_path / "empty"
     empty.mkdir()
 
-    result = runner.invoke(app, ["microservices", str(empty)])
+    result = runner.invoke(app, ["microservices", "--root", str(empty)])
 
     assert result.exit_code == 0
     assert "Aucun service workspace découvert" in result.output
@@ -1326,7 +1325,7 @@ public class BillingServiceMain {
         store.replace_modules([module])
         store.replace_endpoints_for_files([endpoint.path for endpoint in endpoints], endpoints)
 
-    result = runner.invoke(app, ["microservices", str(tmp_path), "--json"])
+    result = runner.invoke(app, ["microservices", "--root", str(tmp_path), "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -1347,7 +1346,7 @@ public class BillingServiceMain {
         }
     ]
 
-    text_result = runner.invoke(app, ["microservices", str(tmp_path)])
+    text_result = runner.invoke(app, ["microservices", "--root", str(tmp_path)])
     assert text_result.exit_code == 0
     assert "HTTP exposées: POST /invoices" in text_result.output
     assert "Kafka publiés: invoices.created" in text_result.output
@@ -1401,7 +1400,7 @@ def test_microservices_service_subcommands_render_apis_and_properties(
     }
 
     api_consumers = runner.invoke(
-        app, ["analyze", "apis", "consumers", "GET /payments", "--root", str(workspace), "--json"]
+        app, ["apis", "consumers", "GET /payments", "--root", str(workspace), "--json"]
     )
     assert api_consumers.exit_code == 0
     assert json.loads(api_consumers.output) == {

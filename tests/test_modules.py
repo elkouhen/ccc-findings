@@ -169,7 +169,7 @@ def test_modules_cli_lists_then_returns_module_detail(tmp_path: Path, monkeypatc
         }
     ]
 
-    detail = runner.invoke(app, ["modules", "orders-api", "--json"])
+    detail = runner.invoke(app, ["modules", "show", "orders-api", "--json"])
     assert detail.exit_code == 0
     assert json.loads(detail.output)["configuration_example"] == "server:\n  port: 0\n"
 
@@ -388,7 +388,7 @@ def test_modules_cli_subcommands_render_endpoints_properties_and_openapi(tmp_pat
         store.replace_endpoints_for_files([call.path, serve.path], [call, serve])
     monkeypatch.chdir(tmp_path)
 
-    endpoints = runner.invoke(app, ["modules", "endpoints", "orders-api", "--json"])
+    endpoints = runner.invoke(app, ["modules", "integrations", "orders-api", "--json"])
     assert endpoints.exit_code == 0
     assert json.loads(endpoints.output)[0]["topic"] == "GET /payments"
     properties = runner.invoke(app, ["modules", "properties", "orders-api", "--json"])

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
+import click
 import typer
 
 from ccc_radar import __version__
@@ -90,7 +91,35 @@ export_app = typer.Typer(
         "`cccr export modules --html modules.html`."
     )
 )
+topics_app = typer.Typer(
+    help="Explorer les topics Kafka indexés.\n\nExemples : `cccr topics`, `cccr topics consumers orders.created`."
+)
+apis_app = typer.Typer(
+    help="Explorer les APIs HTTP indexées.\n\nExemples : `cccr apis`, `cccr apis consumers 'POST /payments'`."
+)
+mongodb_app = typer.Typer(
+    help="Explorer les collections MongoDB indexées.\n\nExemples : `cccr mongodb`, `cccr mongodb services orders`."
+)
+microservices_app = typer.Typer(
+    help="Explorer les microservices indexés.\n\nExemples : `cccr microservices`, `cccr microservices show orders`."
+)
+modules_app = typer.Typer(
+    help="Explorer les modules Maven ou Gradle indexés.\n\nExemples : `cccr modules`, `cccr modules show orders-api`."
+)
+analyze_app = typer.Typer(
+    help="Analyser les impacts et les chemins d'architecture.\n\nExemples : `cccr analyze audit`, `cccr analyze microservices impact orders`."
+)
+analyze_microservices_app = typer.Typer(
+    help="Analyser les relations entre microservices.\n\nExemples : `cccr analyze microservices impact orders`, `cccr analyze microservices path orders payments`."
+)
 app.add_typer(export_app, name="export")
+app.add_typer(topics_app, name="topics")
+app.add_typer(apis_app, name="apis")
+app.add_typer(mongodb_app, name="mongodb")
+app.add_typer(microservices_app, name="microservices")
+app.add_typer(modules_app, name="modules")
+app.add_typer(analyze_app, name="analyze")
+analyze_app.add_typer(analyze_microservices_app, name="microservices")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_RULESETS = (
@@ -158,7 +187,6 @@ def _emit_architecture(result: object, json_output: bool) -> None:
     typer.echo(json.dumps(result) if json_output else render_architecture_text(result))
 
 
-@app.command(name="topics")
 def topics_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Commande : list, show, neighbors ou search."
@@ -180,7 +208,8 @@ def topics_cmd(
     `cccr topics neighbors orders.created`.
     """
     arguments = arguments or []
-    workspace_root = (root or Path.cwd()).resolve()
+    json_output = _option_json(json_output)
+    workspace_root = _option_root(root)
     catalog = _microservice_catalog(workspace_root)
     if not arguments or arguments[0] == "list":
         if len(arguments) > 1:
@@ -213,7 +242,6 @@ def topics_cmd(
     raise typer.Exit(code=2)
 
 
-@app.command(name="apis")
 def apis_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Commande : list, show, neighbors ou search."
@@ -229,7 +257,8 @@ def apis_cmd(
     `cccr apis search payments`.
     """
     arguments = arguments or []
-    workspace_root = (root or Path.cwd()).resolve()
+    json_output = _option_json(json_output)
+    workspace_root = _option_root(root)
     catalog = _microservice_catalog(workspace_root)
     if not arguments or arguments[0] == "list":
         if len(arguments) > 1:
@@ -275,7 +304,6 @@ def resources_alias(
     apis_cmd(arguments, root, json_output)
 
 
-@app.command(name="mongodb")
 def mongodb_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Commande : list, show, neighbors ou search."
@@ -291,7 +319,8 @@ def mongodb_cmd(
     `cccr mongodb neighbors orders`.
     """
     arguments = arguments or []
-    catalog = _microservice_catalog((root or Path.cwd()).resolve())
+    json_output = _option_json(json_output)
+    catalog = _microservice_catalog(_option_root(root))
     if not arguments or arguments[0] == "list":
         if len(arguments) > 1:
             typer.echo("Usage : `cccr mongodb [list] --root <workspace>`.", err=True)
@@ -317,7 +346,6 @@ def mongodb_cmd(
     _emit_architecture(result, json_output)
 
 
-@app.command(name="analyze")
 def analyze_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Cible et requête : microservices, topics, apis, mongodb ou audit."
@@ -423,6 +451,226 @@ def analyze_cmd(
         "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit> ...`.", err=True
     )
     raise typer.Exit(code=2)
+
+
+def _catalog_root(root: Path | None) -> Path:
+    return _option_root(root)
+
+
+def _option_root(root: Path | None) -> Path:
+    """Resolve --root from a command or its parent Typer group."""
+    if root is not None:
+        return root.resolve()
+    context = click.get_current_context(silent=True)
+    parent_root = context.parent.params.get("root") if context and context.parent else None
+    return (parent_root or Path.cwd()).resolve()
+
+
+def _option_json(json_output: bool) -> bool:
+    """Resolve --json from a command or its parent Typer group."""
+    if json_output:
+        return True
+    context = click.get_current_context(silent=True)
+    return bool(context and context.parent and context.parent.params.get("json_output"))
+
+
+@topics_app.callback(invoke_without_command=True)
+def topics_root(
+    ctx: typer.Context,
+    root: Path | None = typer.Option(None, "--root", help="Répertoire parent à explorer."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Lister les topics sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        topics_cmd([], root, json_output, 6, 50)
+
+
+@topics_app.command("list")
+def topics_list(root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les topics Kafka."""
+    topics_cmd([], root, json_output, 6, 50)
+
+
+@topics_app.command("show")
+def topics_show(topic: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer un topic Kafka."""
+    topics_cmd(["show", topic], root, json_output, 6, 50)
+
+
+@topics_app.command("neighbors")
+def topics_neighbors(topic: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les producteurs et consommateurs directement liés."""
+    topics_cmd(["neighbors", topic], root, json_output, 6, 50)
+
+
+@topics_app.command("consumers")
+def topics_consumers(topic: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices consommateurs d'un topic."""
+    topics_cmd(["consumers", topic], root, json_output, 6, 50)
+
+
+@topics_app.command("producers")
+def topics_producers(topic: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices producteurs d'un topic."""
+    topics_cmd(["producers", topic], root, json_output, 6, 50)
+
+
+@topics_app.command("search")
+def topics_search(query: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Retrouver un topic par nom ou similarité."""
+    topics_cmd(["search", query], root, json_output, 6, 50)
+
+
+@topics_app.command("trace")
+def topics_trace(
+    topic: str,
+    root: Path | None = typer.Option(None, "--root"),
+    json_output: bool = typer.Option(False, "--json"),
+    max_depth: int = typer.Option(6, "--max-depth", min=1, max=12),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+) -> None:
+    """Afficher les flux Kafka potentiels issus d'un topic."""
+    topics_cmd(["trace", topic], root, json_output, max_depth, limit)
+
+
+@apis_app.callback(invoke_without_command=True)
+def apis_root(
+    ctx: typer.Context,
+    root: Path | None = typer.Option(None, "--root", help="Répertoire parent à explorer."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Lister les APIs sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        apis_cmd([], root, json_output)
+
+
+@apis_app.command("list")
+def apis_list(root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les APIs HTTP."""
+    apis_cmd([], root, json_output)
+
+
+@apis_app.command("show")
+def apis_show(api: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer une API HTTP."""
+    apis_cmd(["show", api], root, json_output)
+
+
+@apis_app.command("neighbors")
+def apis_neighbors(api: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les microservices liés à une API."""
+    apis_cmd(["neighbors", api], root, json_output)
+
+
+@apis_app.command("providers")
+def apis_providers(api: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices qui exposent une API."""
+    apis_cmd(["providers", api], root, json_output)
+
+
+@apis_app.command("consumers")
+def apis_consumers(api: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices qui appellent une API."""
+    apis_cmd(["consumers", api], root, json_output)
+
+
+@apis_app.command("search")
+def apis_search(query: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Retrouver une API par méthode ou chemin."""
+    apis_cmd(["search", query], root, json_output)
+
+
+@mongodb_app.callback(invoke_without_command=True)
+def mongodb_root(
+    ctx: typer.Context,
+    root: Path | None = typer.Option(None, "--root", help="Répertoire parent à explorer."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Lister les collections sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        mongodb_cmd([], root, json_output)
+
+
+@mongodb_app.command("list")
+def mongodb_list(root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les collections MongoDB."""
+    mongodb_cmd([], root, json_output)
+
+
+@mongodb_app.command("show")
+def mongodb_show(collection: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer une collection MongoDB."""
+    mongodb_cmd(["show", collection], root, json_output)
+
+
+@mongodb_app.command("neighbors")
+def mongodb_neighbors(collection: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les microservices liés à une collection."""
+    mongodb_cmd(["neighbors", collection], root, json_output)
+
+
+@mongodb_app.command("services")
+def mongodb_services(collection: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices utilisant une collection."""
+    mongodb_cmd(["services", collection], root, json_output)
+
+
+@mongodb_app.command("search")
+def mongodb_search(query: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Retrouver une collection par son nom."""
+    mongodb_cmd(["search", query], root, json_output)
+
+
+@analyze_app.command("audit")
+def analyze_audit(
+    workspace: Path | None = typer.Option(None, "--workspace", help="Workspace de services indexés séparément."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Identifier les risques d'architecture."""
+    _render_audit(Path.cwd(), workspace, json_output)
+
+
+@analyze_microservices_app.command("calls")
+def analyze_microservices_calls(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les appels sortants d'un microservice."""
+    _render_microservice_analysis("calls", service, _catalog_root(root), json_output)
+
+
+@analyze_microservices_app.command("dependencies")
+def analyze_microservices_dependencies(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les dépendances d'un microservice."""
+    _render_microservice_analysis("dependencies", service, _catalog_root(root), json_output)
+
+
+@analyze_microservices_app.command("impact")
+def analyze_microservices_impact(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Identifier les composants impactés par un microservice."""
+    _render_microservice_analysis("impact", service, _catalog_root(root), json_output)
+
+
+@analyze_microservices_app.command("external-apis")
+def analyze_microservices_external_apis(service: str | None = typer.Argument(None), root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les APIs externes utilisées, éventuellement par microservice."""
+    _render_microservice_analysis("external-apis", service, _catalog_root(root), json_output)
+
+
+@analyze_microservices_app.command("orphan-integrations")
+def analyze_microservices_orphan_integrations(service: str | None = typer.Argument(None), root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Identifier les intégrations sans relation résolue."""
+    _render_microservice_analysis("orphan-integrations", service, _catalog_root(root), json_output)
+
+
+@analyze_microservices_app.command("path")
+def analyze_microservices_path(
+    source: str,
+    target: str,
+    root: Path | None = typer.Option(None, "--root"),
+    json_output: bool = typer.Option(False, "--json"),
+    max_depth: int = typer.Option(12, "--max-depth", min=1, max=32),
+    limit: int = typer.Option(20, "--limit", min=1, max=100),
+) -> None:
+    """Trouver des chemins entre deux microservices."""
+    _render_microservice_path(source, target, _catalog_root(root), json_output, max_depth=max_depth, limit=limit)
 
 
 @app.command()
@@ -1037,7 +1285,7 @@ Le site généré se trouve dans `dist/`.
 
 - Formes : composant pour un microservice, file pour un topic Kafka, cylindre pour une collection MongoDB.
 - Couleurs de nœud : bleu pour un score de complexité faible (0-3), ambre pour un score moyen (4-6), rouge à partir de 7.
-- Le score additionne les relations du nœud et les findings du microservice (ERROR = 3, WARNING = 2, INFO = 1).
+- Le score correspond au nombre de relations directes du nœud. Les findings restent visibles dans les détails, sans modifier la couleur.
 - Les appels et publications sortants sont verts ; les consommations Kafka entrantes sont orange ; les accès MongoDB sont bleus.
 """
     (destination / "architecture.c4").write_text(model, encoding="utf-8")
@@ -1185,7 +1433,6 @@ def _render_audit(repo_root: Path, workspace: Path | None, json_output: bool) ->
     typer.echo(json.dumps(render_audit_json(risks)) if json_output else render_audit_text(risks))
 
 
-@app.command(name="microservices")
 def microservices_cmd(
     arguments: list[str] = typer.Argument(
         None,
@@ -1210,11 +1457,13 @@ def microservices_cmd(
     `cccr microservices mongodb orders`, `cccr microservices neighbors orders`.
     """
     arguments = arguments or []
+    json_output = _option_json(json_output)
+    root = _option_root(root)
     commands = {
         "topics", "apis", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "path", "analyze", "implementation"
     }
     if arguments and arguments[0] in commands:
-        workspace_root = (root or Path.cwd()).resolve()
+        workspace_root = root
         command = arguments[0]
         if command in {"topics", "apis", "resources", "mongodb", "properties", "openapi", "show"}:
             if len(arguments) != 2:
@@ -1267,12 +1516,12 @@ def microservices_cmd(
             Path(argument).is_absolute() or argument in {".", ".."} or argument.startswith(f".{os.sep}")
         )
         if not explicit_workspace:
-            _render_microservice_summary(argument, (root or Path.cwd()).resolve(), json_output)
+            _render_microservice_summary(argument, root, json_output)
             return
     if len(arguments) > 1:
         typer.echo("Usage : `cccr microservices [--root <root>]` ou `cccr microservices <service> --root <root>`.", err=True)
         raise typer.Exit(code=2)
-    workspace_root = Path(arguments[0]) if arguments else (root or Path.cwd())
+    workspace_root = Path(arguments[0]) if arguments else root
     services = [
         service
         for service in discover_maven_services(workspace_root)
@@ -1519,7 +1768,6 @@ def _render_openapi_contracts(name: str, root: Path, json_output: bool) -> None:
         typer.echo("\n\n".join(f"# {contract['path']}\n{contract['content'].rstrip()}" for contract in contracts))
 
 
-@app.command(name="modules")
 def modules_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Sous-commande et module, ou nom de module à détailler."
@@ -1624,6 +1872,119 @@ def _render_module_graph(
         return
     result = render_module_graph_json(modules, dependencies)
     typer.echo(json.dumps(result) if json_output else render_module_graph_text(result))
+
+
+@microservices_app.callback(invoke_without_command=True)
+def microservices_root(
+    ctx: typer.Context,
+    root: Path | None = typer.Option(None, "--root", help="Répertoire parent à explorer."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Lister les microservices sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        microservices_cmd([], root, json_output, 12, 20)
+
+
+@microservices_app.command("list")
+def microservices_list(root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices."""
+    microservices_cmd([], root, json_output, 12, 20)
+
+
+@microservices_app.command("show")
+def microservices_show(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer un microservice."""
+    microservices_cmd(["show", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("topics")
+def microservices_topics(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les topics publiés et consommés par un microservice."""
+    microservices_cmd(["topics", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("apis")
+def microservices_apis(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les APIs exposées et appelées par un microservice."""
+    microservices_cmd(["apis", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("mongodb")
+def microservices_mongodb(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les collections MongoDB utilisées par un microservice."""
+    microservices_cmd(["mongodb", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("neighbors")
+def microservices_neighbors(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les relations directes d'un microservice."""
+    microservices_cmd(["neighbors", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("implementation")
+def microservices_implementation(
+    kind: str,
+    identifier: str,
+    root: Path | None = typer.Option(None, "--root"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Accéder à l'implémentation d'une intégration identifiée."""
+    microservices_cmd(["implementation", kind, identifier], root, json_output, 12, 20)
+
+
+@microservices_app.command("properties")
+def microservices_properties(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher explicitement l'exemple de configuration Spring."""
+    microservices_cmd(["properties", service], root, json_output, 12, 20)
+
+
+@microservices_app.command("openapi")
+def microservices_openapi(service: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher explicitement les contrats OpenAPI locaux."""
+    microservices_cmd(["openapi", service], root, json_output, 12, 20)
+
+
+@modules_app.callback(invoke_without_command=True)
+def modules_root(ctx: typer.Context, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les modules sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        modules_cmd([], json_output, None, None)
+
+
+@modules_app.command("list")
+def modules_list(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les modules."""
+    modules_cmd([], json_output, None, None)
+
+
+@modules_app.command("show")
+def modules_show(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer un module."""
+    modules_cmd([module], json_output, None, None)
+
+
+@modules_app.command("integrations")
+def modules_integrations(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les intégrations d'un module."""
+    modules_cmd(["integrations", module], json_output, None, None)
+
+
+@modules_app.command("properties")
+def modules_properties(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher explicitement la configuration indexée d'un module."""
+    modules_cmd(["properties", module], json_output, None, None)
+
+
+@modules_app.command("openapi")
+def modules_openapi(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher explicitement les contrats OpenAPI locaux."""
+    modules_cmd(["openapi", module], json_output, None, None)
+
+
+@modules_app.command("graph")
+def modules_graph(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les dépendances de build entre modules."""
+    modules_cmd(["graph"], json_output, None, None)
 
 
 def _selected_indexed_module(name: str, repo_root: Path):

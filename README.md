@@ -190,18 +190,19 @@ cccr microservices apis order-service
 cccr analyze microservices path order-service shipping-service
 cccr microservices implementation integration <integration-id>
 cccr topics                     # discovered Kafka topics
-cccr analyze topics consumers orders.created
-cccr analyze topics producers orders.created
+cccr topics consumers orders.created
+cccr topics producers orders.created
 cccr topics neighbors orders.created
 cccr topics search created
-cccr analyze topics trace orders.created  # potential Kafka flows, not runtime traces
+cccr topics trace orders.created  # potential Kafka flows, not runtime traces
 cccr apis                       # discovered HTTP APIs
-cccr analyze apis consumers "POST /payments"
+cccr apis consumers "POST /payments"
 cccr apis search payments
 cccr mongodb                     # indexed MongoDB collections
-cccr analyze mongodb services orders  # microservices using a collection
+cccr mongodb services orders  # microservices using a collection
 cccr microservices mongodb order-service
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
+cccr modules show order-service
 cccr modules graph              # declared local build dependencies between modules
 cccr export modules --drawio modules.drawio
 cccr export modules --html modules.html
