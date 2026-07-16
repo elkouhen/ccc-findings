@@ -1107,6 +1107,16 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
       details.append(heading, list);
     }
+    function relationText(link) {
+      const source = nodeDataById.get(link.source);
+      const target = nodeDataById.get(link.target);
+      let action;
+      if (link.kind === "rest") action = `appelle ${link.label}`;
+      else if (link.kind === "mongodb") action = "stocke dans";
+      else if (source.kind === "microservice") action = "publie";
+      else action = "est consomme par";
+      return `${source.name} -> ${target.name} : ${action}`;
+    }
     function renderDetails(id) {
       const node = nodeDataById.get(id);
       const edges = graphData.links.filter(link => link.source === id || link.target === id);
@@ -1127,7 +1137,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           .map(([severity, count]) => `${severity}: ${count}`));
       }
       if (node.kind === "mongodb_collection") appendList("Stockee par", [node.owner]);
-      appendList("Relations", edges.map(link => `${link.source === id ? "vers" : "depuis"} ${nodeDataById.get(link.source === id ? link.target : link.source).name} : ${link.label}`));
+      appendList("Relations", edges.map(relationText));
     }
     function selectNode(id) {
       selectedId = id;
