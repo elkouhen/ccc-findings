@@ -7,12 +7,12 @@ déjà indexés pour construire une vue fédérée
 (`endpoints_by_service`/`findings_by_service`) consommable par `graph.py`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import discover_modules
+from ccc_radar.modules import DiscoveredModule, discover_modules
 from ccc_radar.paths import db_path
 from ccc_radar.store import Store, StoreError
 
@@ -31,6 +31,7 @@ class FederationResult:
     endpoints_by_service: dict[str, list[MessageEndpoint]]
     findings_by_service: dict[str, list[Finding]]
     warnings: list[str]
+    modules_by_service: dict[str, DiscoveredModule] = field(default_factory=dict)
 
 
 def _dedupe_by_id(items: list[Finding] | list[MessageEndpoint]) -> list[Finding] | list[MessageEndpoint]:
@@ -92,6 +93,7 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
     ce ne sont pas des producteurs/consommateurs runtime (A2 CA5)."""
     endpoints_by_service: dict[str, list[MessageEndpoint]] = {}
     findings_by_service: dict[str, list[Finding]] = {}
+    modules_by_service: dict[str, DiscoveredModule] = {}
     warnings: list[str] = []
 
     for service in services:
@@ -103,6 +105,9 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
             continue
         try:
             with Store(service.index_root, readonly=True) as store:
+                indexed_modules = {module.name: module for module in store.all_modules()}
+                if module := indexed_modules.get(service.name):
+                    modules_by_service[service.name] = module
                 if service.index_root == service.path:
                     findings = store.all_findings()
                     endpoints = store.all_endpoints()
@@ -122,4 +127,4 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
         except StoreError as exc:
             warnings.append(f"{service.name} : {exc}")
 
-    return FederationResult(endpoints_by_service, findings_by_service, warnings)
+    return FederationResult(endpoints_by_service, findings_by_service, warnings, modules_by_service)

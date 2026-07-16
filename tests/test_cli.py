@@ -1079,8 +1079,36 @@ public class BillingServiceMain {
 }
 """.strip()
     )
-    with Store(tmp_path):
-        pass
+    module = DiscoveredModule(
+        name="billing-service",
+        path=project,
+        build_system="gradle",
+        version=None,
+        kind="library",
+        starts_application=True,
+        configuration_example="",
+        mongo_collections=("invoices",),
+    )
+    endpoints = [
+        MessageEndpoint(
+            id="serve", role="serve", system="rest", topic="POST /invoices", topic_dynamic=False,
+            source="code", framework="spring", path="InvoiceController.java", start_line=1,
+            end_line=1, snippet="", module="billing-service",
+        ),
+        MessageEndpoint(
+            id="publish", role="produce", system="kafka", topic="invoices.created", topic_dynamic=False,
+            source="code", framework="spring", path="InvoicePublisher.java", start_line=1,
+            end_line=1, snippet="", module="billing-service",
+        ),
+        MessageEndpoint(
+            id="consume", role="consume", system="kafka", topic="payments.received", topic_dynamic=False,
+            source="code", framework="spring", path="PaymentConsumer.java", start_line=1,
+            end_line=1, snippet="", module="billing-service",
+        ),
+    ]
+    with Store(tmp_path) as store:
+        store.replace_modules([module])
+        store.replace_endpoints_for_files([endpoint.path for endpoint in endpoints], endpoints)
 
     result = runner.invoke(app, ["microservices", str(tmp_path), "--json"])
 
@@ -1090,11 +1118,25 @@ public class BillingServiceMain {
         {
             "name": "billing-service",
             "kind": "microservice",
+            "starts_application": True,
             "indexed": True,
-            "endpoint_count": 0,
+            "endpoint_count": 3,
             "finding_count": 0,
+            "exposes_http_api": True,
+            "http_apis_exposed": ["POST /invoices"],
+            "http_apis_consumed": [],
+            "kafka_topics_published": ["invoices.created"],
+            "kafka_topics_consumed": ["payments.received"],
+            "mongo_collections": ["invoices"],
         }
     ]
+
+    text_result = runner.invoke(app, ["microservices", str(tmp_path)])
+    assert text_result.exit_code == 0
+    assert "HTTP exposées: POST /invoices" in text_result.output
+    assert "Kafka publiés: invoices.created" in text_result.output
+    assert "Kafka consommés: payments.received" in text_result.output
+    assert "Mongo: invoices" in text_result.output
 
 
 def test_microservices_service_subcommands_render_endpoints_resources_and_properties(

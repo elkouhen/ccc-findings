@@ -1553,6 +1553,12 @@ class WorkspaceServiceInfo(TypedDict):
     indexed: bool
     endpoint_count: int
     finding_count: int
+    exposes_http_api: bool
+    http_apis_exposed: list[str]
+    http_apis_consumed: list[str]
+    kafka_topics_published: list[str]
+    kafka_topics_consumed: list[str]
+    mongo_collections: list[str]
 
 
 class ModuleSummary(TypedDict):
@@ -1587,17 +1593,42 @@ def render_workspace_json(
     services: list[DiscoveredService], federation: FederationResult
 ) -> WorkspaceResult:
     return WorkspaceResult(
-        services=[
-            WorkspaceServiceInfo(
-                name=s.name,
-                kind=s.kind,
-                indexed=s.indexed,
-                endpoint_count=len(federation.endpoints_by_service.get(s.name, [])),
-                finding_count=len(federation.findings_by_service.get(s.name, [])),
-            )
-            for s in services
-        ],
+        services=[_workspace_service_info(service, federation) for service in services],
         warnings=federation.warnings,
+    )
+
+
+def _workspace_service_info(
+    service: DiscoveredService, federation: FederationResult
+) -> WorkspaceServiceInfo:
+    endpoints = federation.endpoints_by_service.get(service.name, [])
+    module = federation.modules_by_service.get(service.name)
+    http_apis_exposed = sorted({
+        endpoint.topic for endpoint in endpoints
+        if endpoint.system == "rest" and endpoint.role == "serve"
+    })
+    return WorkspaceServiceInfo(
+        name=service.name,
+        kind=service.kind,
+        starts_application=True,
+        indexed=service.indexed,
+        endpoint_count=len(endpoints),
+        finding_count=len(federation.findings_by_service.get(service.name, [])),
+        exposes_http_api=bool(http_apis_exposed),
+        http_apis_exposed=http_apis_exposed,
+        http_apis_consumed=sorted({
+            endpoint.topic for endpoint in endpoints
+            if endpoint.system == "rest" and endpoint.role == "call"
+        }),
+        kafka_topics_published=sorted({
+            endpoint.topic for endpoint in endpoints
+            if endpoint.system == "kafka" and endpoint.role == "produce"
+        }),
+        kafka_topics_consumed=sorted({
+            endpoint.topic for endpoint in endpoints
+            if endpoint.system == "kafka" and endpoint.role == "consume"
+        }),
+        mongo_collections=list(module.mongo_collections) if module else [],
     )
 
 
@@ -1610,6 +1641,15 @@ def render_workspace_text(result: WorkspaceResult) -> str:
         lines.append(
             f"[{info['kind']}] {info['name']} ({status})  "
             f"endpoints={info['endpoint_count']} findings={info['finding_count']}"
+        )
+        lines.append(
+            f"  HTTP exposées: {', '.join(info['http_apis_exposed']) or '-'} | "
+            f"HTTP consommées: {', '.join(info['http_apis_consumed']) or '-'}"
+        )
+        lines.append(
+            f"  Kafka publiés: {', '.join(info['kafka_topics_published']) or '-'} | "
+            f"Kafka consommés: {', '.join(info['kafka_topics_consumed']) or '-'} | "
+            f"Mongo: {', '.join(info['mongo_collections']) or '-'}"
         )
     for warning in result["warnings"]:
         lines.append(f"⚠ {warning}")

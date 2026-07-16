@@ -442,7 +442,13 @@ another project's database) to count its endpoints and findings.
 {
   "services": [
     {"name": "order-service", "kind": "microservice",
-     "indexed": true, "endpoint_count": 4, "finding_count": 2}
+     "indexed": true, "endpoint_count": 4, "finding_count": 2,
+     "exposes_http_api": true,
+     "http_apis_exposed": ["POST /orders"],
+     "http_apis_consumed": [],
+     "kafka_topics_published": ["orders.created"],
+     "kafka_topics_consumed": ["payments.received"],
+     "mongo_collections": ["orders"]}
   ],
   "warnings": ["payment-service: not indexed, ignored (run cccr index in this project)."]
 }
@@ -450,6 +456,11 @@ another project's database) to count its endpoints and findings.
 
 Les bibliothèques et modules partagés ne figurent pas dans cette commande ;
 ils sont listés par `cccr modules`.
+
+La vue texte affiche les mêmes informations principales par microservice :
+ressources HTTP exposées et consommées, topics Kafka publiés et consommés, et
+noms des collections MongoDB indexées. Ces champs restent vides pour un
+microservice non indexé ou lorsque l'index ne contient pas le signal concerné.
 
 The discovery command never includes configuration content. The synthetic YAML
 template is available only after an explicit request through
