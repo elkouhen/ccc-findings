@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 import ccc_radar.embedder as embedder_module
 import ccc_radar.render as render_module
-from ccc_radar.cli import DEFAULT_RULE_PACKS, app
+from ccc_radar.cli import DEFAULT_REGISTRY_RULESETS, DEFAULT_RULE_PACKS, app
 from ccc_radar.indexer import IndexReport
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.modules import DiscoveredModule
@@ -110,7 +110,7 @@ def repo_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return dest
 
 
-def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
+def test_init_without_semgrep_config_enables_default_registry_rulesets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -119,9 +119,10 @@ def test_init_without_semgrep_config_falls_back_to_default_registry_pack(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "p/security-audit" in result.output
+    assert "Java/Spring/OWASP/secrets" in result.output
     config_content = (tmp_path / ".cccr" / "config.yml").read_text()
-    assert "p/security-audit" in config_content
+    for ruleset in DEFAULT_REGISTRY_RULESETS:
+        assert ruleset in config_content
 
 
 def test_index_rejects_an_unknown_disabled_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,6 +198,8 @@ def test_init_without_semgrep_config_installs_all_skill_packs_when_available(
     for pack in DEFAULT_RULE_PACKS:
         assert f".cccr/rules/{pack}" in config_content
         assert (tmp_path / ".cccr" / "rules" / pack / "java.yaml").is_file()
+    for ruleset in DEFAULT_REGISTRY_RULESETS:
+        assert ruleset in config_content
 
 
 def test_init_without_semgrep_config_falls_back_when_skill_packs_are_incomplete(
@@ -209,13 +212,14 @@ def test_init_without_semgrep_config_falls_back_when_skill_packs_are_incomplete(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "p/security-audit" in result.output
+    assert "Java/Spring/OWASP/secrets" in result.output
     config_content = (tmp_path / ".cccr" / "config.yml").read_text()
-    assert "p/security-audit" in config_content
+    for ruleset in DEFAULT_REGISTRY_RULESETS:
+        assert ruleset in config_content
 
 
 @pytest.mark.integration
-def test_index_with_default_registry_pack_succeeds_end_to_end(
+def test_index_with_default_registry_rulesets_succeeds_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -734,6 +738,25 @@ def test_graph_html_writes_interactive_sigma_document(
             ["order-service/Producer.java", "payment-service/Consumer.java"],
             [produce, consume],
         )
+        store.replace_findings_for_files(
+            ["order-service/Producer.java"],
+            [
+                Finding(
+                    id="order-producer-finding",
+                    rule_id="example-rule",
+                    severity="ERROR",
+                    message="Example finding",
+                    path="order-service/Producer.java",
+                    start_line=10,
+                    end_line=10,
+                    snippet="kafkaTemplate.send(...) ",
+                    fix=None,
+                    cwe=[],
+                    owasp=[],
+                    module="order-service",
+                )
+            ],
+        )
     out_file = tmp_path / "graph.html"
 
     result = runner.invoke(app, ["export", "microservices", "--html", str(out_file)])
@@ -753,11 +776,13 @@ def test_graph_html_writes_interactive_sigma_document(
     assert (c4_project / "package.json").is_file()
     assert (c4_project / ".gitignore").is_file()
     assert (c4_project / "README.md").is_file()
+    assert "Couleurs de nœud" in (c4_project / "README.md").read_text(encoding="utf-8")
     c4_document = (c4_project / "architecture.c4").read_text(encoding="utf-8")
     assert "element microservice" in c4_document
     assert "element kafka_topic" in c4_document
     assert "element mongodb_collection" in c4_document
     assert "orders.created" in c4_document
+    assert "1 findings (ERROR=1)" in c4_document
     c4_config = json.loads((c4_project / "likec4.config.json").read_text(encoding="utf-8"))
     assert c4_config["$schema"] == "https://likec4.dev/schemas/config.json"
     assert c4_config["implicitViews"] is True

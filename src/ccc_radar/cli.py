@@ -39,7 +39,7 @@ from ccc_radar.graph import (
 )
 from ccc_radar.indexer import index_repo
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
-from ccc_radar.models import MessageEndpoint
+from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import discover_modules
 from ccc_radar.render import (
     render_code_search_text,
@@ -93,7 +93,13 @@ export_app = typer.Typer(
 app.add_typer(export_app, name="export")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
-DEFAULT_REGISTRY_PACK = "p/security-audit"
+DEFAULT_REGISTRY_RULESETS = (
+    "p/security-audit",
+    "p/java",
+    "p/spring",
+    "p/owasp-top-ten",
+    "p/secrets",
+)
 DEFAULT_RULE_PACKS = ("default", "liveness", "rest", "kafka", "kafka-security")
 _SKILL_RULES_ROOT_CANDIDATES = (
     ("ccc-radar-skill", "skills", "cccr", "rules"),
@@ -523,6 +529,9 @@ def init(
 ) -> None:
     """Initialise la configuration .cccr/config.yml du projet.
 
+    Sans `--rules`, active les packs CCCR disponibles et les règles Semgrep
+    Java, Spring, OWASP et secrets.
+
     Exemples : `cccr init`, `cccr init --rules rules/java.yml`.
     """
     repo_root = Path.cwd()
@@ -541,22 +550,24 @@ def init(
                 try:
                     rules_paths = _install_default_rule_packs(repo_root, rules_root)
                 except ConfigError:
-                    rules_paths = [DEFAULT_REGISTRY_PACK]
+                    rules_paths = list(DEFAULT_REGISTRY_RULESETS)
                     typer.echo(
-                    "Aucune config Semgrep détectée et les packs d'architecture sont "
-                    f"incomplets sous {rules_root}. Utilisation du pack par défaut "
-                    f"'{DEFAULT_REGISTRY_PACK}' : `cccr doctor` signalera que le graphe REST/Kafka n'est pas prêt."
+                        "Aucune config Semgrep détectée et les packs d'architecture sont "
+                        f"incomplets sous {rules_root}. Utilisation des packs par défaut "
+                        "Java/Spring/OWASP/secrets : `cccr doctor` signalera que le graphe REST/Kafka n'est pas prêt."
                     )
                 else:
+                    rules_paths.extend(DEFAULT_REGISTRY_RULESETS)
                     typer.echo(
-                        "Aucune config Semgrep détectée. Packs du skill copiés dans "
-                        f".cccr/rules/ : {', '.join(DEFAULT_RULE_PACKS)}."
+                        "Aucune config Semgrep détectée. Packs CCCR copiés dans "
+                        f".cccr/rules/ : {', '.join(DEFAULT_RULE_PACKS)} ; packs registre : "
+                        f"{', '.join(DEFAULT_REGISTRY_RULESETS)}."
                     )
             else:
-                rules_paths = [DEFAULT_REGISTRY_PACK]
+                rules_paths = list(DEFAULT_REGISTRY_RULESETS)
                 typer.echo(
-                    f"Aucune config Semgrep détectée et packs du skill introuvables. "
-                    f"Utilisation du pack par défaut '{DEFAULT_REGISTRY_PACK}' "
+                    "Aucune config Semgrep détectée et packs du skill introuvables. "
+                    "Utilisation des packs registre Java/Spring/OWASP/secrets "
                     "(pour un audit architecture, définissez CCCR_RULES_ROOT ou passez --rules-root)."
                 )
 
@@ -906,6 +917,7 @@ class _MicroserviceGraphData:
     services_by_name: dict[str, list[MessageEndpoint]]
     edges: list[GraphEdge]
     collections_by_service: dict[str, list[str]]
+    findings_by_service: dict[str, list[Finding]]
     result: dict[str, object]
 
 
@@ -915,6 +927,7 @@ def _load_microservice_graph(
     _require_index(repo_root)
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
+        findings = store.all_findings()
         repo_warning = _current_repo_endpoint_warning(store)
         indexed_modules = store.all_modules() if include_mongodb else []
 
@@ -922,11 +935,13 @@ def _load_microservice_graph(
     edges: list[GraphEdge] = []
     warnings: list[str] = [repo_warning] if repo_warning else []
     collections_by_service: dict[str, list[str]] = {}
+    findings_by_service: dict[str, list[Finding]] = {}
     cross_module_data_available = False
     if workspace is not None:
         federation = load_federation(discover_maven_services(workspace))
         warnings.extend(federation.warnings)
         services_by_name = federation.endpoints_by_service
+        findings_by_service = federation.findings_by_service
         edges = build_graph(services_by_name)
         if include_mongodb:
             collections_by_service = {
@@ -939,6 +954,10 @@ def _load_microservice_graph(
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if grouped_endpoints:
             services_by_name = grouped_endpoints
+            findings_by_service = {
+                service: [finding for finding in findings if finding.module == service]
+                for service in services_by_name
+            }
             edges = build_graph(grouped_endpoints)
             if include_mongodb:
                 collections_by_service = {
@@ -955,7 +974,9 @@ def _load_microservice_graph(
         warnings=warnings,
         cross_module_data_available=cross_module_data_available,
     )
-    return _MicroserviceGraphData(services_by_name, edges, collections_by_service, result)
+    return _MicroserviceGraphData(
+        services_by_name, edges, collections_by_service, findings_by_service, result
+    )
 
 
 def _write_likec4_project(destination: Path, model: str) -> None:
@@ -1005,6 +1026,13 @@ npm run preview
 ```
 
 Le site généré se trouve dans `dist/`.
+
+## Lire le graphe
+
+- Formes : composant pour un microservice, file pour un topic Kafka, cylindre pour une collection MongoDB.
+- Couleurs de nœud : bleu pour un score de complexité faible (0-3), ambre pour un score moyen (4-6), rouge à partir de 7.
+- Le score additionne les relations du nœud et les findings du microservice (ERROR = 3, WARNING = 2, INFO = 1).
+- Les appels et publications sortants sont verts ; les consommations Kafka entrantes sont orange ; les accès MongoDB sont bleus.
 """
     (destination / "architecture.c4").write_text(model, encoding="utf-8")
     (destination / "likec4.config.json").write_text(
@@ -1061,7 +1089,10 @@ def export_microservices_cmd(
         _write_likec4_project(
             c4,
             render_graph_likec4(
-                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
+                graph_data.services_by_name,
+                graph_data.edges,
+                graph_data.collections_by_service,
+                graph_data.findings_by_service,
             ),
         )
     output = outputs[0]

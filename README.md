@@ -138,8 +138,9 @@ cccr analyze audit
 ```
 
 `cccr doctor` doit confirmer les packs REST, Kafka, liveness et Kafka security
-avant de conclure sur un graphe. Sans eux, le fallback `p/security-audit` reste
-valable pour les findings, mais pas pour une cartographie d'architecture.
+avant de conclure sur un graphe. Sans eux, `cccr init` active les packs registre
+`p/security-audit`, `p/java`, `p/spring`, `p/owasp-top-ten` et `p/secrets` : ils
+couvrent l'audit sécurité, mais pas la cartographie d'architecture.
 
 ## Upgrade
 
@@ -153,7 +154,7 @@ uv tool upgrade --all       # upgrades all tools installed via uv (including coc
 ### Core product
 
 ```bash
-cccr init                       # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
+cccr init                       # detects a Semgrep config, otherwise enables all CCCR packs plus Java/Spring/OWASP/secrets registry rules
 cccr doctor                     # validates prerequisites and active architecture packs
 cccr index                      # incremental scan + progress + embeddings
 ccc index                       # required for cccr search
@@ -162,7 +163,8 @@ cccr findings "sql injection"   # precision-first lookup (all query terms must m
 cccr summary                    # aggregated view (severities, top rules, top directories)
 ```
 
-The `p/security-audit` fallback is enough for the **core product** (findings).
+The Java/Spring/OWASP/secrets registry rulesets enabled by default are enough
+for the **core product** (findings).
 For the microservices extension, `cccr init` must be able to copy the skill
 packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`); otherwise
 `cccr integrations` / `graph` / `topics` / `apis` have no usable inventory.
@@ -206,8 +208,9 @@ cccr export modules --html modules.html
 ```
 
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
-`cccr init` first tries to copy these packs from the skill repo into
-`.cccr/rules/`, then enables them in `rules:`. The audit workflow then remains
+`cccr init` first tries to copy all CCCR packs from the skill repo into
+`.cccr/rules/`, then adds them and the Java/Spring/OWASP/secrets registry packs
+to `rules:`. The audit workflow then remains
 `cccr summary` → `cccr integrations` → `cccr graph` → `cccr analyze audit` → `cccr findings` /
 `cccr search`.
 

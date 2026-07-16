@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 
 import ccc_radar.render as render_module
 from ccc_radar.graph import build_graph
-from ccc_radar.models import MessageEndpoint, compute_endpoint_id
+from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.render import (
     render_graph_d2,
     render_graph_drawio,
@@ -236,9 +236,16 @@ def test_graph_renderers_include_mongodb_collections_when_requested() -> None:
 def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
+    findings = [
+        Finding("finding-1", "rule-1", "ERROR", "Failure", "a/Client.java", 1, 1, "", None, [], [], "service-a"),
+        Finding("finding-2", "rule-2", "ERROR", "Failure", "a/Producer.java", 1, 1, "", None, [], [], "service-a"),
+    ]
 
     document = render_graph_likec4(
-        endpoints_by_service, edges, {"service-a": ["orders"], "service-b": ["payments"]}
+        endpoints_by_service,
+        edges,
+        {"service-a": ["orders"], "service-b": ["payments"]},
+        {"service-a": findings},
     )
 
     assert "specification {" in document
@@ -248,6 +255,13 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "relationship http" in document
     assert "relationship publishes" in document
     assert "relationship consumes" in document
+    assert "shape component" in document
+    assert "shape queue" in document
+    assert "shape cylinder" in document
+    assert "color outgoing" in document
+    assert "color incoming" in document
+    assert "style { color complexity_high }" in document
+    assert "2 findings (ERROR=2)" in document
     assert "service_service-a -[http]-> service_service-b 'GET /orders'" in document
     assert "service_service-a -[publishes]-> topic_orders_created 'publishes'" in document
     assert "topic_orders_created -[consumes]-> service_service-b 'consumes'" in document
