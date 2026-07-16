@@ -1241,8 +1241,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       details.replaceChildren();
       const title = document.createElement("strong");
       title.textContent = viaNodes.length ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
+      const pathNodeLabel = (id, index) => {
+        const node = nodeDataById.get(id);
+        if (node.kind !== "kafka_topic") return node.name;
+        const precedingLink = path.edges[index - 1]?.link;
+        const types = precedingLink?.published_message_types || node.published_message_types || [];
+        return types.length ? `${node.name} (${types.join(", ")})` : node.name;
+      };
       details.append(title, document.createTextNode(
-        path.nodes.map(id => nodeDataById.get(id).name).join(" -> ")
+        path.nodes.map(pathNodeLabel).join(" -> ")
       ));
       const publishedMessages = path.edges.flatMap(step => {
         const source = nodeDataById.get(step.link.source);

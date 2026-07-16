@@ -438,7 +438,8 @@ selection-relative direction. Two microservice selectors can highlight the
 shortest directed path between them, preserving REST call direction and Kafka
 `producer -> topic -> consumer` steps; producer-to-topic path relations include
 their statically inferred published Java message types, also grouped in a
-dedicated path-details section. An ordered list of intermediate service
+dedicated path-details section and rendered beside the Kafka topic in the path
+description (`producer -> TOPIC (JavaType) -> consumer`). An ordered list of intermediate service
 or Kafka-topic nodes can constrain the path; each adjacent pair uses its own
 shortest directed segment. The
 generated document persists the current node selection or path in its URL

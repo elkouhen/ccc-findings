@@ -813,6 +813,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Chemin le plus court" in document
     assert "Chemin avec noeuds intermediaires" in document
     assert "Messages publies" in document
+    assert "const pathNodeLabel" in document
+    assert "node.name} (${types.join" in document
     assert "function persistState()" in document
     assert "function restoreState()" in document
     assert "history.replaceState" in document
