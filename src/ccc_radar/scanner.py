@@ -188,17 +188,24 @@ def _message_payload_type(declared_type: str | None) -> str | None:
 def _first_listener_payload_type(source: str, start_line: int) -> str | None:
     lines = source.splitlines()
     context = "\n".join(lines[max(0, start_line - 1): min(len(lines), start_line + 16)])
-    for match in re.finditer(r"\(([^()]*)\)\s*(?:throws[^\{]+)?\{", context, re.DOTALL):
-        for parameter in _split_java_type_arguments(match.group(1)):
-            if "@Header" in parameter or "@Headers" in parameter:
-                continue
-            cleaned = re.sub(r"@\w+(?:\([^)]*\))?\s*", "", parameter).strip()
-            parts = cleaned.rsplit(None, 1)
-            if len(parts) != 2:
-                continue
-            payload_type = _message_payload_type(parts[0])
-            if payload_type and payload_type not in {"Acknowledgment", "Consumer", "ConsumerRecordMetadata"}:
-                return payload_type
+    # `public void consume(Message message)` is the project convention. Keep
+    # the generic listener fallback for pre-existing Spring listener styles.
+    method_patterns = (
+        r"\bpublic\s+void\s+consume\s*\(([^()]*)\)\s*(?:throws[^\{]+)?\{",
+        r"\b(?:public|protected|private)?\s*void\s+\w+\s*\(([^()]*)\)\s*(?:throws[^\{]+)?\{",
+    )
+    for pattern in method_patterns:
+        for match in re.finditer(pattern, context, re.DOTALL):
+            for parameter in _split_java_type_arguments(match.group(1)):
+                if "@Header" in parameter or "@Headers" in parameter:
+                    continue
+                cleaned = re.sub(r"@\w+(?:\([^)]*\))?\s*", "", parameter).strip()
+                parts = cleaned.rsplit(None, 1)
+                if len(parts) != 2:
+                    continue
+                payload_type = _message_payload_type(parts[0])
+                if payload_type and payload_type not in {"Acknowledgment", "Consumer", "ConsumerRecordMetadata"}:
+                    return payload_type
     return None
 
 

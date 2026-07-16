@@ -188,7 +188,7 @@ class EventAdapter {
   }
 
   @KafkaListener(topics = "${kafka.topics.abc_def_ghi_jkl.name}")
-  void consume(OrderCreated event) {}
+  public void consume(OrderCreated event) {}
 }
 """
     )

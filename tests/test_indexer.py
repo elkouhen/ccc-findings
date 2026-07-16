@@ -145,7 +145,7 @@ class EventAdapter {
   private KafkaTemplate<String, OrderCreated> kafkaTemplate;
   void publish(OrderCreated event) { kafkaTemplate.send(properties.getTopics().getAbcDefGhiJkl(), event); }
   @KafkaListener(topics = "${kafka.topics.abc_def_ghi_jkl.name}")
-  void consume(OrderCreated event) {}
+  public void consume(OrderCreated event) {}
 }
 """
     )

@@ -884,8 +884,9 @@ of scope. `cccr` also adds local inference for Spring producers built through
 `<dynamic>`.
 
 For each Kafka integration, `cccr` also captures the payload type only when a
-Java signature makes it explicit: the first non-header `@KafkaListener`
-parameter, the value generic of `KafkaTemplate`, `ProducerRecord`, or
+Java signature makes it explicit: the first non-header parameter of the
+`public void consume(...)` method associated with a `@KafkaListener` (then a
+compatible listener method), the value generic of `KafkaTemplate`, `ProducerRecord`, or
 `KafkaConsumer`, or the value generic of a `KStream`/`KTable` declaration.
 This value is a source-level Java type, may be absent, and is never guessed
 from a topic name, serializer, or configuration property.
