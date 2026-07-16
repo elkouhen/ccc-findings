@@ -176,7 +176,9 @@ Semgrep scan, persistence, embedding) before the final
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr integrations               # indexed HTTP/Kafka integrations
 cccr graph                      # inter-service REST/Kafka topology
-cccr graph --drawio graph.drawio --include-mongodb  # also shows indexed MongoDB collections
+cccr export microservices --drawio graph.drawio     # microservices, Kafka topics and MongoDB collections
+cccr export microservices --html graph.html
+cccr export microservices --c4 architecture.c4      # LikeC4 source
 cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr microservices show order-service
@@ -197,8 +199,8 @@ cccr mongodb services orders     # microservices using a collection
 cccr microservices mongodb order-service
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
 cccr modules graph              # declared local build dependencies between modules
-cccr modules graph --drawio modules.drawio
-cccr modules graph --html modules.html
+cccr export modules --drawio modules.drawio
+cccr export modules --html modules.html
 ```
 
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,

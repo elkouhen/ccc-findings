@@ -12,6 +12,7 @@ from ccc_radar.render import (
     render_graph_drawio,
     render_graph_html,
     render_graph_json,
+    render_graph_likec4,
     render_graph_text,
     write_graph_d2,
 )
@@ -230,6 +231,28 @@ def test_graph_renderers_include_mongodb_collections_when_requested() -> None:
     assert 'label: "orders"' in d2
     assert 'label: "payments"' in d2
     assert 'svc_0 -> mongo_0: "stocke" {' in d2
+
+
+def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> None:
+    endpoints_by_service = _fixture()
+    edges = build_graph(endpoints_by_service)
+
+    document = render_graph_likec4(
+        endpoints_by_service, edges, {"service-a": ["orders"], "service-b": ["payments"]}
+    )
+
+    assert "specification {" in document
+    assert "element microservice" in document
+    assert "element kafka_topic" in document
+    assert "element mongodb_collection" in document
+    assert "relationship http" in document
+    assert "relationship publishes" in document
+    assert "relationship consumes" in document
+    assert "service_service-a -[http]-> service_service-b 'GET /orders'" in document
+    assert "service_service-a -[publishes]-> topic_orders_created 'publishes'" in document
+    assert "topic_orders_created -[consumes]-> service_service-b 'consumes'" in document
+    assert "service_service-a -[uses_data]-> collection_orders 'uses'" in document
+    assert "view dependencies" in document
 
 
 def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:

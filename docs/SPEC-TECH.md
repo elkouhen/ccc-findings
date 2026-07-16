@@ -232,7 +232,7 @@ the initial script.
 (`source`, `target`, unique pair). The table is replaced on every enabled
 module-inventory phase of `cccr index`; it stores only declared Maven/Gradle
 dependencies whose two modules are present locally. It is consumed solely by
-`cccr modules graph`, never by the REST/Kafka interaction graph.
+`cccr modules graph` and `cccr export modules`, never by the REST/Kafka interaction graph.
 
 ## 3. Indexing pipeline (`indexer.index_repo`)
 
@@ -736,7 +736,7 @@ Any value derived from source code (service name, route/topic) is escaped via
 raw f-strings on untrusted content, so that a service name or path containing
 `<`/`&`/`"` can never produce a malformed document (BACKLOG-14 G1 AC3).
 
-`cccr graph --drawio FILE` (CLI, §2): computes `services_by_name`/`edges`
+`cccr export microservices --drawio FILE` (CLI, §2): computes `services_by_name`/`edges`
 exactly like `--json` does (same `--workspace`/module-grouping branching),
 writes the result of `render_graph_drawio` to `FILE`, displays a
 short confirmation, then if `render_graph_json(...) ["note"]` is non-empty,

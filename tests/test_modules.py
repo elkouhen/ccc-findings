@@ -451,7 +451,7 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
     assert json.loads(interactions.output)["edges"] == []
 
     drawio = tmp_path / "module-dependencies.drawio"
-    export = runner.invoke(app, ["modules", "graph", "--drawio", str(drawio)])
+    export = runner.invoke(app, ["export", "modules", "--drawio", str(drawio)])
     assert export.exit_code == 0
     root = ET.fromstring(drawio.read_text(encoding="utf-8"))
     vertices = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]
@@ -465,7 +465,7 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
     assert y_by_module["orders-api"] < y_by_module["shared-kernel"] < y_by_module["core-kernel"]
 
     html = tmp_path / "module-dependencies.html"
-    html_export = runner.invoke(app, ["modules", "graph", "--html", str(html)])
+    html_export = runner.invoke(app, ["export", "modules", "--html", str(html)])
     assert html_export.exit_code == 0
     document = html.read_text(encoding="utf-8")
     assert "new Sigma(network" in document
@@ -482,7 +482,7 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
     assert 'appendList("APIs exposees", node.httpApisExposed)' in document
 
     both_formats = runner.invoke(
-        app, ["modules", "graph", "--drawio", str(drawio), "--html", str(html)]
+        app, ["export", "modules", "--drawio", str(drawio), "--html", str(html)]
     )
     assert both_formats.exit_code == 2
     assert "--drawio ou --html" in both_formats.output

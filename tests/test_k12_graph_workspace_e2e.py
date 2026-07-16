@@ -95,7 +95,7 @@ def test_graph_drawio_writes_a_valid_mxgraph_file(
     out_file = tmp_path / "graph.drawio"
 
     result = runner.invoke(
-        app, ["graph", "--workspace", str(indexed_cycle_workspace), "--drawio", str(out_file)]
+        app, ["export", "microservices", "--workspace", str(indexed_cycle_workspace), "--drawio", str(out_file)]
     )
 
     assert result.exit_code == 0, result.output
@@ -127,7 +127,7 @@ def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_not
         pass
     out_file = tmp_path / "graph.drawio"
 
-    result = runner.invoke(app, ["graph", "--drawio", str(out_file)])
+    result = runner.invoke(app, ["export", "microservices", "--drawio", str(out_file)])
 
     assert result.exit_code == 0
     assert "--workspace" in result.output

@@ -312,7 +312,7 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE] [--include-mongodb]`
+### `cccr graph [--workspace ROOT] [--json]`
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
@@ -322,14 +322,12 @@ included: synchronous REST calls detected inside a Kafka consumer handler
 **of the current project** (same file, call site inside the handler's line
 range).
 
-`--include-mongodb` adds one MongoDB collection node for each indexed
-`microservice + collection` pair to the Draw.io, HTML Sigma.js and D2 exports,
-with a `stocke` edge from the microservice. The service name remains part of
-the node identity: two collections with the same name are never displayed as a
-shared database without explicit evidence.
-Collections are detected from `@Document`, repository entity mappings, and a
-literal trailing collection argument on indexed `MongoTemplate`/
-`MongoOperations` calls. Dynamic expressions are not guessed.
+`cccr graph` remains the text/JSON exploration command. Visual and LikeC4
+exports are grouped under `cccr export microservices`; they always include the
+indexed MongoDB collections. Collections are detected from `@Document`,
+repository entity mappings, and a literal trailing collection argument on
+indexed `MongoTemplate`/`MongoOperations` calls. Dynamic expressions are not
+guessed.
 
 For the inter-service topology, two sources are possible, tried in this order:
 1. **Without `--workspace`**: if the index covers a multi-module Maven or
@@ -389,7 +387,13 @@ Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `--workspace` never makes the command fail: a missing or incompatible federated
 service is reported in `note`, not as an error.
 
-`--drawio FILE`: instead of JSON/text rendering, writes the complete graph in
+### `cccr export microservices [--workspace ROOT] (--drawio FILE | --html FILE | --c4 FILE)`
+
+Exports the same runtime dependency graph as `cccr graph`: microservices,
+Kafka topics, and indexed MongoDB collections. Exactly one output format is
+required.
+
+`--drawio FILE` writes the complete graph in
 `.drawio` (mxGraph XML, directly openable in diagrams.net) to `FILE`, then
 displays a short confirmation (number of services/graph edges). It renders one
 node per known service — including services without interactions — and one
@@ -414,18 +418,18 @@ When a service has Kafka entries from an indexed Markdown manifest, those
 entries are authoritative for that service and replace its Kafka endpoints
 detected from code. Services absent from the manifest keep code detection.
 
-`--html FILE`: writes an interactive Sigma.js graph backed by Graphology. Nodes
+`--html FILE` writes an interactive Sigma.js graph backed by Graphology. Nodes
 can be zoomed, panned, searched, or selected; selecting one mutes unrelated
 nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice and its direct relations. The
 generated document embeds graph data locally and loads Sigma.js from its CDN
 when opened.
 
-`--d2 FILE`: also replaces JSON/text rendering. With a `.d2` extension it
-writes D2 source; for another extension (for example `.svg` or `.png`) it
-renders through the D2 CLI. `--d2-layout` selects `elk` (default) or `dagre`.
-`--drawio`, `--html`, and `--d2` cannot be combined. No equivalent MCP tool — visual files
-are not agent-consumable results, unlike the JSON returned by `graph`.
+`--c4 FILE` writes a standalone LikeC4 source model. It declares custom
+`microservice`, `kafka_topic` and `mongodb_collection` elements and `http`,
+`publishes`, `consumes`, and `uses_data` relations. The model is an inferred
+static topology, never a runtime trace. No equivalent MCP tool — generated
+files are not agent-consumable results, unlike the JSON returned by `graph`.
 
 ### `cccr microservices [--root ROOT] [--json]`
 *Java/Spring microservices extension — beta.*
@@ -570,11 +574,11 @@ error.
 - `cccr modules graph` returns the declared Maven/Gradle dependencies whose
   source and target are both indexed modules. It is distinct from `cccr graph`:
   it never contains REST/Kafka interactions or topics.
-- `cccr modules graph --drawio modules.drawio` exports that module-dependency
+- `cccr export modules --drawio modules.drawio` exports that module-dependency
   graph in Draw.io format, with sources and their dependencies arranged by
   hierarchical levels.
-- `cccr modules graph --html modules.html` exports the same hierarchical view
-  as an interactive Sigma.js graph. `--drawio` and `--html` are exclusive.
+- `cccr export modules --html modules.html` exports the same hierarchical view
+  as an interactive Sigma.js graph. Exactly one format is required.
 
 The configuration example is generated during that indexation and follows the
 same no-real-values policy as `microservices properties`.

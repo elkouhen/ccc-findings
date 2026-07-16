@@ -29,24 +29,31 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     graph_help = runner.invoke(app, ["graph", "--help"])
     topics_help = runner.invoke(app, ["topics", "--help"])
     apis_help = runner.invoke(app, ["apis", "--help"])
+    export_help = runner.invoke(app, ["export", "microservices", "--help"])
 
     assert root_help.exit_code == 0
     assert "Explorer l'architecture et les constats" in root_help.output
     assert "BACKLOG-" not in root_help.output
     assert "integrations" in root_help.output
     assert "apis" in root_help.output
+    assert "export" in root_help.output
     assert "endpoints" not in root_help.output
     assert "resources" not in root_help.output
     assert microservices_help.exit_code == 0
     assert "Lister les microservices ou résumer un microservice." in microservices_help.output
     assert "cccr microservices mongodb orders" in microservices_help.output
     assert graph_help.exit_code == 0
-    assert "Afficher ou exporter les interactions HTTP et Kafka" in graph_help.output
+    assert "Afficher les interactions HTTP et Kafka" in graph_help.output
+    assert "--drawio" not in graph_help.output
     assert topics_help.exit_code == 0
     assert "Commande : list, show, neighbors" in topics_help.output
     assert apis_help.exit_code == 0
     assert "providers," in apis_help.output
     assert "consumers ou search" in apis_help.output
+    assert export_help.exit_code == 0
+    assert "--drawio" in export_help.output
+    assert "--html" in export_help.output
+    assert "--c4" in export_help.output
 
 
 def install_fake_skill_rules(home: Path, packs: tuple[str, ...] = DEFAULT_RULE_PACKS) -> Path:
@@ -692,7 +699,7 @@ def test_graph_html_writes_interactive_sigma_document(
         )
     out_file = tmp_path / "graph.html"
 
-    result = runner.invoke(app, ["graph", "--html", str(out_file), "--include-mongodb"])
+    result = runner.invoke(app, ["export", "microservices", "--html", str(out_file)])
 
     assert result.exit_code == 0
     document = out_file.read_text(encoding="utf-8")
@@ -700,6 +707,15 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "order-service" in document
     assert "orders.created" in document
     assert "mongodb_collection:order-service:orders" in document
+
+    c4_file = tmp_path / "architecture.c4"
+    c4_export = runner.invoke(app, ["export", "microservices", "--c4", str(c4_file)])
+    assert c4_export.exit_code == 0
+    c4_document = c4_file.read_text(encoding="utf-8")
+    assert "element microservice" in c4_document
+    assert "element kafka_topic" in c4_document
+    assert "element mongodb_collection" in c4_document
+    assert "orders.created" in c4_document
 
 
 def test_graph_rejects_drawio_and_d2_together(

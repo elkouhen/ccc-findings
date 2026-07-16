@@ -4,6 +4,7 @@ import shutil
 import hashlib
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -47,6 +48,7 @@ from ccc_radar.render import (
     render_graph_d2,
     render_graph_drawio,
     render_graph_html,
+    render_graph_likec4,
     render_graph_json,
     render_graph_text,
     render_module_detail_json,
@@ -76,6 +78,8 @@ from ccc_radar.doctor import has_errors, run_doctor
 app = typer.Typer(
     help="Explorer l'architecture et les constats d'un projet indexé."
 )
+export_app = typer.Typer(help="Exporter les graphes de dépendances d'architecture.")
+app.add_typer(export_app, name="export")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_PACK = "p/security-audit"
@@ -653,84 +657,45 @@ def graph_cmd(
         None,
         "--drawio",
         help="Exporter le graphe au format Draw.io.",
+        hidden=True,
     ),
     html: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--html",
         help="Exporter un graphe HTML interactif.",
+        hidden=True,
     ),
     d2: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--d2",
         help="Exporter le graphe en D2 ou dans un format rendu par D2.",
+        hidden=True,
     ),
     d2_layout: Literal["dagre", "elk"] = typer.Option(
         "elk",
         "--d2-layout",
         help="Moteur de placement D2 pour les formats rendus.",
+        hidden=True,
     ),
     include_mongodb: bool = typer.Option(
         False,
         "--include-mongodb",
         help="Ajoute les collections MongoDB indexées aux exports Draw.io, HTML et D2.",
+        hidden=True,
     ),
 ) -> None:
-    """Afficher ou exporter les interactions HTTP et Kafka entre microservices.
+    """Afficher les interactions HTTP et Kafka entre microservices.
 
-    Ajoutez `--include-mongodb` pour afficher aussi les collections MongoDB.
-    Utilisez `--workspace` lorsque les services sont indexés séparément.
+    Utilisez `cccr export microservices` pour générer Draw.io, HTML ou LikeC4.
     """
-    repo_root = Path.cwd()
-    _require_index(repo_root)
     if sum(output is not None for output in (drawio, html, d2)) > 1:
         typer.echo("Choisissez un seul rendu parmi --drawio, --html ou --d2.", err=True)
         raise typer.Exit(code=2)
-
-    with Store(repo_root) as store:
-        endpoints = store.all_endpoints()
-        repo_warning = _current_repo_endpoint_warning(store)
-        indexed_modules = store.all_modules() if include_mongodb else []
-
-    outbound_calls = find_outbound_calls_in_consumers(endpoints)
-
-    services_by_name: dict[str, list[MessageEndpoint]] = {}
-    edges: list[GraphEdge] = []
-    warnings: list[str] = [repo_warning] if repo_warning else []
-    collections_by_service: dict[str, list[str]] = {}
-    cross_module_data_available = False
-    if workspace is not None:
-        discovered = discover_maven_services(workspace)
-        federation = load_federation(discovered)
-        warnings.extend(federation.warnings)
-        services_by_name = federation.endpoints_by_service
-        edges = build_graph(services_by_name)
-        if include_mongodb:
-            collections_by_service = {
-                service: list(module.mongo_collections)
-                for service, module in federation.modules_by_service.items()
-                if service in services_by_name and module.mongo_collections
-            }
-        cross_module_data_available = True
-    else:
-        grouped_endpoints = group_endpoints_by_module(endpoints)
-        if grouped_endpoints:
-            services_by_name = grouped_endpoints
-            edges = build_graph(grouped_endpoints)
-            if include_mongodb:
-                collections_by_service = {
-                    module.name: list(module.mongo_collections)
-                    for module in indexed_modules
-                    if module.name in services_by_name and module.mongo_collections
-                }
-            cross_module_data_available = True
-
-    result = render_graph_json(
-        list(services_by_name),
-        edges,
-        outbound_calls,
-        warnings=warnings,
-        cross_module_data_available=cross_module_data_available,
-    )
+    graph_data = _load_microservice_graph(Path.cwd(), workspace, include_mongodb)
+    services_by_name = graph_data.services_by_name
+    edges = graph_data.edges
+    collections_by_service = graph_data.collections_by_service
+    result = graph_data.result
 
     if drawio is not None:
         drawio.write_text(
@@ -769,6 +734,138 @@ def graph_cmd(
         typer.echo(json.dumps(result))
     else:
         typer.echo(render_graph_text(result))
+
+
+@dataclass(frozen=True)
+class _MicroserviceGraphData:
+    services_by_name: dict[str, list[MessageEndpoint]]
+    edges: list[GraphEdge]
+    collections_by_service: dict[str, list[str]]
+    result: dict[str, object]
+
+
+def _load_microservice_graph(
+    repo_root: Path, workspace: Path | None, include_mongodb: bool
+) -> _MicroserviceGraphData:
+    _require_index(repo_root)
+    with Store(repo_root) as store:
+        endpoints = store.all_endpoints()
+        repo_warning = _current_repo_endpoint_warning(store)
+        indexed_modules = store.all_modules() if include_mongodb else []
+
+    services_by_name: dict[str, list[MessageEndpoint]] = {}
+    edges: list[GraphEdge] = []
+    warnings: list[str] = [repo_warning] if repo_warning else []
+    collections_by_service: dict[str, list[str]] = {}
+    cross_module_data_available = False
+    if workspace is not None:
+        federation = load_federation(discover_maven_services(workspace))
+        warnings.extend(federation.warnings)
+        services_by_name = federation.endpoints_by_service
+        edges = build_graph(services_by_name)
+        if include_mongodb:
+            collections_by_service = {
+                service: list(module.mongo_collections)
+                for service, module in federation.modules_by_service.items()
+                if service in services_by_name and module.mongo_collections
+            }
+        cross_module_data_available = True
+    else:
+        grouped_endpoints = group_endpoints_by_module(endpoints)
+        if grouped_endpoints:
+            services_by_name = grouped_endpoints
+            edges = build_graph(grouped_endpoints)
+            if include_mongodb:
+                collections_by_service = {
+                    module.name: list(module.mongo_collections)
+                    for module in indexed_modules
+                    if module.name in services_by_name and module.mongo_collections
+                }
+            cross_module_data_available = True
+
+    result = render_graph_json(
+        list(services_by_name),
+        edges,
+        find_outbound_calls_in_consumers(endpoints),
+        warnings=warnings,
+        cross_module_data_available=cross_module_data_available,
+    )
+    return _MicroserviceGraphData(services_by_name, edges, collections_by_service, result)
+
+
+@export_app.command(name="microservices")
+def export_microservices_cmd(
+    workspace: Optional[Path] = typer.Option(
+        None, "--workspace", help="Répertoire contenant plusieurs services indexés séparément."
+    ),
+    drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
+    html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
+    c4: Optional[Path] = typer.Option(None, "--c4", help="Fichier source LikeC4 à produire."),
+) -> None:
+    """Exporter les dépendances microservices, topics Kafka et collections MongoDB."""
+    outputs = [output for output in (drawio, html, c4) if output is not None]
+    if len(outputs) != 1:
+        typer.echo("Choisissez un seul format parmi --drawio, --html ou --c4.", err=True)
+        raise typer.Exit(code=2)
+    graph_data = _load_microservice_graph(Path.cwd(), workspace, include_mongodb=True)
+    if drawio is not None:
+        drawio.write_text(
+            render_graph_drawio(
+                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
+            ),
+            encoding="utf-8",
+        )
+    elif html is not None:
+        html.write_text(
+            render_graph_html(
+                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
+            ),
+            encoding="utf-8",
+        )
+    else:
+        assert c4 is not None
+        c4.write_text(
+            render_graph_likec4(
+                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
+            ),
+            encoding="utf-8",
+        )
+    output = outputs[0]
+    typer.echo(
+        f"Export microservices écrit dans {output} "
+        f"({len(graph_data.services_by_name)} services, {len(graph_data.edges)} arêtes)."
+    )
+    if graph_data.result["note"]:
+        typer.echo(str(graph_data.result["note"]))
+
+
+@export_app.command(name="modules")
+def export_modules_cmd(
+    drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
+    html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
+) -> None:
+    """Exporter les dépendances de build entre modules indexés."""
+    outputs = [output for output in (drawio, html) if output is not None]
+    if len(outputs) != 1:
+        typer.echo("Choisissez un seul format parmi --drawio ou --html.", err=True)
+        raise typer.Exit(code=2)
+    repo_root = Path.cwd()
+    if not db_path(repo_root).is_file():
+        typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
+        raise typer.Exit(code=2)
+    with Store(repo_root, readonly=True) as store:
+        modules = store.all_modules()
+        dependencies = store.all_module_dependencies()
+        endpoints = store.all_endpoints()
+    output = outputs[0]
+    if drawio is not None:
+        drawio.write_text(render_module_graph_drawio(modules, dependencies), encoding="utf-8")
+    else:
+        html.write_text(render_module_graph_html(modules, dependencies, endpoints), encoding="utf-8")
+    typer.echo(
+        f"Export modules écrit dans {output} "
+        f"({len(modules)} modules, {len(dependencies)} dépendances)."
+    )
 
 
 @app.command(name="audit")
@@ -1102,10 +1199,10 @@ def modules_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
     drawio: Optional[Path] = typer.Option(
-        None, "--drawio", help="Exporte le graphe de dépendances de modules en .drawio."
+        None, "--drawio", help="Exporte le graphe de dépendances de modules en .drawio.", hidden=True
     ),
     html: Optional[Path] = typer.Option(
-        None, "--html", help="Exporte le graphe de dépendances de modules en HTML Sigma.js."
+        None, "--html", help="Exporte le graphe de dépendances de modules en HTML Sigma.js.", hidden=True
     ),
 ) -> None:
     """Liste les modules indexés ou détaille l'un d'eux.
@@ -1113,7 +1210,7 @@ def modules_cmd(
     `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
     `integrations`, `properties` et `openapi` prennent un module dans le
     répertoire courant déjà indexé. `graph` affiche les dépendances de build
-    entre modules et accepte `--drawio` ou `--html`.
+    entre modules. Utilisez `cccr export modules` pour générer Draw.io ou HTML.
     """
     arguments = arguments or []
     commands = {"integrations", "endpoints", "properties", "openapi", "graph"}
