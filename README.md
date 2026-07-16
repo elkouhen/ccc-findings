@@ -178,7 +178,7 @@ cccr integrations               # indexed HTTP/Kafka integrations
 cccr graph                      # inter-service REST/Kafka topology
 cccr export microservices --drawio graph.drawio     # microservices, Kafka topics and MongoDB collections
 cccr export microservices --html graph.html
-cccr export microservices --c4 architecture.c4      # LikeC4 source
+cccr export microservices --c4 architecture-likec4  # projet LikeC4, puis : cd architecture-likec4 && npm install && npm run dev
 cccr analyze audit              # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr microservices show order-service

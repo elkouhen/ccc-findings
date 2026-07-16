@@ -745,14 +745,38 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "orders.created" in document
     assert "mongodb_collection:order-service:orders" in document
 
-    c4_file = tmp_path / "architecture.c4"
-    c4_export = runner.invoke(app, ["export", "microservices", "--c4", str(c4_file)])
+    c4_project = tmp_path / "architecture-likec4"
+    c4_export = runner.invoke(app, ["export", "microservices", "--c4", str(c4_project)])
     assert c4_export.exit_code == 0
-    c4_document = c4_file.read_text(encoding="utf-8")
+    assert "npm install && npm run dev" in c4_export.output
+    assert (c4_project / "likec4.config.json").is_file()
+    assert (c4_project / "package.json").is_file()
+    assert (c4_project / ".gitignore").is_file()
+    assert (c4_project / "README.md").is_file()
+    c4_document = (c4_project / "architecture.c4").read_text(encoding="utf-8")
     assert "element microservice" in c4_document
     assert "element kafka_topic" in c4_document
     assert "element mongodb_collection" in c4_document
     assert "orders.created" in c4_document
+    c4_config = json.loads((c4_project / "likec4.config.json").read_text(encoding="utf-8"))
+    assert c4_config["$schema"] == "https://likec4.dev/schemas/config.json"
+    assert c4_config["implicitViews"] is True
+    c4_package = json.loads((c4_project / "package.json").read_text(encoding="utf-8"))
+    assert c4_package["scripts"]["dev"] == "likec4 start"
+    assert c4_package["scripts"]["build"] == "likec4 build --output dist --base ./"
+
+
+def test_export_microservices_c4_requires_a_project_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with Store(tmp_path):
+        pass
+
+    result = runner.invoke(app, ["export", "microservices", "--c4", "architecture.c4"])
+
+    assert result.exit_code == 2
+    assert "attend un répertoire" in result.output
 
 
 def test_graph_rejects_drawio_and_d2_together(

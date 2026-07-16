@@ -955,6 +955,65 @@ def _load_microservice_graph(
     return _MicroserviceGraphData(services_by_name, edges, collections_by_service, result)
 
 
+def _write_likec4_project(destination: Path, model: str) -> None:
+    """Write a self-contained LikeC4 project that can be started with npm."""
+    if destination.exists() and not destination.is_dir():
+        typer.echo(f"Le répertoire LikeC4 existe déjà comme fichier : {destination}", err=True)
+        raise typer.Exit(code=2)
+
+    destination.mkdir(parents=True, exist_ok=True)
+    config = {
+        "$schema": "https://likec4.dev/schemas/config.json",
+        "name": "cccr-architecture",
+        "title": "CCC Radar architecture",
+        "implicitViews": True,
+    }
+    package = {
+        "name": "cccr-likec4-architecture",
+        "private": True,
+        "version": "0.0.0",
+        "scripts": {
+            "dev": "likec4 start",
+            "build": "likec4 build --output dist --base ./",
+            "preview": "likec4 preview --output dist",
+            "validate": "likec4 validate",
+            "format": "likec4 format",
+        },
+        "devDependencies": {"likec4": "latest"},
+    }
+    readme = """# Architecture LikeC4
+
+Projet généré par `cccr export microservices --c4`.
+
+## Démarrer le site
+
+```bash
+npm install
+npm run dev
+```
+
+Le site est ensuite disponible sur `http://localhost:5173`.
+
+## Générer le site statique
+
+```bash
+npm run build
+npm run preview
+```
+
+Le site généré se trouve dans `dist/`.
+"""
+    (destination / "architecture.c4").write_text(model, encoding="utf-8")
+    (destination / "likec4.config.json").write_text(
+        json.dumps(config, indent=2) + "\n", encoding="utf-8"
+    )
+    (destination / "package.json").write_text(
+        json.dumps(package, indent=2) + "\n", encoding="utf-8"
+    )
+    (destination / ".gitignore").write_text("node_modules/\ndist/\n", encoding="utf-8")
+    (destination / "README.md").write_text(readme, encoding="utf-8")
+
+
 @export_app.command(name="microservices")
 def export_microservices_cmd(
     workspace: Optional[Path] = typer.Option(
@@ -962,17 +1021,22 @@ def export_microservices_cmd(
     ),
     drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
     html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
-    c4: Optional[Path] = typer.Option(None, "--c4", help="Fichier source LikeC4 à produire."),
+    c4: Optional[Path] = typer.Option(
+        None, "--c4", help="Répertoire du projet LikeC4 à produire."
+    ),
 ) -> None:
     """Exporter les dépendances microservices, topics Kafka et collections MongoDB.
 
     Exemples : `cccr export microservices --drawio graph.drawio`,
     `cccr export microservices --html graph.html`,
-    `cccr export microservices --c4 architecture.c4`.
+    `cccr export microservices --c4 architecture-likec4`.
     """
     outputs = [output for output in (drawio, html, c4) if output is not None]
     if len(outputs) != 1:
         typer.echo("Choisissez un seul format parmi --drawio, --html ou --c4.", err=True)
+        raise typer.Exit(code=2)
+    if c4 is not None and c4.suffix:
+        typer.echo("`--c4` attend un répertoire de projet, pas un fichier `.c4`.", err=True)
         raise typer.Exit(code=2)
     graph_data = _load_microservice_graph(Path.cwd(), workspace, include_mongodb=True)
     if drawio is not None:
@@ -991,17 +1055,24 @@ def export_microservices_cmd(
         )
     else:
         assert c4 is not None
-        c4.write_text(
+        _write_likec4_project(
+            c4,
             render_graph_likec4(
                 graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
             ),
-            encoding="utf-8",
         )
     output = outputs[0]
-    typer.echo(
-        f"Export microservices écrit dans {output} "
-        f"({len(graph_data.services_by_name)} services, {len(graph_data.edges)} arêtes)."
-    )
+    if c4 is not None:
+        typer.echo(
+            f"Projet LikeC4 écrit dans {output} "
+            f"({len(graph_data.services_by_name)} services, {len(graph_data.edges)} arêtes)."
+        )
+        typer.echo(f"Démarrer le site : `cd {output} && npm install && npm run dev`.")
+    else:
+        typer.echo(
+            f"Export microservices écrit dans {output} "
+            f"({len(graph_data.services_by_name)} services, {len(graph_data.edges)} arêtes)."
+        )
     if graph_data.result["note"]:
         typer.echo(str(graph_data.result["note"]))
 
