@@ -214,6 +214,37 @@ def _receiver_name(snippet: str, method: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _method_parameter_type(source: str, before: int, parameter_name: str) -> str | None:
+    """Find a Java method parameter type for a call occurring before ``before``."""
+    signatures = list(
+        re.finditer(
+            r"\b(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?"
+            r"[\w.$<>, ?\[\]]+\s+\w+\s*\(([^()]*)\)\s*(?:throws[^\{]+)?\{",
+            source[:before],
+            re.DOTALL,
+        )
+    )
+    if not signatures:
+        return None
+    for parameter in _split_java_type_arguments(signatures[-1].group(1)):
+        cleaned = re.sub(r"@\w+(?:\([^)]*\))?\s*", "", parameter).strip()
+        parts = cleaned.rsplit(None, 1)
+        if len(parts) == 2 and parts[1] == parameter_name:
+            return _message_payload_type(parts[0])
+    return None
+
+
+def _producer_argument_type(source: str, snippet: str, before: int) -> str | None:
+    """Infer a producer payload from ``send(topic, payload)`` method input."""
+    constructed = re.search(r",\s*new\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(", snippet)
+    if constructed is not None:
+        return constructed.group(1)
+    argument = re.search(r",\s*([A-Za-z_]\w*)\s*(?:,|\))", snippet)
+    if argument is None:
+        return None
+    return _method_parameter_type(source, before, argument.group(1))
+
+
 def _infer_kafka_message_type(
     repo_root: Path,
     rel_path: str,
@@ -230,7 +261,7 @@ def _infer_kafka_message_type(
     source = _java_source(str(repo_root), rel_path)
     if not source:
         return None
-    line_offset = sum(len(line) + 1 for line in source.splitlines()[: max(start_line - 1, 0)])
+    line_offset = sum(len(line) for line in source.splitlines(keepends=True)[:start_line])
 
     if role == "consume" and (framework == "spring-kafka" or "@KafkaListener" in snippet):
         payload_type = _first_listener_payload_type(source, start_line)
@@ -254,6 +285,9 @@ def _infer_kafka_message_type(
         payload_type = _generic_value_type(source, "KafkaTemplate", receiver, line_offset)
         if payload_type:
             return _message_payload_type(payload_type)
+        payload_type = _producer_argument_type(source, snippet, line_offset)
+        if payload_type:
+            return payload_type
     return None
 
 

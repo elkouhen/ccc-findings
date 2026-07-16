@@ -202,6 +202,27 @@ class EventAdapter {
     assert {endpoint.framework for endpoint in endpoints} == {"kafka-topic-strategy1"}
 
 
+def test_kafka_topic_strategy1_reads_the_producer_method_parameter_type(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "EventAdapter.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """class EventAdapter {
+  private EventPublisher publisher;
+
+  public void publish(OrderCreated event) {
+    publisher.send(properties.getTopics().getOrdersCreated(), event);
+  }
+}
+"""
+    )
+
+    endpoints = infer_kafka_topic_strategy1_endpoints(tmp_path)
+
+    assert [(endpoint.topic, endpoint.message_type) for endpoint in endpoints] == [
+        ("ORDERS_CREATED", "OrderCreated")
+    ]
+
+
 def test_kafka_topic_strategy1_replaces_standard_extraction_at_covered_sites(tmp_path: Path) -> None:
     standard = MessageEndpoint(
         id=compute_endpoint_id("produce", "<dynamic>", "EventAdapter.java", 7, 7),

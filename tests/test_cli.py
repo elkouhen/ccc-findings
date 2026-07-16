@@ -808,6 +808,9 @@ def test_graph_html_writes_interactive_sigma_document(
     assert 'id="path-from"' in document
     assert 'id="path-to"' in document
     assert 'id="path-via"' in document
+    assert "function sortNodes(nodes)" in document
+    assert "Microservices" in document
+    assert "Topics Kafka" in document
     assert "function shortestPath(sourceId, targetId)" in document
     assert "function shortestPathThrough(stops)" in document
     assert "Chemin le plus court" in document
@@ -815,6 +818,7 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Messages publies" in document
     assert "const pathNodeLabel" in document
     assert "node.name} (${types.join" in document
+    assert "type Java non indexe" in document
     assert "function persistState()" in document
     assert "function restoreState()" in document
     assert "history.replaceState" in document

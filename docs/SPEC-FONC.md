@@ -439,7 +439,10 @@ shortest directed path between them, preserving REST call direction and Kafka
 `producer -> topic -> consumer` steps; producer-to-topic path relations include
 their statically inferred published Java message types, also grouped in a
 dedicated path-details section and rendered beside the Kafka topic in the path
-description (`producer -> TOPIC (JavaType) -> consumer`). An ordered list of intermediate service
+description (`producer -> TOPIC (JavaType) -> consumer`). An unknown type is
+rendered explicitly rather than silently omitted. The source, target and
+intermediate-node selectors are alphabetically sorted; intermediate choices are
+grouped into microservices and Kafka topics. An ordered list of intermediate service
 or Kafka-topic nodes can constrain the path; each adjacent pair uses its own
 shortest directed segment. The
 generated document persists the current node selection or path in its URL
@@ -899,6 +902,8 @@ Java signature makes it explicit: the first non-header parameter of the
 `public void consume(...)` method associated with a `@KafkaListener` (then a
 compatible listener method), the value generic of `KafkaTemplate`, `ProducerRecord`, or
 `KafkaConsumer`, or the value generic of a `KStream`/`KTable` declaration.
+For a custom producer wrapper, the type of the payload parameter passed to
+`send(topic, payload)` is used when its method signature makes it explicit.
 This value is a source-level Java type, may be absent, and is never guessed
 from a topic name, serializer, or configuration property.
 

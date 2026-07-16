@@ -1118,9 +1118,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const pathViaNodes = document.getElementById("path-via-nodes");
     const pathTo = document.getElementById("path-to");
     const viaNodes = [];
-    const microservices = graphData.nodes
-      .filter(node => node.kind === "microservice")
-      .sort((left, right) => left.name.localeCompare(right.name));
+    function sortNodes(nodes) {
+      return [...nodes].sort((left, right) => left.name.localeCompare(
+        right.name, "fr", { sensitivity: "base", numeric: true }
+      ));
+    }
+    const microservices = sortNodes(graphData.nodes.filter(node => node.kind === "microservice"));
+    const kafkaTopics = sortNodes(graphData.nodes.filter(node => node.kind === "kafka_topic"));
     microservices.forEach(node => {
       for (const select of [pathFrom, pathTo]) {
         const option = document.createElement("option");
@@ -1129,15 +1133,19 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         select.append(option);
       }
     });
-    graphData.nodes
-      .filter(node => node.kind === "microservice" || node.kind === "kafka_topic")
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .forEach(node => {
+    function appendViaOptions(label, nodes) {
+      const group = document.createElement("optgroup");
+      group.label = label;
+      nodes.forEach(node => {
         const option = document.createElement("option");
         option.value = node.id;
-        option.textContent = `${node.kind === "microservice" ? "Service" : "Topic"}: ${node.name}`;
-        pathVia.append(option);
+        option.textContent = node.name;
+        group.append(option);
       });
+      pathVia.append(group);
+    }
+    appendViaOptions("Microservices", microservices);
+    appendViaOptions("Topics Kafka", kafkaTopics);
 
     function appendList(title, values) {
       if (!values.length) return;
@@ -1246,7 +1254,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         if (node.kind !== "kafka_topic") return node.name;
         const precedingLink = path.edges[index - 1]?.link;
         const types = precedingLink?.published_message_types || node.published_message_types || [];
-        return types.length ? `${node.name} (${types.join(", ")})` : node.name;
+        return types.length ? `${node.name} (${types.join(", ")})` : `${node.name} (type Java non indexe)`;
       };
       details.append(title, document.createTextNode(
         path.nodes.map(pathNodeLabel).join(" -> ")
