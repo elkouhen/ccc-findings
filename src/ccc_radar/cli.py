@@ -74,7 +74,7 @@ from ccc_radar.workspace import discover_maven_services, load_federation
 from ccc_radar.doctor import has_errors, run_doctor
 
 app = typer.Typer(
-    help="ccc-radar: indexe findings, code associé et signaux d'architecture exploitables par agent"
+    help="Explorer l'architecture et les constats d'un projet indexé."
 )
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
@@ -138,16 +138,16 @@ def _emit_architecture(result: object, json_output: bool) -> None:
 @app.command(name="topics")
 def topics_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Sous-commande et topic Kafka à explorer."
+        None, help="Commande : list, show, neighbors, consumers, producers, search ou trace."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
     ),
     json_output: bool = typer.Option(False, "--json"),
-    max_depth: int = typer.Option(6, "--max-depth", min=1, max=12),
-    limit: int = typer.Option(50, "--limit", min=1, max=200),
+    max_depth: int = typer.Option(6, "--max-depth", min=1, max=12, help="Nombre maximal de services suivis par trace."),
+    limit: int = typer.Option(50, "--limit", min=1, max=200, help="Nombre maximal de chemins retournés par trace."),
 ) -> None:
-    """Explore les topics Kafka et leurs producteurs/consommateurs."""
+    """Parcourir les topics Kafka et les services qui les publient ou consomment."""
     arguments = arguments or []
     workspace_root = (root or Path.cwd()).resolve()
     catalog = _microservice_catalog(workspace_root)
@@ -185,14 +185,14 @@ def topics_cmd(
 @app.command(name="resources")
 def resources_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Sous-commande et ressource HTTP à explorer."
+        None, help="Commande : list, show, neighbors, providers, consumers ou search."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Explore les ressources HTTP et leurs fournisseurs/consommateurs."""
+    """Parcourir les APIs HTTP et les services qui les exposent ou appellent."""
     arguments = arguments or []
     workspace_root = (root or Path.cwd()).resolve()
     catalog = _microservice_catalog(workspace_root)
@@ -233,14 +233,14 @@ def resources_cmd(
 @app.command(name="mongodb")
 def mongodb_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Sous-commande et collection MongoDB à explorer."
+        None, help="Commande : list, show, neighbors, services ou search."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Explore les collections MongoDB et les modules qui les utilisent."""
+    """Parcourir les collections MongoDB et les microservices qui les utilisent."""
     arguments = arguments or []
     catalog = _microservice_catalog((root or Path.cwd()).resolve())
     if not arguments or arguments[0] == "list":
@@ -602,9 +602,7 @@ def endpoints_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Liste les endpoints REST/Kafka indexés (BACKLOG-10 K1, BACKLOG-11 A1),
-    filtrable par système, rôle, topic exact, motif de chemin, ou module Maven.
-    """
+    """Lister les échanges HTTP et Kafka détectés dans le projet indexé."""
     repo_root = Path.cwd()
     _require_index(repo_root)
 
@@ -625,32 +623,28 @@ def graph_cmd(
     workspace: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--workspace",
-        help="Répertoire parent Maven/Gradle à fédérer (BACKLOG-11 A2) pour les "
-        "arêtes inter-services.",
+        help="Répertoire contenant plusieurs services indexés séparément.",
     ),
     json_output: bool = typer.Option(False, "--json"),
     drawio: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--drawio",
-        help="Écrit le graphe d'interactions microservices + topics Kafka en "
-        ".drawio (mxGraph, diagrams.net) à ce chemin, plutôt que le rendu "
-        "JSON/texte (BACKLOG-14 G1).",
+        help="Exporter le graphe au format Draw.io.",
     ),
     html: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--html",
-        help="Écrit un graphe HTML interactif propulsé par Sigma.js.",
+        help="Exporter un graphe HTML interactif.",
     ),
     d2: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--d2",
-        help="Écrit le graphe en D2 : source `.d2` si l'extension vaut `.d2`, "
-        "sinon rendu généré par la CLI D2 (`.svg`, etc.).",
+        help="Exporter le graphe en D2 ou dans un format rendu par D2.",
     ),
     d2_layout: Literal["dagre", "elk"] = typer.Option(
         "elk",
         "--d2-layout",
-        help="Moteur de layout D2 utilisé pour un rendu non-`.d2`.",
+        help="Moteur de placement D2 pour les formats rendus.",
     ),
     include_mongodb: bool = typer.Option(
         False,
@@ -658,19 +652,10 @@ def graph_cmd(
         help="Ajoute les collections MongoDB indexées aux exports Draw.io, HTML et D2.",
     ),
 ) -> None:
-    """Graphe dérivé des endpoints indexés : nœuds = microservices + topics
-    Kafka ; arêtes = appel HTTP, production Kafka, consommation Kafka. L'option
-    `--include-mongodb` ajoute les collections MongoDB indexées comme nœuds
-    reliés à leur microservice. Le graphe inclut aussi
-    en plus les signaux de blocage probables (BACKLOG-10 K12) : appels REST
-    synchrones détectés dans un handler de consommation Kafka du projet
-    courant. Sans `--workspace`, si l'index couvre un répertoire
-    multi-modules Maven ou Gradle (`cccr index` lancé au parent,
-    BACKLOG-13/15), les endpoints attribués à un module/service sont automatiquement groupés
-    pour rapporter de vraies arêtes inter-modules — pas besoin de
-    fédération pour un monorepo. Avec `--workspace <root>`, fédère en plus
-    les autres microservices indexés séparément
-    (BACKLOG-11 A2, lecture seule).
+    """Afficher ou exporter les interactions HTTP et Kafka entre microservices.
+
+    Ajoutez `--include-mongodb` pour afficher aussi les collections MongoDB.
+    Utilisez `--workspace` lorsque les services sont indexés séparément.
     """
     repo_root = Path.cwd()
     _require_index(repo_root)
@@ -770,11 +755,7 @@ def audit_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Signale les risques d'architecture statiquement démontrables.
-
-    Les constats sont volontairement conservateurs : topics dynamiques,
-    producteurs/consommateurs Kafka orphelins et cycles HTTP synchrones.
-    """
+    """Signaler les risques et responsabilités d'architecture détectés."""
     repo_root = Path.cwd()
     _require_index(repo_root)
     if workspace is not None:
@@ -800,7 +781,7 @@ def audit_cmd(
 def microservices_cmd(
     arguments: list[str] = typer.Argument(
         None,
-        help="Sous-commande et microservice à explorer.",
+        help="Nom d'un service, ou commande : show, topics, resources, mongodb, neighbors ou analyze.",
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None,
@@ -808,17 +789,10 @@ def microservices_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Découvre les services fédérables sous `root` (BACKLOG-11 A2) :
-    modules Maven runtime/shared (`pom.xml`) et microservices Gradle
-    Spring Boot. Lit en lecture seule les projets déjà indexés
-    (`cccr index`) pour compter endpoints/findings par service — n'écrit
-    jamais dans leurs bases. Un service non indexé ou dont la base est
-    incompatible est signalé en avertissement, sans faire échouer la
-    commande. Sous-commandes : `show <service>`, `topics <service>`,
-    `resources <service>`, `neighbors <service>`,
-    `analyze <calls|external-apis|orphan-endpoints|impact> [cible]`,
-    `properties <service>`, `openapi <service>` et
-    `implementation endpoint <id>`, avec `--root <workspace>`.
+    """Lister les microservices ou résumer un microservice.
+
+    Exemples : `cccr microservices`, `cccr microservices orders`,
+    `cccr microservices topics orders`, `cccr microservices mongodb orders`.
     """
     arguments = arguments or []
     commands = {

@@ -23,6 +23,24 @@ MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
 runner = CliRunner()
 
 
+def test_architecture_command_help_is_short_and_task_oriented() -> None:
+    root_help = runner.invoke(app, ["--help"])
+    microservices_help = runner.invoke(app, ["microservices", "--help"])
+    graph_help = runner.invoke(app, ["graph", "--help"])
+    topics_help = runner.invoke(app, ["topics", "--help"])
+
+    assert root_help.exit_code == 0
+    assert "Explorer l'architecture et les constats" in root_help.output
+    assert "BACKLOG-" not in root_help.output
+    assert microservices_help.exit_code == 0
+    assert "Lister les microservices ou résumer un microservice." in microservices_help.output
+    assert "cccr microservices mongodb orders" in microservices_help.output
+    assert graph_help.exit_code == 0
+    assert "Afficher ou exporter les interactions HTTP et Kafka" in graph_help.output
+    assert topics_help.exit_code == 0
+    assert "Commande : list, show, neighbors" in topics_help.output
+
+
 def install_fake_skill_rules(home: Path, packs: tuple[str, ...] = DEFAULT_RULE_PACKS) -> Path:
     rules_root = home / "ccc-radar-skill" / "skills" / "cccr" / "rules"
     for pack in packs:
