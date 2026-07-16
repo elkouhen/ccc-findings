@@ -9,11 +9,12 @@
 
 | Module | Role | Depends on |
 |---|---|---|
-| `models.py` | `Finding` (frozen dataclass) + `compute_finding_id` ; `MessageEndpoint` (BACKLOG-10 K1) + `compute_endpoint_id` | — |
+| `models.py` | `Finding`, `MessageEndpoint` and evidenced `ArchitectureRelation` frozen facts | — |
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
 | `scanner.py` | Semgrep execution (subprocess) + JSON parsing → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` + `infer_framework_endpoints` → `MessageEndpoint` (rules `metadata.category: endpoint-inventory`, REST K11 + Kafka K2, plus inferred Spring endpoints) ; `resolve_spring_property` (K2, ADR-28) ; `_module_for_path` (Maven then Gradle fallback, BACKLOG-15 H1) | `models`, `config`, `maven`, `gradle` |
 | `gradle.py` | Gradle service detection by Spring Boot `main()` class, complementing `maven.py` when no `pom.xml` exists (BACKLOG-15 H1, ADR-33): `gradle_service_for_path` | — |
-| `store.py` | `Store`: SQLite persistence (findings, endpoints, module dependencies, experimental code chunks, file hashes, meta, embeddings) | `models` |
+| `store.py` | `Store`: SQLite persistence (findings, endpoints, normalized architecture relations, module dependencies, experimental code chunks, file hashes, meta, embeddings) | `models` |
+| `relations.py` | Materializes typed, evidenced relations between modules/services, APIs, topics, DTOs, collections, classes, methods and Spring properties | `models`, `modules` |
 | `indexer.py` | `index_repo`: incremental orchestration (file diff → targeted scan → findings + endpoints (A1) → embedding ; can also index code chunks) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Experimental `--engine cocoindex` adapter: findings + code chunks as typed target states | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |

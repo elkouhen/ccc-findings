@@ -50,6 +50,23 @@ def compute_endpoint_id(
     return digest[:16]
 
 
+def compute_architecture_relation_id(
+    source_kind: str,
+    source_name: str,
+    relation: str,
+    target_kind: str,
+    target_name: str,
+    path: str | None = None,
+    start_line: int | None = None,
+) -> str:
+    """Return a stable identifier for one evidenced architecture fact."""
+    location = f"|{path}:{start_line}" if path is not None and start_line is not None else ""
+    digest = hashlib.sha256(
+        f"{source_kind}|{source_name}|{relation}|{target_kind}|{target_name}{location}".encode()
+    ).hexdigest()
+    return digest[:16]
+
+
 @dataclass(frozen=True)
 class MessageEndpoint:
     """Un site statique d'échange entre services — production/consommation
@@ -79,3 +96,22 @@ class MessageEndpoint:
     # Type Java du payload Kafka lorsqu'il est déductible statiquement. Les
     # manifestes et les appels sans signature exploitable restent à `None`.
     message_type: str | None = None
+
+
+@dataclass(frozen=True)
+class ArchitectureRelation:
+    """A typed, evidenced relation between two indexed architecture objects."""
+
+    id: str
+    source_kind: str
+    source_name: str
+    relation: str
+    target_kind: str
+    target_name: str
+    origin: str  # code | manifest | derived
+    confidence: str  # high | medium
+    module: str | None = None
+    path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    qualified_name: str | None = None

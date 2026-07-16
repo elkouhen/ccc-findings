@@ -108,6 +108,7 @@ cccr apis consumers "POST /payments"
 cccr mongodb services orders
 cccr analyze microservices path order-service shipping-service
 cccr analyze audit
+cccr analyze coverage
 ```
 
 Kafka summaries include the statically inferred Java payload types for each

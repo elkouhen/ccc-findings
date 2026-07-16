@@ -14,6 +14,7 @@ from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import discover_module_dependencies, discover_modules
+from ccc_radar.relations import build_architecture_relations
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
@@ -445,12 +446,21 @@ def index_repo(
         _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
         _trace("store.modules.begin", count=len(discovered_modules))
         store.replace_modules(discovered_modules)
-        store.replace_module_dependencies(
-            discover_module_dependencies(repo_root, discovered_modules)
-        )
+        module_dependencies = discover_module_dependencies(repo_root, discovered_modules)
+        store.replace_module_dependencies(module_dependencies)
         _trace("store.modules.end")
     else:
         _report_progress(progress, "→ Indexation : propriétés et inventaire des modules désactivés, snapshot conservé.")
+
+    relation_modules = discovered_modules if "properties" not in disabled else store.all_modules()
+    relation_dependencies = (
+        module_dependencies if "properties" not in disabled else store.all_module_dependencies()
+    )
+    relations = build_architecture_relations(
+        relation_modules, store.all_endpoints(), relation_dependencies
+    )
+    store.replace_architecture_relations(relations)
+    _report_progress(progress, f"→ Indexation : {len(relations)} relation(s) d'architecture matérialisée(s).")
 
     if index_code_chunks:
         chunk_paths = changed

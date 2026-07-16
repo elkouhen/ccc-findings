@@ -9,7 +9,7 @@ from types import TracebackType
 import numpy as np
 import sqlite_vec
 
-from ccc_radar.models import Finding, MessageEndpoint
+from ccc_radar.models import ArchitectureRelation, Finding, MessageEndpoint
 from ccc_radar.modules import (
     BlockingPoint,
     DiscoveredModule,
@@ -20,7 +20,7 @@ from ccc_radar.modules import (
 )
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "13"
+SCHEMA_VERSION = "14"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -222,6 +222,25 @@ class Store:
                 target TEXT NOT NULL,
                 PRIMARY KEY (source, target)
             );
+            CREATE TABLE IF NOT EXISTS architecture_relations (
+                id TEXT PRIMARY KEY,
+                source_kind TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                target_kind TEXT NOT NULL,
+                target_name TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                module TEXT,
+                path TEXT,
+                start_line INTEGER,
+                end_line INTEGER,
+                qualified_name TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_architecture_relations_source
+                ON architecture_relations(source_kind, source_name);
+            CREATE INDEX IF NOT EXISTS idx_architecture_relations_target
+                ON architecture_relations(target_kind, target_name);
             """
         )
         self._migrate_legacy_embeddings()
@@ -362,6 +381,61 @@ class Store:
             "SELECT source, target FROM module_dependencies ORDER BY source, target"
         ).fetchall()
         return [ModuleDependency(source=row["source"], target=row["target"]) for row in rows]
+
+    # -- normalized architecture relations --
+
+    def replace_architecture_relations(self, relations: list[ArchitectureRelation]) -> None:
+        """Replace the materialized relation graph after an index run."""
+        self.conn.execute("DELETE FROM architecture_relations")
+        self.conn.executemany(
+            """
+            INSERT INTO architecture_relations
+                (id, source_kind, source_name, relation, target_kind, target_name,
+                 origin, confidence, module, path, start_line, end_line, qualified_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    relation.id,
+                    relation.source_kind,
+                    relation.source_name,
+                    relation.relation,
+                    relation.target_kind,
+                    relation.target_name,
+                    relation.origin,
+                    relation.confidence,
+                    relation.module,
+                    relation.path,
+                    relation.start_line,
+                    relation.end_line,
+                    relation.qualified_name,
+                )
+                for relation in relations
+            ],
+        )
+
+    def all_architecture_relations(self) -> list[ArchitectureRelation]:
+        rows = self.conn.execute(
+            "SELECT * FROM architecture_relations ORDER BY source_kind, source_name, relation, target_kind, target_name, path, start_line"
+        ).fetchall()
+        return [
+            ArchitectureRelation(
+                id=row["id"],
+                source_kind=row["source_kind"],
+                source_name=row["source_name"],
+                relation=row["relation"],
+                target_kind=row["target_kind"],
+                target_name=row["target_name"],
+                origin=row["origin"],
+                confidence=row["confidence"],
+                module=row["module"],
+                path=row["path"],
+                start_line=row["start_line"],
+                end_line=row["end_line"],
+                qualified_name=row["qualified_name"],
+            )
+            for row in rows
+        ]
 
     def get_embedding_dim(self) -> int | None:
         raw = self.get_meta("embedding_dim")

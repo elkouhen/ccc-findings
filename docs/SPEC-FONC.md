@@ -78,7 +78,7 @@ Creates `.cccr/config.yml`.
   informational stdout message explaining the
   fallback and how to customize it, exit code 0. This fallback keeps the
   **core product** usable, but does not by itself activate the microservices
-  extension (`integrations` / `graph` / `microservices` / `topics` / `apis`). Priority order:
+  extension (`integrations` / `graph` / `microservices` / `topics` / `dtos` / `apis`). Priority order:
   explicit `--rules` > detected local config > copied skill packs > default
   registry pack.
 - Each automatic copy writes `.cccr/rules/manifest.json`, recording the source
@@ -628,11 +628,25 @@ same no-real-values policy as `microservices properties`.
 
 Produces conservative architecture risks from the static inventory: Kafka
 producer or consumer with no indexed counterpart, dynamic Kafka/HTTP targets,
-and synchronous HTTP dependency cycles. It also reports non-runtime modules
+incompatible known Kafka producer/consumer payload types, and synchronous HTTP
+dependency cycles. It also reports non-runtime modules
 that expose HTTP APIs, publish or consume Kafka topics, or read/write indexed
 MongoDB collections. This last signal is a `WARNING` for architectural review,
 not proof of an error. Every result carries evidence and a confidence level;
 it is not an execution trace and never claims to prove a runtime path.
+
+### `cccr analyze coverage [--json]`
+
+Summarizes the quality of the persisted architecture inventory: integration and
+relation counts, relation confidence, dynamic Kafka topics, Kafka integrations
+without a statically inferred Java payload type, and HTTP calls that could not
+be matched to an indexed provider. Details are capped at 20 entries per
+unresolved category, so the default text view stays concise.
+
+Relations are materialized during indexing with source/target kinds, relation
+type, provenance, confidence, module, location and Java class when known. The
+current model covers module/microservice, API, Kafka topic, DTO, MongoDB
+collection, Java class, Java method and Spring property objects.
 
 ```json
 [

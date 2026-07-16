@@ -58,6 +58,7 @@ def assess_architecture(
                         "orphan-kafka-consumer", "WARNING", "Consumer Kafka sans producer détecté",
                         f"{service} consomme `{endpoint.topic}` ({endpoint.path}:{endpoint.start_line}) sans producer inter-service indexé.", (service,),
                     ))
+    risks.extend(_kafka_message_contract_risks(endpoints_by_service))
     # A two-way synchronous dependency is a concrete coupling signal.
     rest_pairs = {(edge.from_service, edge.to_service) for edge in edges if edge.kind == "rest"}
     for source, target in sorted(rest_pairs):
@@ -73,6 +74,58 @@ def assess_architecture(
         risk = _non_runtime_module_activity_risk(module, endpoints)
         if risk is not None:
             risks.append(risk)
+    return risks
+
+
+def _kafka_message_contract_risks(
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+) -> list[ArchitectureRisk]:
+    """Compare known payload types without guessing a schema compatibility."""
+    by_topic: dict[str, list[tuple[str, MessageEndpoint]]] = {}
+    for service, endpoints in endpoints_by_service.items():
+        for endpoint in endpoints:
+            if endpoint.system == "kafka" and not endpoint.topic_dynamic:
+                by_topic.setdefault(endpoint.topic, []).append((service, endpoint))
+
+    risks: list[ArchitectureRisk] = []
+    for topic, entries in sorted(by_topic.items()):
+        producers = [(service, endpoint) for service, endpoint in entries if endpoint.role == "produce"]
+        consumers = [(service, endpoint) for service, endpoint in entries if endpoint.role == "consume"]
+        if not producers or not consumers:
+            continue
+        producer_types = {endpoint.message_type for _, endpoint in producers if endpoint.message_type}
+        consumer_types = {endpoint.message_type for _, endpoint in consumers if endpoint.message_type}
+        services = tuple(sorted({service for service, _ in entries}))
+        if producer_types and consumer_types and producer_types != consumer_types:
+            risks.append(ArchitectureRisk(
+                "kafka-message-contract-mismatch",
+                "WARNING",
+                "Contrat de message Kafka potentiellement incompatible",
+                f"`{topic}` publie {', '.join(sorted(producer_types))} mais consomme "
+                f"{', '.join(sorted(consumer_types))}.",
+                services,
+                "medium",
+            ))
+        elif producer_types and not consumer_types:
+            risks.append(ArchitectureRisk(
+                "kafka-message-contract-unknown",
+                "WARNING",
+                "Type de message Kafka consommé non indexé",
+                f"`{topic}` publie {', '.join(sorted(producer_types))}, mais aucun type "
+                "de consumer n'a été déduit statiquement.",
+                services,
+                "medium",
+            ))
+        elif consumer_types and not producer_types:
+            risks.append(ArchitectureRisk(
+                "kafka-message-contract-unknown",
+                "WARNING",
+                "Type de message Kafka publié non indexé",
+                f"`{topic}` consomme {', '.join(sorted(consumer_types))}, mais aucun type "
+                "de producer n'a été déduit statiquement.",
+                services,
+                "medium",
+            ))
     return risks
 
 

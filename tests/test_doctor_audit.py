@@ -12,12 +12,19 @@ from ccc_radar.modules import DiscoveredModule, MongoMethod
 from ccc_radar.store import Store
 
 
-def endpoint(service: str, role: str, system: str, topic: str, dynamic: bool = False) -> MessageEndpoint:
+def endpoint(
+    service: str,
+    role: str,
+    system: str,
+    topic: str,
+    dynamic: bool = False,
+    message_type: str | None = None,
+) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, f"{service}.java", 1), role=role,
         system=system, topic=topic, topic_dynamic=dynamic, source="code",
         framework=None, path=f"{service}.java", start_line=1, end_line=1, snippet="",
-        module=service,
+        module=service, message_type=message_type,
     )
 
 
@@ -70,6 +77,21 @@ def test_audit_reports_non_runtime_module_with_integration_responsibilities(tmp_
     assert "payments.received" in risk.evidence
     assert "collections MongoDB lues: orders" in risk.evidence
     assert "collections MongoDB écrites: audit" in risk.evidence
+
+
+def test_audit_reports_kafka_message_type_mismatch() -> None:
+    risks = assess_architecture(
+        {
+            "orders": [endpoint("orders", "produce", "kafka", "orders.created", message_type="OrderCreated")],
+            "billing": [endpoint("billing", "consume", "kafka", "orders.created", message_type="OrderEvent")],
+        },
+        [],
+    )
+
+    risk = next(risk for risk in risks if risk.id == "kafka-message-contract-mismatch")
+    assert risk.confidence == "medium"
+    assert "OrderCreated" in risk.evidence
+    assert "OrderEvent" in risk.evidence
 
 
 def test_audit_cli_reports_indexed_non_runtime_module_activity(

@@ -11,7 +11,7 @@ import ccc_radar.embedder as embedder_module
 import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_REGISTRY_RULESETS, DEFAULT_RULE_PACKS, app
 from ccc_radar.indexer import IndexReport
-from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.models import ArchitectureRelation, Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.modules import DiscoveredModule
 from ccc_radar.store import Store
 
@@ -60,11 +60,56 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "providers" in apis_help.output
     assert analyze_help.exit_code == 0
     assert "audit" in analyze_help.output
+    assert "coverage" in analyze_help.output
     assert "microservices" in analyze_help.output
     assert export_help.exit_code == 0
     assert "--drawio" in export_help.output
     assert "--html" in export_help.output
     assert "--c4" in export_help.output
+
+
+def test_analyze_coverage_reports_unresolved_inventory_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    module = DiscoveredModule(
+        name="orders",
+        path=tmp_path / "orders",
+        build_system="maven",
+        version=None,
+        kind="library",
+        starts_application=True,
+        configuration_example="",
+    )
+    kafka = MessageEndpoint(
+        id="kafka-1", role="produce", system="kafka", topic="<dynamic>", topic_dynamic=True,
+        source="code", framework="spring-kafka", path="orders/Publisher.java", start_line=12,
+        end_line=12, snippet="send(topic, payload)", module="orders",
+    )
+    call = MessageEndpoint(
+        id="rest-1", role="call", system="rest", topic="GET <dynamic>", topic_dynamic=True,
+        source="code", framework="resttemplate", path="orders/Client.java", start_line=18,
+        end_line=18, snippet="getForObject(url)", module="orders",
+    )
+    relation = ArchitectureRelation(
+        id="relation-1", source_kind="microservice", source_name="orders", relation="publishes",
+        target_kind="topic", target_name="<dynamic>", origin="code", confidence="medium",
+        module="orders", path="orders/Publisher.java", start_line=12, end_line=12,
+    )
+    with Store(tmp_path) as store:
+        store.replace_modules([module])
+        store.replace_endpoints_for_files([kafka.path, call.path], [kafka, call])
+        store.replace_architecture_relations([relation])
+
+    result = runner.invoke(app, ["analyze", "coverage", "--json"])
+
+    assert result.exit_code == 0
+    coverage = json.loads(result.output)
+    assert coverage["relations"]["total"] == 1
+    assert coverage["relations"]["by_confidence"] == {"medium": 1}
+    assert coverage["unresolved"]["dynamic_kafka_topics"][0]["module"] == "orders"
+    assert coverage["unresolved"]["unknown_kafka_message_types"][0]["topic_or_api"] == "<dynamic>"
+    assert coverage["unresolved"]["unmatched_http_calls"][0]["topic_or_api"] == "GET <dynamic>"
 
 
 @pytest.mark.parametrize(

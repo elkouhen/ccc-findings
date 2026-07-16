@@ -52,6 +52,7 @@ class MongoMethod:
     line: int
     collection: str | None = None
     evidence: "SourceEvidence | None" = None
+    owner_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,16 @@ def _walk(node):
 
 def _node_text(source: bytes, node) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def _enclosing_method_name(source: bytes, node) -> str | None:
+    current = node.parent
+    while current is not None:
+        if current.type == "method_declaration":
+            name = current.child_by_field_name("name")
+            return _node_text(source, name) if name is not None else None
+        current = current.parent
+    return None
 
 
 def _source_evidence(source: bytes, node, rel_path: str) -> SourceEvidence:
@@ -521,6 +532,7 @@ def _extract_java_architecture(
                     line=node.start_point.row + 1,
                     collection=collection,
                     evidence=_source_evidence(source, node, rel),
+                    owner_method=_enclosing_method_name(source, node),
                 ))
         _trace("module.architecture.walk_mongo.end", module=module_dir, path=rel)
     _trace("module.architecture.files.end", module=module_dir)

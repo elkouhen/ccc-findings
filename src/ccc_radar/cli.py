@@ -17,6 +17,7 @@ from ccc_radar.architecture import (
     build_catalog,
     endpoint_implementation,
     find_microservice_paths,
+    inventory_coverage,
     list_objects as list_architecture_objects,
     neighbors as architecture_neighbors,
     render_text as render_architecture_text,
@@ -400,7 +401,7 @@ def mongodb_cmd(
 
 def analyze_cmd(
     arguments: list[str] = typer.Argument(
-        None, help="Cible et requête : microservices, topics, apis, mongodb ou audit."
+        None, help="Cible et requête : microservices, topics, apis, mongodb, audit ou coverage."
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
@@ -426,11 +427,12 @@ def analyze_cmd(
     `cccr analyze apis providers "POST /payments"`
     `cccr analyze mongodb services orders`
     `cccr analyze audit`
+    `cccr analyze coverage`
     """
     arguments = arguments or []
     if not arguments:
         typer.echo(
-            "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit> ...`.", err=True
+            "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit|coverage> ...`.", err=True
         )
         raise typer.Exit(code=2)
     subject = arguments[0]
@@ -499,8 +501,11 @@ def analyze_cmd(
     if subject == "audit" and len(arguments) == 1:
         _render_audit(workspace_root, workspace, json_output)
         return
+    if subject == "coverage" and len(arguments) == 1:
+        _render_inventory_coverage(workspace_root, json_output)
+        return
     typer.echo(
-        "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit> ...`.", err=True
+        "Usage : `cccr analyze <microservices|topics|apis|mongodb|audit|coverage> ...`.", err=True
     )
     raise typer.Exit(code=2)
 
@@ -727,6 +732,15 @@ def analyze_audit(
 ) -> None:
     """Identifier les risques d'architecture."""
     _render_audit(Path.cwd(), workspace, json_output)
+
+
+@analyze_app.command("coverage")
+def analyze_coverage(
+    root: Path | None = typer.Option(None, "--root", help="Répertoire indexé à analyser."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Mesurer les relations et intégrations non résolues de l'index."""
+    _render_inventory_coverage(_option_root(root), _option_json(json_output))
 
 
 @analyze_microservices_app.command("calls")
@@ -1545,6 +1559,14 @@ def _render_audit(repo_root: Path, workspace: Path | None, json_output: bool) ->
         endpoints_by_module=endpoints_by_module,
     )
     typer.echo(json.dumps(render_audit_json(risks)) if json_output else render_audit_text(risks))
+
+
+def _render_inventory_coverage(repo_root: Path, json_output: bool) -> None:
+    _require_index(repo_root)
+    with Store(repo_root, readonly=True) as store:
+        catalog = build_catalog(store.all_modules(), store.all_endpoints())
+        result = inventory_coverage(catalog, store.all_architecture_relations())
+    _emit_architecture(result, json_output)
 
 
 def microservices_cmd(

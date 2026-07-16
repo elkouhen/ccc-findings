@@ -124,11 +124,19 @@ def test_index_repo_imports_json_kafka_flow_graph_manifest(
     with Store(tmp_path) as store:
         report = index_repo(tmp_path, make_config(), store, FakeEmbedder())
         endpoints = store.all_endpoints()
+        relations = store.all_architecture_relations()
 
     assert report.endpoints_added == 2
     assert {(endpoint.role, endpoint.topic, endpoint.module) for endpoint in endpoints} == {
         ("produce", "TOPIC_A", "service-alpha"),
         ("consume", "TOPIC_A", "service-beta"),
+    }
+    assert {
+        (relation.source_name, relation.relation, relation.target_kind, relation.target_name)
+        for relation in relations
+    } == {
+        ("service-alpha", "publishes", "topic", "TOPIC_A"),
+        ("service-beta", "consumes", "topic", "TOPIC_A"),
     }
     assert {endpoint.framework for endpoint in endpoints} == {"json-kafka-flow-graph"}
 

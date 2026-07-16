@@ -9,7 +9,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from ccc_radar.graph import GraphEdge, build_graph
-from ccc_radar.models import MessageEndpoint
+from ccc_radar.models import ArchitectureRelation, MessageEndpoint
 from ccc_radar.modules import DiscoveredModule
 
 
@@ -520,6 +520,56 @@ def endpoint_implementation(catalog: ArchitectureCatalog, endpoint_id: str) -> d
     }
 
 
+def inventory_coverage(
+    catalog: ArchitectureCatalog, relations: list[ArchitectureRelation]
+) -> dict[str, object]:
+    """Summarize known and unresolved architecture facts without source code."""
+    kafka_endpoints = [endpoint for endpoint in catalog.endpoints if endpoint.system == "kafka"]
+    rest_calls = [
+        endpoint
+        for endpoint in catalog.endpoints
+        if endpoint.system == "rest" and endpoint.role == "call"
+    ]
+    matched_call_ids = {edge.from_endpoint.id for edge in catalog.edges if edge.kind == "rest"}
+    dynamic_topics = [endpoint for endpoint in kafka_endpoints if endpoint.topic_dynamic]
+    unknown_types = [endpoint for endpoint in kafka_endpoints if not endpoint.message_type]
+    unmatched_calls = [endpoint for endpoint in rest_calls if endpoint.id not in matched_call_ids]
+    by_relation: dict[str, int] = {}
+    by_confidence: dict[str, int] = {}
+    for relation in relations:
+        by_relation[relation.relation] = by_relation.get(relation.relation, 0) + 1
+        by_confidence[relation.confidence] = by_confidence.get(relation.confidence, 0) + 1
+
+    def unresolved(endpoint: MessageEndpoint) -> dict[str, object]:
+        return {
+            "module": endpoint.module,
+            "topic_or_api": endpoint.topic,
+            "role": endpoint.role,
+            "path": endpoint.path,
+            "line": endpoint.start_line,
+        }
+
+    return {
+        "kind": "inventory_coverage",
+        "integrations": {
+            "total": len(catalog.endpoints),
+            "kafka": len(kafka_endpoints),
+            "http_calls": len(rest_calls),
+        },
+        "relations": {
+            "total": len(relations),
+            "by_type": dict(sorted(by_relation.items())),
+            "by_confidence": dict(sorted(by_confidence.items())),
+        },
+        "unresolved": {
+            "dynamic_kafka_topics": [unresolved(endpoint) for endpoint in dynamic_topics[:20]],
+            "unknown_kafka_message_types": [unresolved(endpoint) for endpoint in unknown_types[:20]],
+            "unmatched_http_calls": [unresolved(endpoint) for endpoint in unmatched_calls[:20]],
+            "truncated": any(len(items) > 20 for items in (dynamic_topics, unknown_types, unmatched_calls)),
+        },
+    }
+
+
 def render_text(result: object) -> str:
     if isinstance(result, list):
         if not result:
@@ -532,6 +582,21 @@ def render_text(result: object) -> str:
 
 def _render_item(item: dict[str, object]) -> str:
     kind = item.get("kind") or item.get("query", "result")
+    if kind == "inventory_coverage":
+        integrations = item["integrations"]
+        relations = item["relations"]
+        unresolved = item["unresolved"]
+        lines = [
+            "[couverture de l'inventaire]",
+            f"  integrations={integrations['total']} kafka={integrations['kafka']} appels_http={integrations['http_calls']}",
+            f"  relations={relations['total']} confiance={relations['by_confidence']}",
+            f"  topics_kafka_dynamiques={len(unresolved['dynamic_kafka_topics'])}",
+            f"  types_kafka_inconnus={len(unresolved['unknown_kafka_message_types'])}",
+            f"  appels_http_non_rapproches={len(unresolved['unmatched_http_calls'])}",
+        ]
+        if unresolved["truncated"]:
+            lines.append("  Details non resolus tronques a 20 elements par categorie.")
+        return "\n".join(lines)
     if kind == "potential_topic_flows":
         lines = [f"[flux potentiels] {item['topic']}", str(item["caveat"])]
         for flow in item["flows"]:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
+from ccc_radar.models import ArchitectureRelation, Finding, MessageEndpoint, compute_endpoint_id
 from ccc_radar.store import Store
 
 
@@ -79,10 +79,10 @@ def test_set_and_iter_embeddings(tmp_path: Path) -> None:
 
 def test_reopening_existing_database_reads_schema_version(tmp_path: Path) -> None:
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "13"
+        assert store.get_meta("schema_version") == "14"
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "13"
+        assert store.get_meta("schema_version") == "14"
 
 
 def _make_legacy_v1_db(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
     _make_legacy_v1_db(tmp_path)
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "13"
+        assert store.get_meta("schema_version") == "14"
         # signature/dim cleared -> next `cccr index` re-embeds everything
         assert store.get_meta("embedding_signature") is None
         assert store.get_embedding_dim() is None
@@ -124,6 +124,30 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
         assert [f.id for f in store.all_findings()] == ["abc123"]
         cols = {row["name"] for row in store.conn.execute("PRAGMA table_info(findings)")}
         assert "embedding" not in cols
+
+
+def test_architecture_relations_roundtrip(tmp_path: Path) -> None:
+    relation = ArchitectureRelation(
+        id="relation-1",
+        source_kind="microservice",
+        source_name="orders",
+        relation="publishes",
+        target_kind="topic",
+        target_name="orders.created",
+        origin="code",
+        confidence="high",
+        module="orders",
+        path="src/main/java/OrderPublisher.java",
+        start_line=18,
+        end_line=18,
+        qualified_name="com.example.OrderPublisher",
+    )
+
+    with Store(tmp_path) as store:
+        store.replace_architecture_relations([relation])
+
+    with Store(tmp_path, readonly=True) as store:
+        assert store.all_architecture_relations() == [relation]
 
 
 def test_replace_code_chunks_for_files_removes_only_targeted_paths(tmp_path: Path) -> None:

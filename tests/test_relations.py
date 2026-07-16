@@ -1,0 +1,78 @@
+from pathlib import Path
+
+from ccc_radar.models import MessageEndpoint, compute_endpoint_id
+from ccc_radar.modules import DiscoveredModule, ModuleDependency, MongoMethod
+from ccc_radar.relations import build_architecture_relations
+
+
+def _endpoint(
+    role: str,
+    system: str,
+    topic: str,
+    *,
+    message_type: str | None = None,
+    snippet: str = "",
+) -> MessageEndpoint:
+    return MessageEndpoint(
+        id=compute_endpoint_id(role, topic, "OrderIntegration.java", 12),
+        role=role,
+        system=system,
+        topic=topic,
+        topic_dynamic=False,
+        source="code",
+        framework="spring",
+        path="src/main/java/OrderIntegration.java",
+        start_line=12,
+        end_line=12,
+        snippet=snippet,
+        module="orders",
+        qualified_name="com.example.OrderIntegration",
+        message_type=message_type,
+    )
+
+
+def test_relations_materialize_kafka_http_mongo_and_module_dependency(tmp_path: Path) -> None:
+    module = DiscoveredModule(
+        name="orders",
+        path=tmp_path / "orders",
+        build_system="maven",
+        version=None,
+        kind="library",
+        starts_application=True,
+        configuration_example="",
+        mongo_methods=(MongoMethod("save", "mongoTemplate", "Store.java", 24, "orders", owner_method="saveOrder"),),
+    )
+    shared = DiscoveredModule(
+        name="shared",
+        path=tmp_path / "shared",
+        build_system="maven",
+        version=None,
+        kind="library",
+        starts_application=False,
+        configuration_example="",
+    )
+
+    relations = build_architecture_relations(
+        [module, shared],
+        [
+            _endpoint(
+                "produce", "kafka", "orders.created", message_type="OrderCreated",
+                snippet='@KafkaListener(topics = "${kafka.topics.orders.name}")',
+            ),
+            _endpoint("call", "rest", "POST /payments"),
+        ],
+        [ModuleDependency("orders", "shared")],
+    )
+
+    facts = {
+        (relation.source_kind, relation.source_name, relation.relation, relation.target_kind, relation.target_name)
+        for relation in relations
+    }
+    assert ("microservice", "orders", "publishes", "topic", "orders.created") in facts
+    assert ("topic", "orders.created", "publishes_type", "dto", "OrderCreated") in facts
+    assert ("class", "com.example.OrderIntegration", "implements", "topic", "orders.created") in facts
+    assert ("microservice", "orders", "calls", "api", "POST /payments") in facts
+    assert ("microservice", "orders", "writes", "collection", "orders") in facts
+    assert ("method", "orders:saveOrder", "writes", "collection", "orders") in facts
+    assert ("class", "com.example.OrderIntegration", "uses_configuration", "property", "kafka.topics.orders.name") in facts
+    assert ("microservice", "orders", "depends_on", "module", "shared") in facts

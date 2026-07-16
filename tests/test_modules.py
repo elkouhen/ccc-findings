@@ -213,6 +213,7 @@ interface OrderRepository extends MongoRepository<Order, String> {}
         ("find", "mongoTemplate", "orders_archive"),
         ("findById", "orderRepository", "orders"),
     ]
+    assert {item.owner_method for item in indexed.mongo_methods} == {"save"}
     assert indexed.openapi_files == ("src/main/resources/openapi.yaml",)
     proof = indexed.mongo_methods[0].evidence
     assert proof is not None
