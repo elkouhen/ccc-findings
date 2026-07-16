@@ -20,6 +20,6 @@ def endpoint_inventory_warning(
         else f"signature {stored_signature!r}"
     )
     return (
-        f"{scope} : inventaire d'endpoints potentiellement obsolète ({observed}) ; "
+        f"{scope} : inventaire des intégrations potentiellement obsolète ({observed}) ; "
         "relancez `cccr index`."
     )

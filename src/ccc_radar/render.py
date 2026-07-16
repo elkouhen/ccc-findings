@@ -1595,7 +1595,7 @@ def _separate_overlapping_drawio_nodes(
 
 
 class EndpointHit(TypedDict):
-    """Shape returned by `cccr endpoints --json` and the `list_endpoints`
+    """Shape returned by `cccr integrations --json` and the `list_endpoints`
     MCP tool (BACKLOG-11 A1)."""
 
     id: str
@@ -1634,7 +1634,7 @@ def render_endpoints_json(endpoints: list[MessageEndpoint]) -> list[EndpointHit]
 
 def render_endpoints_text(endpoints: list[MessageEndpoint], warnings: list[str] | None = None) -> str:
     if not endpoints:
-        lines = ["Aucun endpoint indexé."]
+        lines = ["Aucune intégration détectée."]
         for warning in warnings or []:
             lines.append(f"⚠ {warning}")
         return "\n".join(lines)
@@ -1656,7 +1656,7 @@ class WorkspaceServiceInfo(TypedDict):
     kind: str
     starts_application: bool
     indexed: bool
-    endpoint_count: int
+    integration_count: int
     finding_count: int
     exposes_http_api: bool
     http_apis_exposed: list[str]
@@ -1717,7 +1717,7 @@ def _workspace_service_info(
         kind=service.kind,
         starts_application=True,
         indexed=service.indexed,
-        endpoint_count=len(endpoints),
+        integration_count=len(endpoints),
         finding_count=len(federation.findings_by_service.get(service.name, [])),
         exposes_http_api=bool(http_apis_exposed),
         http_apis_exposed=http_apis_exposed,
@@ -1745,7 +1745,7 @@ def render_workspace_text(result: WorkspaceResult) -> str:
         status = "indexé" if info["indexed"] else "non indexé"
         lines.append(
             f"[{info['kind']}] {info['name']} ({status})  "
-            f"endpoints={info['endpoint_count']} findings={info['finding_count']}"
+            f"integrations={info['integration_count']} findings={info['finding_count']}"
         )
         lines.append(
             f"  HTTP exposées: {', '.join(info['http_apis_exposed']) or '-'} | "

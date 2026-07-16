@@ -296,7 +296,7 @@ public class BillingServiceMain {
             "path": str(project.resolve()),
             "kind": "microservice",
             "indexed": True,
-            "endpoint_count": 0,
+            "integration_count": 0,
             "finding_count": 0,
         }
     ]
@@ -413,7 +413,7 @@ def test_trace_message_flow_tool_reports_stale_endpoint_inventory_warning(
 
     result = trace_message_flow("orders.created")
 
-    assert any("inventaire d'endpoints potentiellement obsolète" in w for w in result["warnings"])
+    assert any("inventaire des intégrations potentiellement obsolète" in w for w in result["warnings"])
 
 
 def test_trace_message_flow_tool_falls_back_to_similarity_when_textual_resolution_fails(

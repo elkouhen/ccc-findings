@@ -13,7 +13,7 @@ The chosen positioning is intentionally **two-layered**:
   `findings_summary` / `search` / `reindex_findings`).
 - **Java/Spring microservices audit extension**: REST/Kafka inventory,
   inter-service graph, and business-object exploration (`microservices`,
-  `topics`, `resources`, `.drawio` export) built on top of the same index, but to be treated
+  `topics`, `apis`, `.drawio` export) built on top of the same index, but to be treated
   as a microservices-focused extension still being stabilized.
 
 ## Architecture — how `cccr` extends `ccc`
@@ -110,7 +110,7 @@ functional behavior remains documented in
 ## Installation
 
 Prérequis : `uv` et `pipx`. `ccc` est optionnel : il ne sert qu'à
-`cccr search`; les commandes d'audit (`index`, `endpoints`, `graph`, `audit`)
+`cccr search`; les commandes d'audit (`index`, `integrations`, `graph`, `audit`)
 n'en dépendent pas.
 
 ```bash
@@ -165,7 +165,7 @@ cccr summary                    # aggregated view (severities, top rules, top di
 The `p/security-audit` fallback is enough for the **core product** (findings).
 For the microservices extension, `cccr init` must be able to copy the skill
 packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`); otherwise
-`cccr endpoints` / `graph` / `topics` / `resources` have no usable inventory.
+`cccr integrations` / `graph` / `topics` / `apis` have no usable inventory.
 During `cccr index`, the CLI prints stage progress (file inventory, delta,
 Semgrep scan, persistence, embedding) before the final
 `scanned=... skipped=... +findings=...` summary line.
@@ -174,24 +174,24 @@ Semgrep scan, persistence, embedding) before the final
 
 ```bash
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
-cccr endpoints                  # indexed REST/Kafka inventory
+cccr integrations               # indexed HTTP/Kafka integrations
 cccr graph                      # inter-service REST/Kafka topology
 cccr graph --drawio graph.drawio --include-mongodb  # also shows indexed MongoDB collections
 cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr microservices show order-service
 cccr microservices topics order-service
-cccr microservices resources order-service
-cccr microservices implementation endpoint <endpoint-id>
+cccr microservices apis order-service
+cccr microservices implementation integration <integration-id>
 cccr topics                     # discovered Kafka topics
 cccr topics consumers orders.created
 cccr topics producers orders.created
 cccr topics neighbors orders.created
 cccr topics search created
 cccr topics trace orders.created  # potential Kafka flows, not runtime traces
-cccr resources                  # discovered HTTP resources
-cccr resources consumers "POST /payments"
-cccr resources search payments
+cccr apis                       # discovered HTTP APIs
+cccr apis consumers "POST /payments"
+cccr apis search payments
 cccr mongodb                     # indexed MongoDB collections
 cccr mongodb services orders     # microservices using a collection
 cccr microservices mongodb order-service
@@ -204,7 +204,7 @@ cccr modules graph --html modules.html
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `cccr init` first tries to copy these packs from the skill repo into
 `.cccr/rules/`, then enables them in `rules:`. The audit workflow then remains
-`cccr summary` → `cccr endpoints` → `cccr graph` → `cccr findings` /
+`cccr summary` → `cccr integrations` → `cccr graph` → `cccr findings` /
 `cccr search`.
 
 `cccr search` is a **presentation superset of `ccc search`**: same options

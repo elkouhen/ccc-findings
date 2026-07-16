@@ -254,10 +254,10 @@ first-level directory.
 
 Same “index absent” rules as `findings` (same message, code 2).
 
-### `cccr endpoints [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
+### `cccr integrations [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
 *Java/Spring microservices extension — beta.*
 
-Lists indexed REST/Kafka endpoints.
+Lists indexed HTTP/Kafka integrations.
 Optional combinable filters:
 
 | Option | Effect |
@@ -451,7 +451,7 @@ another project's database) to count its endpoints and findings.
 {
   "services": [
     {"name": "order-service", "kind": "microservice",
-     "indexed": true, "endpoint_count": 4, "finding_count": 2,
+     "indexed": true, "integration_count": 4, "finding_count": 2,
      "exposes_http_api": true,
      "http_apis_exposed": ["POST /orders"],
      "http_apis_consumed": [],
@@ -489,15 +489,14 @@ business objects and never includes source paths or snippets by default:
 - `cccr microservices <service>` is the short form of `show <service>`.
 - `cccr microservices topics <service>` lists published and consumed Kafka
   topics.
-- `cccr microservices resources <service>` lists exposed and consumed HTTP
-  resources.
+- `cccr microservices apis <service>` lists exposed and consumed HTTP APIs.
 - `cccr microservices mongodb <service>` lists indexed MongoDB collections
   used by the microservice.
 - `cccr microservices neighbors <service>` lists direct relations of that
   microservice.
-- `cccr microservices analyze <calls|external-apis|orphan-endpoints|impact> [target]`
+- `cccr microservices analyze <calls|external-apis|orphan-integrations|impact> [target]`
   answers architecture questions centered on microservices.
-- `cccr microservices implementation endpoint <id>` is the explicit final
+- `cccr microservices implementation integration <id>` is the explicit final
   level that returns location and indexed source evidence.
 
 ### `cccr topics [list|show|neighbors|consumers|producers|search|trace] [topic]`
@@ -529,23 +528,23 @@ modules using it, `services` restricts that relation to runtime microservices,
 and `search` resolves an exact name or a unique case-insensitive substring.
 The command does not return source paths or snippets.
 
-### `cccr resources [list|show|neighbors|providers|consumers|search] [resource]`
+### `cccr apis [list|show|neighbors|providers|consumers|search] [api]`
 
-Explores HTTP resource objects from the same indexed graph. With no argument or
-with `list`, it returns the discovered resources. The remaining subcommands
-take one resource name:
+Explores HTTP API objects from the same indexed graph. With no argument or
+with `list`, it returns the discovered APIs. The remaining subcommands take
+one API name:
 
-- `show` returns the resource summary;
+- `show` returns the API summary;
 - `neighbors` returns its provider and consumer microservices;
-- `providers` answers which microservices expose the resource;
-- `consumers` answers which microservices call the resource;
+- `providers` answers which microservices expose the API;
+- `consumers` answers which microservices call the API;
 - `search` resolves an exact name or a unique case-insensitive substring, then
   uses the same local vector-similarity fallback as `topics search`.
 
 The command returns business objects only, without source paths or snippets.
 
-`endpoint_count` of a Maven `shared-module` is always `0`: a shared module is never
-handled as a runtime producer/consumer, even if endpoints were detected there by
+`integration_count` of a Maven `shared-module` is always `0`: a shared module is never
+handled as a runtime producer/consumer, even if integrations were detected there by
 mistake. A module not indexed, with a missing database, or with an
 incompatible schema does not make the command fail: it appears in `warnings`,
 absent from the counts. An indexed module whose
@@ -565,7 +564,7 @@ error.
   project/archive name, declared version (or `null`), build system,
   classification (`microservice`, `library`, `aggregator`) and absolute path.
 - `cccr modules <module>` returns the detailed record for one exact module name.
-- `cccr modules endpoints|properties|openapi <module>` returns the targeted
+- `cccr modules integrations|properties|openapi <module>` returns the targeted
   inventory, synthetic configuration example, or local API contracts for that
   module.
 - `cccr modules graph` returns the declared Maven/Gradle dependencies whose
@@ -626,7 +625,7 @@ the **Java/Spring microservices extension**.
 | `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
-| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
+| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed HTTP/Kafka integrations — equivalent to CLI `cccr integrations` | — |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
 | `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Detailed MCP-only trace of a topic/route and its sites (producers/consumers, or servers/callers), including overlapping findings | No-match or ambiguous query → `ToolError` |
@@ -755,7 +754,7 @@ Like the liveness pack, it lives in `ccc-radar-skill`
 **not a findings pack**: `metadata.severity` (`INFO`) has no meaningful
 thresholding use. It is nevertheless run during `cccr index` whenever it appears
 in `rules:` (microservices audit workflow of the skill), and feeds
-`cccr endpoints` / `cccr graph`.
+`cccr integrations` / `cccr graph`.
 
 | Rule | Language | Role | Detects |
 |---|---|---|---|

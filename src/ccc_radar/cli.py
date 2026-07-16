@@ -182,8 +182,8 @@ def topics_cmd(
     raise typer.Exit(code=2)
 
 
-@app.command(name="resources")
-def resources_cmd(
+@app.command(name="apis")
+def apis_cmd(
     arguments: list[str] = typer.Argument(
         None, help="Commande : list, show, neighbors, providers, consumers ou search."
     ),
@@ -198,36 +198,46 @@ def resources_cmd(
     catalog = _microservice_catalog(workspace_root)
     if not arguments or arguments[0] == "list":
         if len(arguments) > 1:
-            typer.echo("Usage : `cccr resources [list] --root <workspace>`.", err=True)
+            typer.echo("Usage : `cccr apis [list] --root <workspace>`.", err=True)
             raise typer.Exit(code=2)
         _emit_architecture(list_architecture_objects(catalog, "api"), json_output)
         return
     command = arguments[0]
     if command in {"show", "neighbors", "providers", "consumers", "search"}:
         if len(arguments) != 2:
-            typer.echo(f"`cccr resources {command}` requiert une ressource HTTP.", err=True)
+            typer.echo(f"`cccr apis {command}` requiert une API HTTP.", err=True)
             raise typer.Exit(code=2)
-        resource = arguments[1]
+        api = arguments[1]
         if command == "show":
-            result = show_architecture_object(catalog, "api", resource)
+            result = show_architecture_object(catalog, "api", api)
         elif command == "neighbors":
-            result = architecture_neighbors(catalog, "api", resource)
+            result = architecture_neighbors(catalog, "api", api)
         elif command == "search":
-            result = _search_architecture_object(workspace_root, catalog, "api", "rest", resource)
+            result = _search_architecture_object(workspace_root, catalog, "api", "rest", api)
         else:
-            summary = show_architecture_object(catalog, "api", resource)
+            summary = show_architecture_object(catalog, "api", api)
             result = (
-                {"query": command, "resource": resource, "microservices": summary[command]}
+                {"query": command, "api": api, "microservices": summary[command]}
                 if summary is not None
                 else None
             )
         if result is None:
-            typer.echo(f"Ressource HTTP introuvable : {resource}", err=True)
+            typer.echo(f"API HTTP introuvable : {api}", err=True)
             raise typer.Exit(code=2)
         _emit_architecture(result, json_output)
         return
-    typer.echo("Usage : `cccr resources [list|show|neighbors|providers|consumers|search] [ressource]`.", err=True)
+    typer.echo("Usage : `cccr apis [list|show|neighbors|providers|consumers|search] [api]`.", err=True)
     raise typer.Exit(code=2)
+
+
+@app.command(name="resources", hidden=True)
+def resources_alias(
+    arguments: list[str] = typer.Argument(None),
+    root: Optional[Path] = typer.Option(None, "--root"),  # noqa: UP007
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Alias de compatibilité de `cccr apis`."""
+    apis_cmd(arguments, root, json_output)
 
 
 @app.command(name="mongodb")
@@ -489,7 +499,7 @@ def index_cmd(
     typer.echo(
         f"scanned={report.scanned} skipped={report.skipped} "
         f"+findings={report.findings_added} -findings={report.findings_removed} "
-        f"+endpoints={report.endpoints_added} -endpoints={report.endpoints_removed}"
+        f"+integrations={report.endpoints_added} -integrations={report.endpoints_removed}"
     )
     _trace_index("cli.index.end")
 
@@ -591,8 +601,8 @@ def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(render_summary_text(result))
 
 
-@app.command(name="endpoints")
-def endpoints_cmd(
+@app.command(name="integrations")
+def integrations_cmd(
     system: Optional[str] = typer.Option(None, "--system"),  # noqa: UP007
     role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
     topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
@@ -602,7 +612,7 @@ def endpoints_cmd(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Lister les échanges HTTP et Kafka détectés dans le projet indexé."""
+    """Lister les intégrations HTTP et Kafka détectées dans le projet indexé."""
     repo_root = Path.cwd()
     _require_index(repo_root)
 
@@ -616,6 +626,19 @@ def endpoints_cmd(
         typer.echo(json.dumps(render_endpoints_json(endpoints)))
     else:
         typer.echo(render_endpoints_text(endpoints, [warning] if warning else []))
+
+
+@app.command(name="endpoints", hidden=True)
+def endpoints_alias(
+    system: Optional[str] = typer.Option(None, "--system"),  # noqa: UP007
+    role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
+    topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
+    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
+    module: Optional[str] = typer.Option(None, "--module"),  # noqa: UP007
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Alias de compatibilité de `cccr integrations`."""
+    integrations_cmd(system, role, topic, path, module, json_output)
 
 
 @app.command(name="graph")
@@ -781,7 +804,7 @@ def audit_cmd(
 def microservices_cmd(
     arguments: list[str] = typer.Argument(
         None,
-        help="Nom d'un service, ou commande : show, topics, resources, mongodb, neighbors ou analyze.",
+        help="Nom d'un service, ou commande : show, topics, apis, mongodb, neighbors ou analyze.",
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None,
@@ -792,16 +815,17 @@ def microservices_cmd(
     """Lister les microservices ou résumer un microservice.
 
     Exemples : `cccr microservices`, `cccr microservices orders`,
-    `cccr microservices topics orders`, `cccr microservices mongodb orders`.
+    `cccr microservices topics orders`, `cccr microservices apis orders`,
+    `cccr microservices mongodb orders`.
     """
     arguments = arguments or []
     commands = {
-        "topics", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
+        "topics", "apis", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
     }
     if arguments and arguments[0] in commands:
         workspace_root = (root or Path.cwd()).resolve()
         command = arguments[0]
-        if command in {"topics", "resources", "mongodb", "properties", "openapi", "show"}:
+        if command in {"topics", "apis", "resources", "mongodb", "properties", "openapi", "show"}:
             if len(arguments) != 2:
                 typer.echo(f"`microservices {command}` requiert un nom de microservice.", err=True)
                 raise typer.Exit(code=2)
@@ -819,8 +843,8 @@ def microservices_cmd(
             raise typer.Exit(code=2)
         if command == "topics":
             _render_microservice_topics(service, workspace_root, json_output)
-        elif command == "resources":
-            _render_microservice_resources(service, workspace_root, json_output)
+        elif command in {"apis", "resources"}:
+            _render_microservice_apis(service, workspace_root, json_output)
         elif command == "mongodb":
             _render_microservice_mongodb(service, workspace_root, json_output)
         elif command == "properties":
@@ -965,7 +989,7 @@ def _render_microservice_analysis(
     if result is None:
         typer.echo(
             "Analyse impossible : vérifiez la question et sa cible (consumers/producers/calls/"
-            "external-apis/orphan-endpoints/impact).",
+            "external-apis/orphan-integrations/impact).",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -975,12 +999,12 @@ def _render_microservice_analysis(
 def _render_microservice_implementation(
     kind: str, identifier: str, root: Path, json_output: bool
 ) -> None:
-    if kind.casefold() != "endpoint":
-        typer.echo("Seule l'implémentation d'un endpoint est disponible.", err=True)
+    if kind.casefold() not in {"integration", "endpoint"}:
+        typer.echo("Seule l'implémentation d'une intégration est disponible.", err=True)
         raise typer.Exit(code=2)
     result = endpoint_implementation(_microservice_catalog(root), identifier)
     if result is None:
-        typer.echo(f"Endpoint introuvable : {identifier}", err=True)
+        typer.echo(f"Intégration introuvable : {identifier}", err=True)
         raise typer.Exit(code=2)
     _emit_architecture(result, json_output)
 
@@ -1001,8 +1025,8 @@ def _render_microservice_topics(service: str, root: Path, json_output: bool) -> 
     )
 
 
-def _render_microservice_resources(service: str, root: Path, json_output: bool) -> None:
-    """Liste les ressources HTTP exposées et consommées par un microservice."""
+def _render_microservice_apis(service: str, root: Path, json_output: bool) -> None:
+    """Liste les APIs HTTP exposées et appelées par un microservice."""
     summary = show_architecture_object(_microservice_catalog(root), "microservice", service)
     if summary is None:
         typer.echo(f"Microservice introuvable : {service}", err=True)
@@ -1087,12 +1111,12 @@ def modules_cmd(
     """Liste les modules indexés ou détaille l'un d'eux.
 
     `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
-    `endpoints`, `properties` et `openapi` prennent un module dans le
+    `integrations`, `properties` et `openapi` prennent un module dans le
     répertoire courant déjà indexé. `graph` affiche les dépendances de build
     entre modules et accepte `--drawio` ou `--html`.
     """
     arguments = arguments or []
-    commands = {"endpoints", "properties", "openapi", "graph"}
+    commands = {"integrations", "endpoints", "properties", "openapi", "graph"}
     if arguments and arguments[0] in commands:
         if arguments[0] == "graph":
             if len(arguments) != 1:
@@ -1106,7 +1130,7 @@ def modules_cmd(
         repo_root = Path.cwd().resolve()
         selected = _selected_indexed_module(arguments[1], repo_root)
         with Store(repo_root, readonly=True) as store:
-            if arguments[0] == "endpoints":
+            if arguments[0] in {"integrations", "endpoints"}:
                 endpoints = [endpoint for endpoint in store.all_endpoints() if endpoint.module == selected.name]
                 typer.echo(json.dumps(render_endpoints_json(endpoints)) if json_output else render_endpoints_text(endpoints))
             elif arguments[0] == "properties":
@@ -1116,7 +1140,7 @@ def modules_cmd(
                 _render_openapi_contracts(selected.name, selected.path, json_output)
         return
     if len(arguments) > 1:
-        typer.echo("Usage : `cccr modules [module]` ou `cccr modules <endpoints|properties|openapi> <module>` ou `cccr modules graph`.", err=True)
+        typer.echo("Usage : `cccr modules [module]` ou `cccr modules <integrations|properties|openapi> <module>` ou `cccr modules graph`.", err=True)
         raise typer.Exit(code=2)
     module = arguments[0] if arguments else None
     repo_root = Path.cwd().resolve()

@@ -23,6 +23,8 @@ _KINDS = {
     "apis": "api",
     "collection": "collection",
     "collections": "collection",
+    "integration": "endpoint",
+    "integrations": "endpoint",
     "endpoint": "endpoint",
     "endpoints": "endpoint",
 }
@@ -164,7 +166,7 @@ def collection_summary(catalog: ArchitectureCatalog, collection: str) -> dict[st
 
 def endpoint_summary(endpoint: MessageEndpoint) -> dict[str, object]:
     return {
-        "kind": "endpoint",
+        "kind": "integration",
         "id": endpoint.id,
         "name": endpoint.topic,
         "topic": endpoint.topic,
@@ -257,7 +259,7 @@ def analyze(catalog: ArchitectureCatalog, query: str, target: str | None) -> dic
             if (summary := module_summary(catalog, module.name)) is not None and summary["external_apis"]
         ]
         return {"query": "external-apis", "items": items}
-    if normalized in {"orphan-endpoints", "orphans"}:
+    if normalized in {"orphan-integrations", "orphan-endpoints", "orphans"}:
         results = []
         for topic in list_objects(catalog, "topic"):
             if not topic["producers"] or not topic["consumers"]:
@@ -265,7 +267,7 @@ def analyze(catalog: ArchitectureCatalog, query: str, target: str | None) -> dic
         for api in list_objects(catalog, "api"):
             if not api["providers"] or not api["consumers"]:
                 results.append(api)
-        return {"query": "orphan-endpoints", "items": results}
+        return {"query": "orphan-integrations", "items": results}
     if normalized == "impact" and target:
         for kind in ("module", "topic", "api", "collection"):
             items = neighbors(catalog, kind, target)
@@ -350,7 +352,7 @@ def endpoint_implementation(catalog: ArchitectureCatalog, endpoint_id: str) -> d
     if endpoint is None:
         return None
     return {
-        "kind": "endpoint",
+        "kind": "integration",
         "id": endpoint.id,
         "name": endpoint.topic,
         "role": endpoint.role,
