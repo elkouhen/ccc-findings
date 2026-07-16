@@ -24,6 +24,8 @@ _KINDS = {
     "apis": "api",
     "collection": "collection",
     "collections": "collection",
+    "dto": "dto",
+    "dtos": "dto",
     "integration": "endpoint",
     "integrations": "endpoint",
     "endpoint": "endpoint",
@@ -132,6 +134,13 @@ def list_objects(catalog: ArchitectureCatalog, kind: str) -> list[dict[str, obje
     if kind == "collection":
         collections = sorted({collection for module in catalog.modules for collection in module.mongo_collections})
         return [collection_summary(catalog, collection) for collection in collections]
+    if kind == "dto":
+        dto_names = sorted({
+            endpoint.message_type
+            for endpoint in catalog.endpoints
+            if endpoint.system == "kafka" and endpoint.message_type
+        })
+        return [dto_summary(catalog, dto) for dto in dto_names]
     if kind == "endpoint":
         return [endpoint_summary(endpoint) for endpoint in catalog.endpoints]
     return []
@@ -171,6 +180,36 @@ def collection_summary(catalog: ArchitectureCatalog, collection: str) -> dict[st
     }
 
 
+def dto_summary(catalog: ArchitectureCatalog, dto: str) -> dict[str, object]:
+    """Summarize a statically inferred Kafka Java message type.
+
+    Only runtime modules are reported as microservices. A shared library can
+    contain a Kafka helper but must not be presented as a deployable consumer
+    or producer.
+    """
+    endpoints = [
+        endpoint
+        for endpoint in catalog.endpoints
+        if endpoint.system == "kafka" and endpoint.message_type == dto
+    ]
+    microservices = {module.name for module in catalog.modules if module.starts_application}
+    return {
+        "kind": "dto",
+        "name": dto,
+        "topics": sorted({endpoint.topic for endpoint in endpoints}),
+        "producer_microservices": sorted({
+            endpoint.module
+            for endpoint in endpoints
+            if endpoint.role == "produce" and endpoint.module in microservices
+        }),
+        "consumer_microservices": sorted({
+            endpoint.module
+            for endpoint in endpoints
+            if endpoint.role == "consume" and endpoint.module in microservices
+        }),
+    }
+
+
 def endpoint_summary(endpoint: MessageEndpoint) -> dict[str, object]:
     return {
         "kind": "integration",
@@ -198,6 +237,11 @@ def show_object(catalog: ArchitectureCatalog, kind: str, name: str) -> dict[str,
         return api_summary(catalog, name)
     if kind == "collection" and any(name in module.mongo_collections for module in catalog.modules):
         return collection_summary(catalog, name)
+    if kind == "dto" and any(
+        endpoint.system == "kafka" and endpoint.message_type == name
+        for endpoint in catalog.endpoints
+    ):
+        return dto_summary(catalog, name)
     if kind == "endpoint":
         endpoint = next((item for item in catalog.endpoints if item.id == name), None)
         return endpoint_summary(endpoint) if endpoint else None
@@ -246,6 +290,15 @@ def neighbors(catalog: ArchitectureCatalog, kind: str, name: str) -> list[dict[s
         for endpoint in (endpoint for endpoint in catalog.endpoints if endpoint.system == "rest" and endpoint.topic == name):
             if endpoint.module:
                 related.add(("module", endpoint.module, "provider" if endpoint.role == "serve" else "consumer"))
+    elif kind == "dto":
+        for endpoint in (
+            item
+            for item in catalog.endpoints
+            if item.system == "kafka" and item.message_type == name
+        ):
+            related.add(("topic", endpoint.topic, "published_as" if endpoint.role == "produce" else "consumed_as"))
+            if endpoint.module:
+                related.add(("module", endpoint.module, "producer" if endpoint.role == "produce" else "consumer"))
     elif kind == "endpoint":
         endpoint = next(item for item in catalog.endpoints if item.id == name)
         if endpoint.module:

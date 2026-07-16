@@ -28,6 +28,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     microservices_help = runner.invoke(app, ["microservices", "--help"])
     graph_help = runner.invoke(app, ["graph", "--help"])
     topics_help = runner.invoke(app, ["topics", "--help"])
+    dtos_help = runner.invoke(app, ["dtos", "--help"])
     apis_help = runner.invoke(app, ["apis", "--help"])
     analyze_help = runner.invoke(app, ["analyze", "--help"])
     export_help = runner.invoke(app, ["export", "microservices", "--help"])
@@ -37,6 +38,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "BACKLOG-" not in root_help.output
     assert "integrations" in root_help.output
     assert "apis" in root_help.output
+    assert "dtos" in root_help.output
     assert "export" in root_help.output
     assert "analyze" in root_help.output
     assert "│ audit" not in root_help.output
@@ -51,6 +53,9 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert topics_help.exit_code == 0
     assert "show" in topics_help.output
     assert "consumers" in topics_help.output
+    assert dtos_help.exit_code == 0
+    assert "Explorer les DTOs Java échangés via Kafka." in dtos_help.output
+    assert "producers" in dtos_help.output
     assert apis_help.exit_code == 0
     assert "providers" in apis_help.output
     assert analyze_help.exit_code == 0
@@ -66,6 +71,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     "command",
     [
         ["topics", "--help"],
+        ["dtos", "--help"],
         ["apis", "--help"],
         ["mongodb", "--help"],
         ["analyze", "--help"],
@@ -1086,6 +1092,26 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert topic_summary.exit_code == 0
     assert json.loads(topic_summary.output)["message_types_published"] == ["OrderCreated"]
     assert json.loads(topic_summary.output)["message_types_consumed"] == ["OrderCreated"]
+
+    dto_summary = runner.invoke(
+        app, ["dtos", "show", "OrderCreated", "--root", str(tmp_path), "--json"]
+    )
+    assert dto_summary.exit_code == 0
+    assert json.loads(dto_summary.output) == {
+        "kind": "dto",
+        "name": "OrderCreated",
+        "topics": ["orders.created"],
+        "producer_microservices": ["orders"],
+        "consumer_microservices": ["payments"],
+    }
+
+    dto_consumers = runner.invoke(
+        app, ["dtos", "consumers", "OrderCreated", "--root", str(tmp_path), "--json"]
+    )
+    assert dto_consumers.exit_code == 0
+    assert json.loads(dto_consumers.output) == {
+        "query": "consumers", "dto": "OrderCreated", "microservices": ["payments"]
+    }
 
     service_resources = runner.invoke(
         app, ["microservices", "apis", "orders", "--root", str(tmp_path), "--json"]

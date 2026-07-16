@@ -103,6 +103,7 @@ cccr microservices show order-service
 cccr microservices topics order-service
 cccr topics show orders.created
 cccr topics consumers orders.created
+cccr dtos show OrderCreated
 cccr apis consumers "POST /payments"
 cccr mongodb services orders
 cccr analyze microservices path order-service shipping-service

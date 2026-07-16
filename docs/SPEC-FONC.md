@@ -553,6 +553,16 @@ one side of the relation or potential Kafka flows; a trace is never runtime data
 
 The command returns business objects only, without source paths or snippets.
 
+### `cccr dtos [list|show|neighbors|consumers|producers|search] [dto]`
+
+Lists the statically inferred Java DTOs used in Kafka producers and consumers.
+Each DTO summary includes its Kafka topics and the runtime microservices that
+produce or consume it. Unknown payload types are intentionally absent: the
+command never guesses a Java type from a topic name.
+
+Examples: `cccr dtos`, `cccr dtos show OrderCreated`, and
+`cccr dtos consumers OrderCreated`.
+
 ### `cccr mongodb [list|show|neighbors|services|search] [collection]`
 
 Explores indexed MongoDB collection objects from the same architecture graph.

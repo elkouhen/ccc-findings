@@ -94,6 +94,9 @@ export_app = typer.Typer(
 topics_app = typer.Typer(
     help="Explorer les topics Kafka indexés.\n\nExemples : `cccr topics`, `cccr topics consumers orders.created`."
 )
+dtos_app = typer.Typer(
+    help="Explorer les DTOs Java échangés via Kafka.\n\nExemples : `cccr dtos`, `cccr dtos consumers OrderCreated`."
+)
 apis_app = typer.Typer(
     help="Explorer les APIs HTTP indexées.\n\nExemples : `cccr apis`, `cccr apis consumers 'POST /payments'`."
 )
@@ -114,6 +117,7 @@ analyze_microservices_app = typer.Typer(
 )
 app.add_typer(export_app, name="export")
 app.add_typer(topics_app, name="topics")
+app.add_typer(dtos_app, name="dtos")
 app.add_typer(apis_app, name="apis")
 app.add_typer(mongodb_app, name="mongodb")
 app.add_typer(microservices_app, name="microservices")
@@ -238,6 +242,55 @@ def topics_cmd(
         _emit_architecture(result, json_output)
         return
     typer.echo("Usage : `cccr topics [list|show|neighbors|search] [topic]`.", err=True)
+    raise typer.Exit(code=2)
+
+
+def dtos_cmd(
+    arguments: list[str] = typer.Argument(
+        None, help="Commande : list, show, neighbors, producers, consumers ou search."
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Parcourir les DTOs Java utilisés par les producers et consumers Kafka.
+
+    Exemples : `cccr dtos`, `cccr dtos show OrderCreated`,
+    `cccr dtos consumers OrderCreated`.
+    """
+    arguments = arguments or []
+    json_output = _option_json(json_output)
+    workspace_root = _option_root(root)
+    catalog = _microservice_catalog(workspace_root)
+    if not arguments or arguments[0] == "list":
+        if len(arguments) > 1:
+            typer.echo("Usage : `cccr dtos [list] --root <workspace>`.", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(list_architecture_objects(catalog, "dto"), json_output)
+        return
+    command = arguments[0]
+    if command in {"show", "neighbors", "consumers", "producers", "search"}:
+        if len(arguments) != 2:
+            typer.echo(f"`cccr dtos {command}` requiert un DTO.", err=True)
+            raise typer.Exit(code=2)
+        dto = arguments[1]
+        if command == "show":
+            result = show_architecture_object(catalog, "dto", dto)
+        elif command == "neighbors":
+            result = architecture_neighbors(catalog, "dto", dto)
+        elif command == "search":
+            result = _search_dto(catalog, dto)
+        else:
+            summary = show_architecture_object(catalog, "dto", dto)
+            key = "producer_microservices" if command == "producers" else "consumer_microservices"
+            result = {"query": command, "dto": dto, "microservices": summary[key]} if summary else None
+        if result is None:
+            typer.echo(f"DTO introuvable : {dto}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(result, json_output)
+        return
+    typer.echo("Usage : `cccr dtos [list|show|neighbors|producers|consumers|search] [dto]`.", err=True)
     raise typer.Exit(code=2)
 
 
@@ -530,6 +583,53 @@ def topics_trace(
 ) -> None:
     """Afficher les flux Kafka potentiels issus d'un topic."""
     topics_cmd(["trace", topic], root, json_output, max_depth, limit)
+
+
+@dtos_app.callback(invoke_without_command=True)
+def dtos_root(
+    ctx: typer.Context,
+    root: Path | None = typer.Option(None, "--root", help="Répertoire parent à explorer."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Lister les DTOs Kafka sans sous-commande."""
+    if ctx.invoked_subcommand is None:
+        dtos_cmd([], root, json_output)
+
+
+@dtos_app.command("list")
+def dtos_list(root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les DTOs Java connus dans les échanges Kafka."""
+    dtos_cmd([], root, json_output)
+
+
+@dtos_app.command("show")
+def dtos_show(dto: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Résumer les microservices producteurs et consommateurs d'un DTO."""
+    dtos_cmd(["show", dto], root, json_output)
+
+
+@dtos_app.command("neighbors")
+def dtos_neighbors(dto: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Afficher les topics et microservices directement liés à un DTO."""
+    dtos_cmd(["neighbors", dto], root, json_output)
+
+
+@dtos_app.command("producers")
+def dtos_producers(dto: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices producteurs d'un DTO."""
+    dtos_cmd(["producers", dto], root, json_output)
+
+
+@dtos_app.command("consumers")
+def dtos_consumers(dto: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Lister les microservices consommateurs d'un DTO."""
+    dtos_cmd(["consumers", dto], root, json_output)
+
+
+@dtos_app.command("search")
+def dtos_search(query: str, root: Path | None = typer.Option(None, "--root"), json_output: bool = typer.Option(False, "--json")) -> None:
+    """Retrouver un DTO par son nom Java."""
+    dtos_cmd(["search", query], root, json_output)
 
 
 @apis_app.callback(invoke_without_command=True)
@@ -1597,6 +1697,19 @@ def _search_architecture_object(
     if resolved is None:
         return None
     summary = show_architecture_object(catalog, kind, resolved)
+    return {"query": query, "resolved": resolved, "object": summary} if summary else None
+
+
+def _search_dto(catalog, query: str) -> dict[str, object] | None:
+    dto_names = {
+        endpoint.message_type
+        for endpoint in catalog.endpoints
+        if endpoint.system == "kafka" and endpoint.message_type
+    }
+    resolved = resolve_topic(query, dto_names)
+    if resolved is None:
+        return None
+    summary = show_architecture_object(catalog, "dto", resolved)
     return {"query": query, "resolved": resolved, "object": summary} if summary else None
 
 
