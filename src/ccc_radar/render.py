@@ -368,11 +368,14 @@ def render_graph_text(result: GraphResult) -> str:
 
 
 def render_graph_drawio(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    edges: list[GraphEdge],
+    collections_by_service: dict[str, list[str]] | None = None,
 ) -> str:
     """Rend le graphe d'interactions en XML mxGraph (format natif
     diagrams.net/drawio) : un nœud par microservice, plus un nœud par topic
-    Kafka inter-service. Les arêtes REST vont de l'appelant vers l'appelé ;
+    Kafka inter-service, et optionnellement un nœud par collection MongoDB
+    indexée dans chaque microservice. Les arêtes REST vont de l'appelant vers l'appelé ;
     les arêtes Kafka sont dépliées en microservice -> topic (production) puis
     topic -> microservice (consommation). Les nœuds microservices et topics
     portent des couleurs et des formes distinctes. Le fichier ne porte pas de
@@ -384,21 +387,30 @@ def render_graph_drawio(
 
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
+    mongo_collections = _mongodb_collection_nodes(collections_by_service)
     service_resources = {
         name: _rest_resources_served(endpoints_by_service.get(name, [])) for name in ordered_services
     }
     ordered_nodes = [("microservice", name) for name in ordered_services] + [
         ("kafka_topic", name) for name in kafka_topics
+    ] + [
+        ("mongodb_collection", identity) for _service, _collection, identity in mongo_collections
     ]
+    mongo_labels = {identity: collection for _service, collection, identity in mongo_collections}
     node_ids = {node: f"node-{i}" for i, node in enumerate(ordered_nodes)}
     node_dimensions = {
         ("microservice", name): (node_width, _drawio_service_height(service_resources[name]))
         for name in ordered_services
-    } | {("kafka_topic", name): (220, 60) for name in kafka_topics}
+    } | {("kafka_topic", name): (220, 60) for name in kafka_topics} | {
+        ("mongodb_collection", identity): (220, 60) for identity in mongo_labels
+    }
     # The graph model remains detailed, but the visual export bundles calls
     # sharing the same endpoints. This removes parallel strokes and keeps their
     # individual routes as a multi-line label on the single connector.
-    visual_edges = _drawio_visual_graph_edges(edges)
+    visual_edges = [
+        *_drawio_visual_graph_edges(edges),
+        *_mongodb_visual_graph_edges(collections_by_service),
+    ]
     positions = _drawio_initial_positions(ordered_nodes, visual_edges, node_dimensions)
 
     cells: list[str] = []
@@ -412,13 +424,24 @@ def render_graph_drawio(
                 "fontColor=#183b66;fontSize=14;fontStyle=1;shadow=1;"
                 "spacingLeft=12;spacingRight=12;"
             )
-        else:
+        elif node_kind == "kafka_topic":
             label = f"<b>{html_escape(name)}</b>"
             width, height = node_dimensions[(node_kind, name)]
             style = (
                 "shape=cylinder3;boundedLbl=1;whiteSpace=wrap;html=1;"
                 "fillColor=#fff3df;strokeColor=#d18b20;strokeWidth=2;"
                 "fontColor=#744a0b;fontSize=13;"
+            )
+        else:
+            label = (
+                f"<b>{html_escape(mongo_labels[name])}</b><br/>"
+                '<span style="font-size:10px;color:#276749;">MongoDB</span>'
+            )
+            width, height = node_dimensions[(node_kind, name)]
+            style = (
+                "shape=cylinder3;boundedLbl=1;whiteSpace=wrap;html=1;"
+                "fillColor=#e6ffed;strokeColor=#2f855a;strokeWidth=2;"
+                "fontColor=#276749;fontSize=13;"
             )
         x, y = positions[(node_kind, name)]
         cells.append(
@@ -442,6 +465,8 @@ def render_graph_drawio(
         )
         if kind == "kafka":
             style += "dashed=1;dashPattern=6 4;strokeColor=#d18b20;fontColor=#744a0b;"
+        elif kind == "mongodb":
+            style += "dashed=1;dashPattern=3 3;strokeColor=#2f855a;fontColor=#276749;"
         else:
             style += "strokeColor=#4f79b5;fontColor=#183b66;"
         cells.append(
@@ -470,7 +495,9 @@ def render_graph_drawio(
 
 
 def render_graph_html(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    edges: list[GraphEdge],
+    collections_by_service: dict[str, list[str]] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -510,6 +537,18 @@ def render_graph_html(
         }
         for name in kafka_topics
     ]
+    nodes += [
+        {
+            "id": f"mongodb_collection:{identity}",
+            "kind": "mongodb_collection",
+            "name": collection,
+            "owner": service,
+            "label": collection,
+            "width": 190,
+            "height": 42,
+        }
+        for service, collection, identity in _mongodb_collection_nodes(collections_by_service)
+    ]
     links = [
         {
             "source": f"{source_kind}:{source_name}",
@@ -519,6 +558,17 @@ def render_graph_html(
         }
         for source_kind, source_name, target_kind, target_name, label, kind in _drawio_visual_graph_edges(
             edges
+        )
+    ]
+    links += [
+        {
+            "source": f"{source_kind}:{source_name}",
+            "target": f"{target_kind}:{target_name}",
+            "kind": kind,
+            "label": label,
+        }
+        for source_kind, source_name, target_kind, target_name, label, kind in _mongodb_visual_graph_edges(
+            collections_by_service
         )
     ]
     graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
@@ -591,7 +641,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         if (!source || !target) return;
         const dx = target.x - source.x, dy = target.y - source.y;
         const distance = Math.hypot(dx, dy) || .001;
-        const desired = link.kind === "kafka" ? 1.05 : .82;
+        const desired = link.kind === "kafka" ? 1.05 : link.kind === "mongodb" ? .68 : .82;
         const pull = (distance - desired) * .035;
         const ux = dx / distance, uy = dy / distance;
         source.vx += ux * pull; source.vy += uy * pull;
@@ -609,13 +659,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       label: node.name,
       x: node.x,
       y: node.y,
-      size: node.kind === "kafka_topic" ? 9 : 13,
-      color: node.kind === "kafka_topic" ? "#d18b20" : "#4f79b5",
+      size: node.kind === "kafka_topic" ? 9 : node.kind === "mongodb_collection" ? 10 : 13,
+      color: node.kind === "kafka_topic" ? "#d18b20" : node.kind === "mongodb_collection" ? "#2f855a" : "#4f79b5",
     }));
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
       size: 1.2,
-      color: link.kind === "kafka" ? "#d18b20" : "#4f79b5",
+      color: link.kind === "kafka" ? "#d18b20" : link.kind === "mongodb" ? "#2f855a" : "#4f79b5",
       kind: link.kind,
     }));
 
@@ -653,8 +703,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       details.replaceChildren();
       const title = document.createElement("strong");
       title.textContent = node.name;
-      details.append(title, document.createTextNode(`${node.kind === "kafka_topic" ? "Topic Kafka" : "Microservice"} - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
+      const kindLabel = node.kind === "kafka_topic" ? "Topic Kafka" : node.kind === "mongodb_collection" ? "Collection MongoDB" : "Microservice";
+      details.append(title, document.createTextNode(`${kindLabel} - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
       if (node.kind === "microservice") appendList("APIs exposees", node.resources);
+      if (node.kind === "mongodb_collection") appendList("Stockee par", [node.owner]);
       appendList("Relations", edges.map(link => `${link.source === id ? "vers" : "depuis"} ${nodeDataById.get(link.source === id ? link.target : link.source).name} : ${link.label}`));
     }
     function selectNode(id) {
@@ -876,6 +928,32 @@ def _rest_resources_served(endpoints: list[MessageEndpoint]) -> list[str]:
     )
 
 
+def _mongodb_collection_nodes(
+    collections_by_service: dict[str, list[str]] | None,
+) -> list[tuple[str, str, str]]:
+    """Returns a distinct graph identity for each service/collection pair.
+
+    Collection names alone are not globally unique: two microservices can both
+    use `orders` in independent Mongo databases. Keeping the service in the
+    node identity prevents the visual graph from inventing a shared store.
+    """
+    return [
+        (service, collection, f"{service}:{collection}")
+        for service in sorted(collections_by_service or {})
+        for collection in sorted(set((collections_by_service or {})[service]))
+        if collection
+    ]
+
+
+def _mongodb_visual_graph_edges(
+    collections_by_service: dict[str, list[str]] | None,
+) -> list[tuple[str, str, str, str, str, str]]:
+    return [
+        ("microservice", service, "mongodb_collection", identity, "stocke", "mongodb")
+        for service, _collection, identity in _mongodb_collection_nodes(collections_by_service)
+    ]
+
+
 def _d2_markdown_block(lines: list[str], indent: str = "  ") -> list[str]:
     return (
         [f"{indent}label: |md"]
@@ -948,16 +1026,21 @@ def _drawio_visual_graph_edges(
 
 
 def render_graph_d2(
-    endpoints_by_service: dict[str, list[MessageEndpoint]], edges: list[GraphEdge]
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    edges: list[GraphEdge],
+    collections_by_service: dict[str, list[str]] | None = None,
 ) -> str:
     """Rend le graphe en source D2 pour bénéficier du moteur d'agencement
     natif de D2. Les nœuds restent microservices + topics Kafka, les arêtes
     REST vont de l'appelant vers l'appelé et les arêtes Kafka sont dépliées
-    en production puis consommation. Kafka reste en pointillé."""
+    en production puis consommation. Kafka et les liens vers MongoDB restent
+    en pointillé."""
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
+    mongo_collections = _mongodb_collection_nodes(collections_by_service)
     service_ids = {name: f"svc_{i}" for i, name in enumerate(ordered_services)}
     topic_ids = {name: f"topic_{i}" for i, name in enumerate(kafka_topics)}
+    collection_ids = {identity: f"mongo_{i}" for i, (_service, _collection, identity) in enumerate(mongo_collections)}
 
     lines = [
         "direction: down",
@@ -997,14 +1080,36 @@ def render_graph_d2(
                 "",
             ]
         )
+    for _service, collection, identity in mongo_collections:
+        node_id = collection_ids[identity]
+        lines.extend(
+            [
+                f"{node_id}: {{",
+                f'  label: "{_d2_escape(collection)}"',
+                "  shape: cylinder",
+                '  style.fill: "#e6ffed"',
+                '  style.stroke: "#2f855a"',
+                "}",
+                "",
+            ]
+        )
 
-    for source_kind, source_name, target_kind, target_name, label, kind in _visual_graph_edges(edges):
-        source_id = (service_ids if source_kind == "microservice" else topic_ids).get(source_name)
-        target_id = (service_ids if target_kind == "microservice" else topic_ids).get(target_name)
+    ids_by_kind = {
+        "microservice": service_ids,
+        "kafka_topic": topic_ids,
+        "mongodb_collection": collection_ids,
+    }
+    visual_edges = [*_visual_graph_edges(edges), *_mongodb_visual_graph_edges(collections_by_service)]
+    for source_kind, source_name, target_kind, target_name, label, kind in visual_edges:
+        source_id = ids_by_kind[source_kind].get(source_name)
+        target_id = ids_by_kind[target_kind].get(target_name)
         if source_id is None or target_id is None:
             continue
         lines.append(f'{source_id} -> {target_id}: "{_d2_escape(label)}" {{')
         if kind == "kafka":
+            lines.append("  style.stroke-dash: 3")
+        elif kind == "mongodb":
+            lines.append('  style.stroke: "#2f855a"')
             lines.append("  style.stroke-dash: 3")
         lines.append("}")
         lines.append("")

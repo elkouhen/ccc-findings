@@ -614,9 +614,16 @@ def graph_cmd(
         "--d2-layout",
         help="Moteur de layout D2 utilisé pour un rendu non-`.d2`.",
     ),
+    include_mongodb: bool = typer.Option(
+        False,
+        "--include-mongodb",
+        help="Ajoute les collections MongoDB indexées aux exports Draw.io, HTML et D2.",
+    ),
 ) -> None:
     """Graphe dérivé des endpoints indexés : nœuds = microservices + topics
-    Kafka ; arêtes = appel HTTP, production Kafka, consommation Kafka, avec
+    Kafka ; arêtes = appel HTTP, production Kafka, consommation Kafka. L'option
+    `--include-mongodb` ajoute les collections MongoDB indexées comme nœuds
+    reliés à leur microservice. Le graphe inclut aussi
     en plus les signaux de blocage probables (BACKLOG-10 K12) : appels REST
     synchrones détectés dans un handler de consommation Kafka du projet
     courant. Sans `--workspace`, si l'index couvre un répertoire
@@ -636,12 +643,14 @@ def graph_cmd(
     with Store(repo_root) as store:
         endpoints = store.all_endpoints()
         repo_warning = _current_repo_endpoint_warning(store)
+        indexed_modules = store.all_modules() if include_mongodb else []
 
     outbound_calls = find_outbound_calls_in_consumers(endpoints)
 
     services_by_name: dict[str, list[MessageEndpoint]] = {}
     edges: list[GraphEdge] = []
     warnings: list[str] = [repo_warning] if repo_warning else []
+    collections_by_service: dict[str, list[str]] = {}
     cross_module_data_available = False
     if workspace is not None:
         discovered = discover_maven_services(workspace)
@@ -649,12 +658,24 @@ def graph_cmd(
         warnings.extend(federation.warnings)
         services_by_name = federation.endpoints_by_service
         edges = build_graph(services_by_name)
+        if include_mongodb:
+            collections_by_service = {
+                service: list(module.mongo_collections)
+                for service, module in federation.modules_by_service.items()
+                if service in services_by_name and module.mongo_collections
+            }
         cross_module_data_available = True
     else:
         grouped_endpoints = group_endpoints_by_module(endpoints)
         if grouped_endpoints:
             services_by_name = grouped_endpoints
             edges = build_graph(grouped_endpoints)
+            if include_mongodb:
+                collections_by_service = {
+                    module.name: list(module.mongo_collections)
+                    for module in indexed_modules
+                    if module.name in services_by_name and module.mongo_collections
+                }
             cross_module_data_available = True
 
     result = render_graph_json(
@@ -667,7 +688,7 @@ def graph_cmd(
 
     if drawio is not None:
         drawio.write_text(
-            render_graph_drawio(services_by_name, edges), encoding="utf-8"
+            render_graph_drawio(services_by_name, edges, collections_by_service), encoding="utf-8"
         )
         typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
@@ -675,7 +696,9 @@ def graph_cmd(
         return
 
     if html is not None:
-        html.write_text(render_graph_html(services_by_name, edges), encoding="utf-8")
+        html.write_text(
+            render_graph_html(services_by_name, edges, collections_by_service), encoding="utf-8"
+        )
         typer.echo(f"Graphe écrit dans {html} ({len(services_by_name)} services, {len(edges)} arêtes).")
         if result["note"]:
             typer.echo(result["note"])
@@ -683,7 +706,11 @@ def graph_cmd(
 
     if d2 is not None:
         try:
-            write_graph_d2(d2, render_graph_d2(services_by_name, edges), layout=d2_layout)
+            write_graph_d2(
+                d2,
+                render_graph_d2(services_by_name, edges, collections_by_service),
+                layout=d2_layout,
+            )
         except RuntimeError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=2) from exc

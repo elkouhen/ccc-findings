@@ -312,7 +312,7 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE]`
+### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE] [--include-mongodb]`
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
@@ -321,6 +321,12 @@ Always
 included: synchronous REST calls detected inside a Kafka consumer handler
 **of the current project** (same file, call site inside the handler's line
 range).
+
+`--include-mongodb` adds one MongoDB collection node for each indexed
+`microservice + collection` pair to the Draw.io, HTML Sigma.js and D2 exports,
+with a `stocke` edge from the microservice. The service name remains part of
+the node identity: two collections with the same name are never displayed as a
+shared database without explicit evidence.
 
 For the inter-service topology, two sources are possible, tried in this order:
 1. **Without `--workspace`**: if the index covers a multi-module Maven or

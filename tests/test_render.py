@@ -210,6 +210,28 @@ def test_render_graph_drawio_produces_well_formed_xml() -> None:
     assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
 
 
+def test_graph_renderers_include_mongodb_collections_when_requested() -> None:
+    endpoints_by_service = _fixture()
+    edges = build_graph(endpoints_by_service)
+    collections = {"service-a": ["orders"], "service-b": ["payments"]}
+
+    drawio = render_graph_drawio(endpoints_by_service, edges, collections)
+    root = ET.fromstring(drawio)
+    values = [cell.get("value") or "" for cell in root.iter("mxCell")]
+    assert any("orders" in value and "MongoDB" in value for value in values)
+    assert any("payments" in value and "MongoDB" in value for value in values)
+    assert sum(cell.get("value") == "stocke" for cell in root.iter("mxCell")) == 2
+
+    document = render_graph_html(endpoints_by_service, edges, collections)
+    assert '"id": "mongodb_collection:service-a:orders"' in document
+    assert '"id": "mongodb_collection:service-b:payments"' in document
+
+    d2 = render_graph_d2(endpoints_by_service, edges, collections)
+    assert 'label: "orders"' in d2
+    assert 'label: "payments"' in d2
+    assert 'svc_0 -> mongo_0: "stocke" {' in d2
+
+
 def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     endpoints_by_service = {
         "service-</script>": [

@@ -176,6 +176,7 @@ Semgrep scan, persistence, embedding) before the final
 cccr index --engine cocoindex   # experimental: adds a local code chunk index
 cccr endpoints                  # indexed REST/Kafka inventory
 cccr graph                      # inter-service REST/Kafka topology
+cccr graph --drawio graph.drawio --include-mongodb  # also shows indexed MongoDB collections
 cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
 cccr microservices show order-service

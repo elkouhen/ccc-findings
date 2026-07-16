@@ -637,19 +637,43 @@ def test_graph_html_writes_interactive_sigma_document(
         "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
     )
     with Store(tmp_path) as store:
+        store.replace_modules(
+            [
+                DiscoveredModule(
+                    name="order-service",
+                    path=tmp_path / "order-service",
+                    build_system="maven",
+                    version=None,
+                    kind="library",
+                    starts_application=True,
+                    configuration_example="",
+                    mongo_collections=("orders",),
+                ),
+                DiscoveredModule(
+                    name="payment-service",
+                    path=tmp_path / "payment-service",
+                    build_system="maven",
+                    version=None,
+                    kind="library",
+                    starts_application=True,
+                    configuration_example="",
+                ),
+            ]
+        )
         store.replace_endpoints_for_files(
             ["order-service/Producer.java", "payment-service/Consumer.java"],
             [produce, consume],
         )
     out_file = tmp_path / "graph.html"
 
-    result = runner.invoke(app, ["graph", "--html", str(out_file)])
+    result = runner.invoke(app, ["graph", "--html", str(out_file), "--include-mongodb"])
 
     assert result.exit_code == 0
     document = out_file.read_text(encoding="utf-8")
     assert "new Sigma(network" in document
     assert "order-service" in document
     assert "orders.created" in document
+    assert "mongodb_collection:order-service:orders" in document
 
 
 def test_graph_rejects_drawio_and_d2_together(
