@@ -860,6 +860,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
     <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
     <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
+    <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
+    <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
+    <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
     <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Sortant</div>
     <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Entrant Kafka</div>
   </div>
@@ -915,7 +918,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       y: node.y,
       size: node.size,
       color: node.color,
-      type: "architecture",
+      type: node.kind,
     }));
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
@@ -942,15 +945,44 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         v_color = a_color;
       }
     `;
-    const ARCHITECTURE_NODE_FRAGMENT_SHADER = `
+    const MICROSERVICE_FRAGMENT_SHADER = `
       precision mediump float;
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        float distance = length(point) - .43;
+        float shape = max(abs(point.x) * .866025 + abs(point.y) * .5, abs(point.y));
+        float distance = shape - .43;
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
-        float border = smoothstep(.34, .42, length(point));
+        float border = smoothstep(.33, .42, shape);
+        vec3 fill = vec3(.98, .99, 1.0);
+        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
+      }
+    `;
+    const KAFKA_TOPIC_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float shape = length(point);
+        float distance = shape - .43;
+        float alpha = 1.0 - smoothstep(-.014, .014, distance);
+        if (alpha < .01) discard;
+        float border = smoothstep(.34, .42, shape);
+        vec3 fill = vec3(.98, .99, 1.0);
+        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
+      }
+    `;
+    const MONGODB_COLLECTION_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float shape = max(abs(point.x), abs(point.y));
+        float distance = shape - .42;
+        float alpha = 1.0 - smoothstep(-.014, .014, distance);
+        if (alpha < .01) discard;
+        float border = smoothstep(.32, .41, shape);
         vec3 fill = vec3(.98, .99, 1.0);
         gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
@@ -1034,7 +1066,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     const renderer = new Sigma(network, document.getElementById("graph"), {
       nodeProgramClasses: {
-        architecture: createNodeProgram(ARCHITECTURE_NODE_FRAGMENT_SHADER),
+        microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
+        kafka_topic: createNodeProgram(KAFKA_TOPIC_FRAGMENT_SHADER),
+        mongodb_collection: createNodeProgram(MONGODB_COLLECTION_FRAGMENT_SHADER),
       },
       renderEdgeLabels: false,
       labelDensity: .08,

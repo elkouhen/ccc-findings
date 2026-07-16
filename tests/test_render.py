@@ -333,9 +333,11 @@ def test_render_graph_html_colors_complexity_from_findings() -> None:
     assert service["color"] == "#2563eb"
     assert "Complexite elevee" in document
     assert 'type: "arrow"' in document
-    assert 'type: "architecture",' in document
+    assert 'type: node.kind,' in document
     assert "nodeProgramClasses:" in document
-    assert "ARCHITECTURE_NODE_FRAGMENT_SHADER" in document
+    assert "MICROSERVICE_FRAGMENT_SHADER" in document
+    assert "KAFKA_TOPIC_FRAGMENT_SHADER" in document
+    assert "MONGODB_COLLECTION_FRAGMENT_SHADER" in document
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
