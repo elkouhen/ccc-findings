@@ -803,6 +803,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Types consommes" in document
     assert "function relationText(link)" in document
     assert 'link.source === id ? "vers"' not in document
+    assert 'id="path-from"' in document
+    assert 'id="path-to"' in document
+    assert "function shortestPath(sourceId, targetId)" in document
+    assert "Chemin le plus court" in document
     assert "mongodb_collection:order-service:orders" in document
     assert '"complexity": {"score": 2' in document
     assert "Complexite elevee" in document

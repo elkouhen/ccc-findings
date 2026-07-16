@@ -844,9 +844,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
     #graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
-    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
     .toolbar input { width: 220px; height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    .toolbar select { width: 168px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
     .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
@@ -864,6 +865,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div class="toolbar">
     <strong>CCC Radar</strong>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
+    <select id="path-from" aria-label="Microservice source du chemin"><option value="">Service source</option></select>
+    <select id="path-to" aria-label="Microservice cible du chemin"><option value="">Service cible</option></select>
+    <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
     <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
     <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
     <button id="fit-view" type="button" aria-label="Ajuster a l'ecran" title="Ajuster a l'ecran">o</button>
@@ -1098,6 +1102,19 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     const details = document.getElementById("details");
     const search = document.getElementById("search");
+    const pathFrom = document.getElementById("path-from");
+    const pathTo = document.getElementById("path-to");
+    const microservices = graphData.nodes
+      .filter(node => node.kind === "microservice")
+      .sort((left, right) => left.name.localeCompare(right.name));
+    microservices.forEach(node => {
+      for (const select of [pathFrom, pathTo]) {
+        const option = document.createElement("option");
+        option.value = node.id;
+        option.textContent = node.name;
+        select.append(option);
+      }
+    });
 
     function appendList(title, values) {
       if (!values.length) return;
@@ -1116,6 +1133,61 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       else if (source.kind === "microservice") action = "publie";
       else action = "est consomme par";
       return `${source.name} -> ${target.name} : ${action}`;
+    }
+    function shortestPath(sourceId, targetId) {
+      const outgoing = new Map();
+      graphData.links.forEach((link, index) => {
+        if (!outgoing.has(link.source)) outgoing.set(link.source, []);
+        outgoing.get(link.source).push({ target: link.target, edge: `edge-${index}`, link });
+      });
+      const queue = [sourceId];
+      const previous = new Map([[sourceId, null]]);
+      for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const current = queue[cursor];
+        if (current === targetId) break;
+        for (const step of outgoing.get(current) || []) {
+          if (previous.has(step.target)) continue;
+          previous.set(step.target, { node: current, edge: step.edge, link: step.link });
+          queue.push(step.target);
+        }
+      }
+      if (!previous.has(targetId)) return null;
+      const nodes = [];
+      const edges = [];
+      for (let current = targetId; current !== null;) {
+        nodes.unshift(current);
+        const step = previous.get(current);
+        if (step === null) break;
+        edges.unshift(step);
+        current = step.node;
+      }
+      return { nodes, edges };
+    }
+    function renderPathDetails(path) {
+      details.replaceChildren();
+      const title = document.createElement("strong");
+      title.textContent = "Chemin le plus court";
+      details.append(title, document.createTextNode(
+        path.nodes.map(id => nodeDataById.get(id).name).join(" -> ")
+      ));
+      appendList("Relations", path.edges.map(step => relationText(step.link)));
+    }
+    function showShortestPath() {
+      const sourceId = pathFrom.value;
+      const targetId = pathTo.value;
+      if (!sourceId || !targetId) return;
+      const path = shortestPath(sourceId, targetId);
+      if (path === null) {
+        reset();
+        details.textContent = "Aucun chemin oriente entre les deux microservices.";
+        return;
+      }
+      selectedId = sourceId;
+      relatedNodes = new Set(path.nodes);
+      relatedEdges = new Set(path.edges.map(step => step.edge));
+      renderer.refresh();
+      renderPathDetails(path);
+      renderer.getCamera().animatedReset({ duration: 220 });
     }
     function renderDetails(id) {
       const node = nodeDataById.get(id);
@@ -1158,6 +1230,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       renderer.refresh();
       details.textContent = "Selectionnez un noeud pour isoler ses relations et afficher ses APIs.";
       search.value = "";
+      pathFrom.value = "";
+      pathTo.value = "";
     }
     renderer.on("clickNode", ({ node }) => selectNode(node));
     renderer.on("clickStage", reset);
@@ -1165,6 +1239,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("zoom-out").addEventListener("click", () => renderer.getCamera().animatedUnzoom({ duration: 180 }));
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
+    document.getElementById("show-path").addEventListener("click", showShortestPath);
+    pathFrom.addEventListener("change", showShortestPath);
+    pathTo.addEventListener("change", showShortestPath);
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
       const node = graphData.nodes.find(item => item.name.toLocaleLowerCase().includes(query));

@@ -434,7 +434,9 @@ nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice, and the published and consumed Java
 message types of a selected Kafka topic when statically known, as well as direct relations. Each
 relation uses a stable `source -> target : action` wording rather than a
-selection-relative direction. The
+selection-relative direction. Two microservice selectors can highlight the
+shortest directed path between them, preserving REST call direction and Kafka
+`producer -> topic -> consumer` steps. The
 generated document embeds graph data locally and loads Sigma.js from its CDN
 when opened. Microservices are hexagons, Kafka topics circles and MongoDB
 collections squares; a blue, orange or red border reflects the node's number
