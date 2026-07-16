@@ -125,7 +125,6 @@ _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_RULESETS = (
     "p/security-audit",
     "p/java",
-    "p/spring",
     "p/owasp-top-ten",
     "p/secrets",
 )
@@ -778,7 +777,8 @@ def init(
     """Initialise la configuration .cccr/config.yml du projet.
 
     Sans `--rules`, active les packs CCCR disponibles et les règles Semgrep
-    Java, Spring, OWASP et secrets.
+    Java, OWASP et secrets. `p/spring` n'est pas un ruleset de registre
+    Semgrep valide et n'est donc pas activé.
 
     Exemples : `cccr init`, `cccr init --rules rules/java.yml`.
     """
@@ -802,7 +802,7 @@ def init(
                     typer.echo(
                         "Aucune config Semgrep détectée et les packs d'architecture sont "
                         f"incomplets sous {rules_root}. Utilisation des packs par défaut "
-                        "Java/Spring/OWASP/secrets : `cccr doctor` signalera que le graphe REST/Kafka n'est pas prêt."
+                        "Java/OWASP/secrets : `cccr doctor` signalera que le graphe REST/Kafka n'est pas prêt."
                     )
                 else:
                     rules_paths.extend(DEFAULT_REGISTRY_RULESETS)
@@ -815,7 +815,7 @@ def init(
                 rules_paths = list(DEFAULT_REGISTRY_RULESETS)
                 typer.echo(
                     "Aucune config Semgrep détectée et packs du skill introuvables. "
-                    "Utilisation des packs registre Java/Spring/OWASP/secrets "
+                    "Utilisation des packs registre Java/OWASP/secrets "
                     "(pour un audit architecture, définissez CCCR_RULES_ROOT ou passez --rules-root)."
                 )
 

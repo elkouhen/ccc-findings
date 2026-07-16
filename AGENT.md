@@ -19,14 +19,16 @@ authoritative detail.
 
 ## Documentation maintenance rules
 
-1. Keep `README.md` focused on onboarding and day-to-day usage.
-2. Update `docs/SPEC-FONC.md` in the same change as any CLI, MCP, or skill
+1. Write and update user-facing documentation in English, including
+   `README.md`, `docs/`, generated-document templates, and report indexes.
+2. Keep `README.md` focused on onboarding and day-to-day usage.
+3. Update `docs/SPEC-FONC.md` in the same change as any CLI, MCP, or skill
    behavior change.
-3. Update `docs/SPEC-TECH.md` in the same change as any architectural or data
+4. Update `docs/SPEC-TECH.md` in the same change as any architectural or data
    model change.
-4. Record durable design decisions in `docs/ADR.md` instead of leaving them only
+5. Record durable design decisions in `docs/ADR.md` instead of leaving them only
    in commit messages.
-5. If a change in `ccc-radar` affects the companion skill, update
+6. If a change in `ccc-radar` affects the companion skill, update
    `../ccc-radar-skill/` in the same pass.
 
 ## Hugging Face model downloads

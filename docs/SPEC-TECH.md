@@ -20,12 +20,12 @@
 | `search.py` | `search_findings` (precision-first lexical), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
 | `workspace.py` | Read-only federation of a multi-service Maven/Gradle directory (BACKLOG-11 A2, ADR-30/33): `discover_workspace_services`, `load_federation` | `models`, `store` |
-| `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
+| `render.py` | Text/JSON serialization of findings, architecture objects, graphs and workspace discovery; Draw.io, Sigma.js HTML and LikeC4 graph exports | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `configuration.py` | Extracts Spring property keys from production code and constructs a synthetic typed YAML template (`<secret>` for sensitive keys) | — |
 | `modules.py` | Discovers every Maven/Gradle module and creates its persisted audit snapshot for `cccr modules` | `configuration`, `maven`, `gradle` |
 | `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings` | `models`, `store` |
 | `code_search.py` | `search_code_with_findings`: code (via `ccc`) + findings annotation + degraded modes orchestration — implementation shared by CLI/MCP | `ccc_bridge`, `render`, `store` |
-| `cli.py` | Typer application (`version`, `init`, `index`, `search`, `findings`, `summary`, `endpoints`, `graph`, `workspace`, `mcp`) | all modules above |
+| `cli.py` | Typer application for setup, findings, code search and architecture exploration (`microservices`, `topics`, `apis`, `mongodb`, `modules`, `analyze`, `export`) | all modules above |
 | `mcp_server.py` | `FastMCP` stdio server, tools | `code_search`, `config`, `embedder`, `graph`, `indexer`, `render`, `search`, `store`, `workspace` |
 
 The overall dependency direction is broadly `cli.py`/`mcp_server.py` → business
@@ -330,7 +330,8 @@ Each source must contain the packs `default`, `liveness`, `rest`, `kafka`,
 `<repo>/.cccr/rules/<pack>/` via `shutil.copytree(..., dirs_exist_ok=True)` and
 the generated config references those **paths relative to the target repo**
 (never an absolute path to the skill repo, consistent with ADR-24). If a pack
-is missing or no source exists, `cccr init` falls back to `p/security-audit`.
+is missing or no source exists, `cccr init` falls back to `p/security-audit`,
+`p/java`, `p/owasp-top-ten` and `p/secrets`.
 
 ## 4. Semgrep execution (`scanner.py`)
 
@@ -844,7 +845,7 @@ workspace. `render_flow_json` (`render.py`) defines its response contract.
 
 **Similarity fallback (BACKLOG-10 K3)**, current-project mode only
 (no federation — each federated service would need its own KNN query on its own
-store, not wired): `topics search` and `resources search` retry through
+store, not wired): `topics search` and `apis search` retry through
 `resolve_topic_by_similarity` after textual resolution fails. The MCP trace
 keeps its own explicit flow handling. `ConfigError`/`EmbeddingError` during
 the CLI attempt (missing config, unavailable model) are silently absorbed

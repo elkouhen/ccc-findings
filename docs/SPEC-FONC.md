@@ -73,11 +73,12 @@ Creates `.cccr/config.yml`.
   expected packs `default`, `liveness`, `rest`, `kafka`, `kafka-security`, it
   copies them into `.cccr/rules/` in the target repo and writes `rules:` with
   those **relative** paths (`.cccr/rules/<pack>`). If the skill is missing or
-  incomplete, it falls back to the default Semgrep registry pack
-  `p/security-audit` (no error): informational stdout message explaining the
+  incomplete, it falls back to the default Semgrep registry rulesets
+  `p/security-audit`, `p/java`, `p/owasp-top-ten` and `p/secrets` (no error):
+  informational stdout message explaining the
   fallback and how to customize it, exit code 0. This fallback keeps the
   **core product** usable, but does not by itself activate the microservices
-  extension (`endpoints` / `graph` / `microservices` / `topics` / `resources`). Priority order:
+  extension (`integrations` / `graph` / `microservices` / `topics` / `apis`). Priority order:
   explicit `--rules` > detected local config > copied skill packs > default
   registry pack.
 - Each automatic copy writes `.cccr/rules/manifest.json`, recording the source
@@ -387,7 +388,7 @@ Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `--workspace` never makes the command fail: a missing or incompatible federated
 service is reported in `note`, not as an error.
 
-### `cccr export microservices [--workspace ROOT] (--drawio FILE | --html FILE | --c4 FILE)`
+### `cccr export microservices [--workspace ROOT] (--drawio FILE | --html FILE | --c4 DIR)`
 
 Exports the same runtime dependency graph as `cccr graph`: microservices,
 Kafka topics, and indexed MongoDB collections. Exactly one output format is
@@ -423,15 +424,19 @@ can be zoomed, panned, searched, or selected; selecting one mutes unrelated
 nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice and its direct relations. The
 generated document embeds graph data locally and loads Sigma.js from its CDN
-when opened.
+when opened. Microservices are hexagons, Kafka topics circles and MongoDB
+collections squares; a blue, orange or red border reflects the node's number
+of direct relations.
 
-`--c4 FILE` writes a standalone LikeC4 source model. It declares custom
-`microservice`, `kafka_topic` and `mongodb_collection` elements and `http`,
-`publishes`, `consumes`, and `uses_data` relations. The model is an inferred
-static topology, never a runtime trace. No equivalent MCP tool — generated
-files are not agent-consumable results, unlike the JSON returned by `graph`.
+`--c4 DIR` writes a runnable LikeC4 project in `DIR`: `architecture.c4`, the
+LikeC4 configuration, `package.json`, `.gitignore` and a README. It declares
+custom `microservice`, `kafka_topic` and `mongodb_collection` elements and
+`http`, `publishes`, `consumes`, and `uses_data` relations. The model is an
+inferred static topology, never a runtime trace. No equivalent MCP tool —
+generated files are not agent-consumable results, unlike the JSON returned by
+`graph`.
 
-### `cccr microservices [list|show|topics|apis|mongodb|neighbors|implementation]`
+### `cccr microservices [list|show|topics|apis|mongodb|neighbors|implementation|properties|openapi]`
 *Java/Spring microservices extension — beta.*
 
 Discovers Maven modules and Gradle Spring Boot services under `root` (default:
@@ -500,9 +505,9 @@ business objects and never includes source paths or snippets by default:
 - `cccr analyze microservices path <source> <target>` returns the shortest
   directed paths between two microservices. Kafka topics remain explicit
   intermediate nodes; REST calls remain direct service-to-service relations.
-- `cccr analyze microservices <calls|external-apis|orphan-integrations|impact> [target]`
-  answers architecture questions centered on microservices. `--max-depth` and
-  `--limit` bound path and topic-flow exploration.
+- `cccr analyze microservices calls|dependencies|impact <service>` answers
+  architecture questions centered on one microservice. `external-apis` and
+  `orphan-integrations` accept an optional service.
 - `cccr microservices implementation integration <id>` is the explicit final
   level that returns location and indexed source evidence.
 
@@ -601,10 +606,32 @@ it is not an execution trace and never claims to prove a runtime path.
 
 ### `cccr mcp`
 Starts the MCP server (stdio) on the current repo (execution directory).
-`cccr mcp --help` documents the client registration block:
+The client must run from an initialized and indexed repository, because the
+server resolves `.cccr/config.yml` and `.cccr/findings.db` from its working
+directory.
+
+Codex registration:
+```bash
+codex mcp add cccr -- cccr mcp
+codex mcp get cccr
+```
+
+Claude Code registration:
 ```json
 {"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
 ```
+
+Pi does not provide MCP support by default. After installing the
+`pi-mcp-adapter` extension, create `.mcp.json` in the indexed repository:
+```bash
+pi install npm:pi-mcp-adapter
+```
+```json
+{"mcpServers": {"cccr": {"command": "cccr", "args": ["mcp"]}}}
+```
+Start Pi from that repository and use `/mcp` to inspect the connection.
+
+Restart the client after registering the server.
 
 ## 3. MCP server
 
@@ -686,7 +713,7 @@ blocking unnecessarily.
 | Situation | Surface | Behavior |
 |---|---|---|
 | `.cccr/config.yml` absent | `cccr index` | stderr + code 1 |
-| No Semgrep config detected and no `--rules` | `cccr init` | first copies skill packs if available, otherwise falls back to `p/security-audit`, informational stdout message + code 0 |
+| No Semgrep config detected and no `--rules` | `cccr init` | first copies skill packs if available, otherwise activates `p/security-audit`, `p/java`, `p/owasp-top-ten` and `p/secrets`, informational stdout message + code 0 |
 | `.cccr/config.yml` already exists | `cccr init` | stderr + code 1, file unchanged |
 | Semgrep fails or exceeds timeout | `cccr index` | stderr + code 2, database unchanged |
 | `.cccr/findings.db` absent | `cccr findings` / `cccr summary` (and `cccr search` if `ccc` is also unavailable) | stderr (exact message) + code 2 |

@@ -245,31 +245,30 @@ reflect the current state.
 
 ## ADR-13 — `cccr init` falls back to a default registry pack
 
-**Status**: Accepted (at the user's explicit request — revisits an earlier
-choice).
+**Status**: Superseded in part by the expanded default registry rulesets.
 
 **Context**: the initial PRD (§12, open question 2) had decided in favor of a
 mandatory explicit Semgrep config, to avoid noise from a poorly calibrated
 default pack. After using the tool, the user asked to be able to use standard
 Semgrep rule libraries without having to define `rules` explicitly.
 
-**Decision**: when `cccr init` receives neither `--rules` nor detects a local
-Semgrep config (`.semgrep.yml`/`semgrep.yml`/`.semgrep`), it falls back to the
-registry pack `p/security-audit` instead of failing. An informational message
-(stdout, exit code 0) indicates the pack used and how to customize it via
-`--rules`. `p/security-audit` was chosen over `p/default`: consistent with the
-product's security positioning (CWE/OWASP in the data model, vulnerability-
-centered use cases). Priority order unchanged: explicit `--rules` > detected
-local config > default pack.
+**Original decision**: when `cccr init` receives neither `--rules` nor detects
+a local Semgrep config (`.semgrep.yml`/`semgrep.yml`/`.semgrep`), it falls back
+to the registry pack `p/security-audit` instead of failing.
+
+**Current decision**: the fallback is now the registry set
+`p/security-audit`, `p/java`, `p/owasp-top-ten` and `p/secrets`. An
+informational message (stdout, exit code 0) indicates the rulesets used and how
+to customize them via `--rules`. `p/security-audit` remains the security base;
+the Java, OWASP and secrets rulesets make the default useful on the supported
+Java/Spring scope. Priority order remains explicit `--rules` > detected local
+config > copied CCCR packs > registry rulesets.
 
 **Consequences**: removes startup friction (no longer necessary to write custom
-rules to try `cccr`) at the cost of the noise the original choice intended to
-avoid — a general-purpose pack may surface findings of low relevance for a
-particular project. Manually verified: the pack downloads and runs successfully
-in the development environment (`semgrep scan --config p/security-audit`, ~225
-Python rules loaded); its actual coverage on a given case depends on the
-Semgrep registry content, outside `cccr`'s control. `docs/PRD.md` §12 item 2 is
-updated to reflect that this question is no longer open.
+rules to try `cccr`) at the cost of potential noise from general-purpose
+rulesets. Registry coverage remains outside `cccr`'s control. The registry
+rulesets provide findings only; the copied CCCR `rest` and `kafka` packs remain
+necessary for architecture inventory.
 
 ---
 

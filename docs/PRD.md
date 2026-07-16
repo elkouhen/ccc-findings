@@ -181,7 +181,7 @@ rewriting an analysis engine.
 
 ```bash
 # Setup
-cccr init                              # detects a Semgrep config, otherwise copies the skill packs then falls back to p/security-audit
+cccr init                              # detects a Semgrep config, otherwise copies the skill packs then activates the default registry rulesets
 cccr index                             # findings, incremental
 
 # Developer
@@ -233,5 +233,5 @@ extension whose stabilization is still ongoing.
 ## 12. Remaining open questions
 
 1. Should **deleted** findings be kept as history (audit, extended UC6) or purged? V1 chose: purge (`replace_findings_for_files` deletes then reinserts), no persisted diff — UC6 (Could) is not delivered in V1.
-2. ~~Should a **default rule pack** be shipped when the project has no Semgrep config?~~ Settled: `cccr init` first tries to copy the skill packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`) and falls back to `p/security-audit` when nothing is detected or passed through `--rules` — reducing startup friction while keeping a generic fallback (see `SPEC-FONC.md`, `init` command).
+2. ~~Should a **default rule pack** be shipped when the project has no Semgrep config?~~ Settled: `cccr init` first tries to copy the skill packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`) and otherwise activates `p/security-audit`, `p/java`, `p/owasp-top-ten` and `p/secrets` — reducing startup friction while keeping a generic fallback (see `SPEC-FONC.md`, `init` command).
 3. Policy on **Semgrep Pro** (interfile rules): still out of scope, not addressed.

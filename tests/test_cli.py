@@ -119,10 +119,11 @@ def test_init_without_semgrep_config_enables_default_registry_rulesets(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "Java/Spring/OWASP/secrets" in result.output
+    assert "Java/OWASP/secrets" in result.output
     config_content = (tmp_path / ".cccr" / "config.yml").read_text()
     for ruleset in DEFAULT_REGISTRY_RULESETS:
         assert ruleset in config_content
+    assert "p/spring" not in config_content
 
 
 def test_index_rejects_an_unknown_disabled_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,7 +213,7 @@ def test_init_without_semgrep_config_falls_back_when_skill_packs_are_incomplete(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "Java/Spring/OWASP/secrets" in result.output
+    assert "Java/OWASP/secrets" in result.output
     config_content = (tmp_path / ".cccr" / "config.yml").read_text()
     for ruleset in DEFAULT_REGISTRY_RULESETS:
         assert ruleset in config_content
