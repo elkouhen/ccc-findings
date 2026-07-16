@@ -2222,8 +2222,7 @@ def _separate_overlapping_drawio_nodes(
 
 
 class EndpointHit(TypedDict):
-    """Shape returned by `cccr integrations --json` and the `list_endpoints`
-    MCP tool (BACKLOG-11 A1)."""
+    """Shape returned by the `list_endpoints` MCP tool and module inventory views."""
 
     id: str
     role: str

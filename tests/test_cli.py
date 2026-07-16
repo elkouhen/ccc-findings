@@ -33,7 +33,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert root_help.exit_code == 0
     assert "Explorer l'architecture et les constats" in root_help.output
     assert "BACKLOG-" not in root_help.output
-    assert "integrations" in root_help.output
+    assert "integrations" not in root_help.output
     assert "apis" in root_help.output
     assert "dtos" in root_help.output
     assert "export" in root_help.output
@@ -122,7 +122,6 @@ def test_analyze_coverage_reports_unresolved_inventory_facts(
         ["search", "--help"],
         ["findings", "--help"],
         ["summary", "--help"],
-        ["integrations", "--help"],
         ["microservices", "--help"],
         ["modules", "--help"],
         ["mcp", "--help"],
@@ -145,6 +144,7 @@ def test_visible_command_help_includes_examples(command: list[str]) -> None:
         ["endpoints"],
         ["audit"],
         ["graph"],
+        ["integrations"],
         ["export", "microservices", "--drawio", "graph.drawio"],
         ["export", "modules", "--drawio", "modules.drawio"],
         ["microservices", "resources", "orders"],
@@ -859,85 +859,6 @@ def test_export_microservices_c4_requires_a_project_directory(
     assert "attend un répertoire" in result.output
 
 
-def test_integrations_without_index_exits_with_code_2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    result = runner.invoke(app, ["integrations"])
-
-    assert result.exit_code == 2
-    assert "Index absent" in result.output
-
-
-def test_integrations_json_lists_and_filters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    consume = _make_endpoint("consume", "orders.created", "app/Consumer.java", 7, 9)
-    call = _make_endpoint("call", "POST /payments", "app/Consumer.java", 20, 20)
-    with Store(tmp_path) as store:
-        store.replace_endpoints_for_files(["app/Consumer.java"], [consume, call])
-
-    result_all = runner.invoke(app, ["integrations", "--json"])
-    assert result_all.exit_code == 0
-    assert len(json.loads(result_all.output)) == 2
-
-    result_filtered = runner.invoke(app, ["integrations", "--role", "consume", "--json"])
-    assert result_filtered.exit_code == 0
-    hits = json.loads(result_filtered.output)
-    assert len(hits) == 1
-    assert hits[0]["topic"] == "orders.created"
-
-
-def test_integrations_json_filters_by_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    order = _make_endpoint(
-        "produce", "orders.created", "order-service/Producer.java", 10, 10, module="order-service"
-    )
-    payment = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7,
-        module="payment-service",
-    )
-    with Store(tmp_path) as store:
-        store.replace_endpoints_for_files(
-            ["order-service/Producer.java", "payment-service/Consumer.java"], [order, payment]
-        )
-
-    result = runner.invoke(app, ["integrations", "--module", "order-service", "--json"])
-
-    assert result.exit_code == 0
-    hits = json.loads(result.output)
-    assert len(hits) == 1
-    assert hits[0]["module"] == "order-service"
-    assert hits[0]["path"] == "order-service/Producer.java"
-
-
-def test_integrations_text_shows_module_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    endpoint = _make_endpoint(
-        "produce", "orders.created", "order-service/Producer.java", 10, 10, module="order-service"
-    )
-    with Store(tmp_path) as store:
-        store.replace_endpoints_for_files(["order-service/Producer.java"], [endpoint])
-
-    result = runner.invoke(app, ["integrations"])
-
-    assert result.exit_code == 0
-    assert "[order-service]" in result.output
-
-
-def test_integrations_text_reports_none_when_empty(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    with Store(tmp_path):
-        pass
-
-    result = runner.invoke(app, ["integrations"])
-
-    assert result.exit_code == 0
-    assert "Aucune intégration détectée." in result.output
-
-
 def test_microservices_commands_explore_business_objects_without_source_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1275,10 +1196,10 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
 
 
 @pytest.mark.integration
-def test_graph_and_integrations_reflect_a_real_cccr_index_run(
+def test_graph_reflects_a_real_cccr_index_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-11 A1 CA4 : cccr export microservices/integrations reflètent une indexation
+    """BACKLOG-11 A1 CA4 : cccr export microservices reflète une indexation
     standard (init + index), sans fixture injectée directement dans le
     store — le scénario de OrderConsumer.java (@KafkaListener contenant un
     appel RestTemplate) doit ressortir de bout en bout."""
@@ -1290,11 +1211,6 @@ def test_graph_and_integrations_reflect_a_real_cccr_index_run(
     runner.invoke(app, ["init", "--rules", "rules/rules.yml"])
     index_result = runner.invoke(app, ["index"])
     assert index_result.exit_code == 0
-
-    endpoints_result = runner.invoke(app, ["integrations", "--json"])
-    assert endpoints_result.exit_code == 0
-    endpoints = json.loads(endpoints_result.output)
-    assert {e["role"] for e in endpoints} == {"consume", "call"}
 
     graph_result = runner.invoke(app, ["export", "microservices", "--json"])
     assert graph_result.exit_code == 0

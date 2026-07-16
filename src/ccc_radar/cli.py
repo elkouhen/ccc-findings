@@ -1135,37 +1135,6 @@ def summary_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
         typer.echo(render_summary_text(result))
 
 
-@app.command(name="integrations")
-def integrations_cmd(
-    system: Optional[str] = typer.Option(None, "--system"),  # noqa: UP007
-    role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
-    topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
-    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
-    module: Optional[str] = typer.Option(  # noqa: UP007
-        None, "--module", help="Nom du module Maven (artifactId, BACKLOG-13)."
-    ),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Lister les intégrations HTTP et Kafka détectées dans le projet indexé.
-
-    Exemples : `cccr integrations`, `cccr integrations --system kafka`,
-    `cccr integrations --role call --module order-service`.
-    """
-    repo_root = Path.cwd()
-    _require_index(repo_root)
-
-    with Store(repo_root) as store:
-        endpoints = store.all_endpoints(
-            system=system, role=role, topic=topic, path_glob=path, module=module
-        )
-        warning = _current_repo_endpoint_warning(store)
-
-    if json_output:
-        typer.echo(json.dumps(render_endpoints_json(endpoints)))
-    else:
-        typer.echo(render_endpoints_text(endpoints, [warning] if warning else []))
-
-
 @dataclass(frozen=True)
 class _MicroserviceGraphData:
     services_by_name: dict[str, list[MessageEndpoint]]

@@ -49,8 +49,8 @@ remains documented in
 ## Installation
 
 Prerequisites: `uv` and `pipx`. `ccc` is optional: only `cccr search` needs
-it; audit and architecture commands (`index`, `integrations`, `graph`,
-`analyze`) do not.
+it; audit and architecture commands (`index`, `microservices`, `topics`,
+`apis`, `analyze`, `export`) do not.
 
 ```bash
 uv tool install ccc-radar

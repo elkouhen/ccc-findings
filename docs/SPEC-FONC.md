@@ -78,7 +78,7 @@ Creates `.cccr/config.yml`.
   informational stdout message explaining the
   fallback and how to customize it, exit code 0. This fallback keeps the
   **core product** usable, but does not by itself activate the microservices
-  extension (`integrations` / `graph` / `microservices` / `topics` / `dtos` / `apis`). Priority order:
+  extension (`microservices` / `topics` / `dtos` / `apis` / `mongodb`). Priority order:
   explicit `--rules` > detected local config > copied skill packs > default
   registry pack.
 - Each automatic copy writes `.cccr/rules/manifest.json`, recording the source
@@ -263,64 +263,6 @@ first-level directory.
 ```
 
 Same “index absent” rules as `findings` (same message, code 2).
-
-### `cccr integrations [--system S] [--role R] [--topic T] [--path GLOB] [--module M] [--json]`
-*Java/Spring microservices extension — beta.*
-
-Lists indexed HTTP/Kafka integrations.
-Optional combinable filters:
-
-| Option | Effect |
-|---|---|
-| `--system` | `rest` or `kafka` |
-| `--role` | `serve`/`call` (rest) or `produce`/`consume` (kafka) |
-| `--topic` | exact equality on `topic` (e.g. `"GET /orders/{id}"`, `"orders.created"`) |
-| `--path` | path pattern (`fnmatch`), same style as `cccr search --path` |
-| `--module` | Maven or Gradle artifact name — `None` if neither applies |
-
-Text rendering, one line per endpoint:
-`[<system>/<role>] <topic>[ (dynamic)][ [<module>]]  <path>:<start>-<end>`
-
-If the stored endpoint inventory is detected as stale (missing or old
-signature), the text rendering adds a warning `⚠ ... relancez cccr index`.
-The `--json` contract stays unchanged (bare list of `EndpointHit`).
-
-For REST endpoints, `topic` is always canonical on the graph side:
-`METHOD /path`. Absolute caller URLs (`http://service/orders`) are normalized
-into a route (`/orders`); query string and fragment are ignored.
-A call concatenated with a variable remains `topic_dynamic=True`, but keeps its
-normalized route prefix.
-
-Some REST endpoints are inferred outside Semgrep results when Spring materializes
-them without an explicit handler that a rule can use:
-- `@RequestMapping(...)` without `method=` on a Java method → `ANY /path`;
-- `@RepositoryRestResource(path = "...")` → `GET/POST /path` and
-  `GET/PUT/PATCH/DELETE /path/{id}` endpoints;
-- Spring Cloud Gateway configured either with Java
-  `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)` or with YAML
-  `spring.cloud.gateway.routes` / `spring.cloud.gateway.server.webflux.routes`
-  → one exposed `serve` route and one outbound `call` route per proxy route;
-- WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)` →
-  exposed `serve` routes;
-- `@EnableSwagger2` → `GET /swagger-ui.html`;
-- `management.endpoints.web.exposure.include=*` → `GET /actuator/**`.
-These endpoints stay tagged by `framework` (`spring`, `restclient`,
-`spring-data-rest`, `spring-cloud-gateway`, `spring-webflux`, `swagger-ui`,
-`spring-actuator`) so
-they remain distinguishable from explicit application routes.
-
-`--json` rendering: list of `EndpointHit` (`id`, `role`, `system`, `topic`,
-`topic_dynamic`, `source`, `framework`, `path`, `start_line`, `end_line`,
-`module`, `qualified_name`). `module` first comes from the nearest Maven
-`pom.xml` (artifactId); if the repo has no `pom.xml`, it falls back on Gradle
-detection (ADR-33). The Gradle name is its declared archive name, then
-`rootProject.name`, or Gradle's default project name; the directory containing
-the Spring Boot `main()` is used only to group the subprojects of that service.
-`qualified_name` (package + Java class) is `None`
-for a non-Java file.
-
-Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
-lives in the same database as `findings`.
 
 ### `cccr export microservices [--workspace ROOT] (--html FILE | --c4 DIR | --json)`
 *Java/Spring microservices extension — beta.*
@@ -676,7 +618,7 @@ the **Java/Spring microservices extension**.
 | `findings_summary()` | `FindingsSummary` | Low-cost aggregated view | Same structure as `cccr summary --json` |
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
-| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed HTTP/Kafka integrations — equivalent to CLI `cccr integrations` | — |
+| `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable raw HTTP/Kafka endpoint inventory | Use `cccr apis` or `cccr topics` for CLI architecture exploration |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr export microservices --json` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
 | `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Detailed MCP-only trace of a topic/route and its sites (producers/consumers, or servers/callers), including overlapping findings | No-match or ambiguous query → `ToolError` |
@@ -805,7 +747,7 @@ Like the liveness pack, it lives in `ccc-radar-skill`
 **not a findings pack**: `metadata.severity` (`INFO`) has no meaningful
 thresholding use. It is nevertheless run during `cccr index` whenever it appears
 in `rules:` (microservices audit workflow of the skill), and feeds
-`cccr integrations` / `cccr export microservices`.
+`cccr apis` / `cccr topics` / `cccr export microservices`.
 
 | Rule | Language | Role | Detects |
 |---|---|---|---|
