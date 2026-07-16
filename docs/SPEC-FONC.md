@@ -440,7 +440,8 @@ shortest directed path between them, preserving REST call direction and Kafka
 their statically inferred published Java message types, also grouped in a
 dedicated path-details section and rendered beside the Kafka topic in the path
 description (`producer -> TOPIC (JavaType) -> consumer`). An unknown type is
-rendered explicitly rather than silently omitted. The source, target and
+rendered explicitly rather than silently omitted; when publication has no
+known type, the topic falls back to its statically known consumer type. The source, target and
 intermediate-node selectors are alphabetically sorted; intermediate choices are
 grouped into microservices and Kafka topics. An ordered list of intermediate service
 or Kafka-topic nodes can constrain the path; each adjacent pair uses its own

@@ -1253,7 +1253,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const node = nodeDataById.get(id);
         if (node.kind !== "kafka_topic") return node.name;
         const precedingLink = path.edges[index - 1]?.link;
-        const types = precedingLink?.published_message_types || node.published_message_types || [];
+        const publishedTypes = precedingLink?.published_message_types || node.published_message_types || [];
+        const types = publishedTypes.length ? publishedTypes : node.consumed_message_types || [];
         return types.length ? `${node.name} (${types.join(", ")})` : `${node.name} (type Java non indexe)`;
       };
       details.append(title, document.createTextNode(
