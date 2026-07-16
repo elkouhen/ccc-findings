@@ -260,7 +260,7 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "shape cylinder" in document
     assert "color outgoing" in document
     assert "color incoming" in document
-    assert "style { color complexity_high }" in document
+    assert "style { color complexity_low }" in document
     assert "2 findings (ERROR=2)" in document
     assert "service_service-a -[http]-> service_service-b 'GET /orders'" in document
     assert "service_service-a -[publishes]-> topic_orders_created 'publishes'" in document
@@ -324,20 +324,18 @@ def test_render_graph_html_colors_complexity_from_findings() -> None:
     service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:service-a")
 
     assert service["complexity"] == {
-        "score": 8,
-        "level": "high",
+        "score": 2,
+        "level": "low",
         "relations": 2,
         "findings": 2,
         "severity_counts": {"ERROR": 2, "WARNING": 0, "INFO": 0},
     }
-    assert service["color"] == "#dc2626"
+    assert service["color"] == "#2563eb"
     assert "Complexite elevee" in document
     assert 'type: "arrow"' in document
-    assert 'type: node.kind,' in document
+    assert 'type: "architecture",' in document
     assert "nodeProgramClasses:" in document
-    assert "MICROSERVICE_FRAGMENT_SHADER" in document
-    assert "KAFKA_TOPIC_FRAGMENT_SHADER" in document
-    assert "MONGODB_COLLECTION_FRAGMENT_SHADER" in document
+    assert "ARCHITECTURE_NODE_FRAGMENT_SHADER" in document
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:

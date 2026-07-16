@@ -587,7 +587,7 @@ def render_graph_html(
     for source, target in complexity_relations:
         relation_counts[source] += 1
         relation_counts[target] += 1
-    severity_weights = {"ERROR": 3, "WARNING": 2, "INFO": 1}
+    severities = ("ERROR", "WARNING", "INFO")
     for node in nodes:
         findings = (
             findings_by_service.get(node["name"], [])
@@ -596,11 +596,9 @@ def render_graph_html(
         )
         severity_counts = {
             severity: sum(1 for finding in findings if finding.severity == severity)
-            for severity in severity_weights
+            for severity in severities
         }
-        score = relation_counts[node["id"]] + sum(
-            severity_weights[severity] * count for severity, count in severity_counts.items()
-        )
+        score = relation_counts[node["id"]]
         level = "high" if score >= 7 else "medium" if score >= 4 else "low"
         node["complexity"] = {
             "score": score,
@@ -610,7 +608,7 @@ def render_graph_html(
             "severity_counts": severity_counts,
         }
         node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
-        base_size = 20 if node["kind"] == "microservice" else 17 if node["kind"] == "mongodb_collection" else 15
+        base_size = 17 if node["kind"] == "microservice" else 14 if node["kind"] == "mongodb_collection" else 13
         node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
     graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
     return _SIGMA_GRAPH_HTML_TEMPLATE.replace("__GRAPH_DATA__", graph_data)
@@ -646,7 +644,7 @@ def _likec4_complexity(
     relations: set[tuple[str, str, str, str]],
     findings_by_service: dict[str, list[Finding]],
 ) -> dict[str, tuple[str, str]]:
-    """Build a visual complexity signal from topology and indexed findings."""
+    """Build a visual complexity signal from topology while retaining finding details."""
     relation_counts = {
         node_id: 0
         for node_id in (*service_ids.values(), *topic_ids.values(), *collection_ids.values())
@@ -655,18 +653,15 @@ def _likec4_complexity(
         relation_counts[source] += 1
         relation_counts[target] += 1
 
-    severity_weights = {"ERROR": 3, "WARNING": 2, "INFO": 1}
+    severities = ("ERROR", "WARNING", "INFO")
     details: dict[str, tuple[str, str]] = {}
     for service, service_id in service_ids.items():
         findings = findings_by_service.get(service, [])
         severity_counts = {
             severity: sum(1 for finding in findings if finding.severity == severity)
-            for severity in severity_weights
+            for severity in severities
         }
-        finding_weight = sum(
-            severity_weights[severity] * count for severity, count in severity_counts.items()
-        )
-        score = relation_counts[service_id] + finding_weight
+        score = relation_counts[service_id]
         color = "complexity_high" if score >= 7 else "complexity_medium" if score >= 4 else "complexity_low"
         finding_summary = ", ".join(
             f"{severity}={count}" for severity, count in severity_counts.items() if count
@@ -865,9 +860,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
     <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
     <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
-    <div class="legend-row"><span class="legend-mark" style="border-radius:2px;background:#64748b"></span>Microservice</div>
-    <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Topic Kafka</div>
-    <div class="legend-row"><span class="legend-mark" style="width:12px;border-radius:50%;background:#64748b"></span>Collection MongoDB</div>
     <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Sortant</div>
     <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Entrant Kafka</div>
   </div>
@@ -923,7 +915,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       y: node.y,
       size: node.size,
       color: node.color,
-      type: node.kind,
+      type: "architecture",
     }));
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
@@ -950,49 +942,17 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         v_color = a_color;
       }
     `;
-    const MICROSERVICE_FRAGMENT_SHADER = `
-      precision mediump float;
-      varying vec4 v_color;
-      float roundedBox(vec2 point, vec2 halfSize, float radius) {
-        vec2 delta = abs(point) - halfSize + radius;
-        return min(max(delta.x, delta.y), 0.0) + length(max(delta, 0.0)) - radius;
-      }
-      void main() {
-        vec2 point = gl_PointCoord - vec2(.5);
-        float distance = roundedBox(point, vec2(.47, .30), .08);
-        float alpha = 1.0 - smoothstep(-.012, .012, distance);
-        if (alpha < .01) discard;
-        gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
-      }
-    `;
-    const KAFKA_TOPIC_FRAGMENT_SHADER = `
+    const ARCHITECTURE_NODE_FRAGMENT_SHADER = `
       precision mediump float;
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        float distance = max(abs(point.x) * .866025 + abs(point.y) * .5, abs(point.y)) - .42;
-        float alpha = 1.0 - smoothstep(-.012, .012, distance);
+        float distance = length(point) - .43;
+        float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
-        gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
-      }
-    `;
-    const MONGODB_COLLECTION_FRAGMENT_SHADER = `
-      precision mediump float;
-      varying vec4 v_color;
-      float ellipseDistance(vec2 point, vec2 radii) {
-        return length(point / radii) - 1.0;
-      }
-      void main() {
-        vec2 point = gl_PointCoord - vec2(.5);
-        float body = max(abs(point.x) - .37, abs(point.y) - .25);
-        float top = ellipseDistance(point - vec2(0.0, .25), vec2(.37, .12));
-        float bottom = ellipseDistance(point + vec2(0.0, .25), vec2(.37, .12));
-        float distance = min(body, min(top, bottom));
-        float alpha = 1.0 - smoothstep(-.012, .012, distance);
-        if (alpha < .01) discard;
-        float topRim = abs(top);
-        vec3 color = mix(v_color.rgb, vec3(.08, .12, .20), .22 * (1.0 - smoothstep(.0, .022, topRim)));
-        gl_FragColor = vec4(color, v_color.a * alpha);
+        float border = smoothstep(.34, .42, length(point));
+        vec3 fill = vec3(.98, .99, 1.0);
+        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
     `;
     const packedColorBuffer = new ArrayBuffer(4);
@@ -1074,9 +1034,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     const renderer = new Sigma(network, document.getElementById("graph"), {
       nodeProgramClasses: {
-        microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
-        kafka_topic: createNodeProgram(KAFKA_TOPIC_FRAGMENT_SHADER),
-        mongodb_collection: createNodeProgram(MONGODB_COLLECTION_FRAGMENT_SHADER),
+        architecture: createNodeProgram(ARCHITECTURE_NODE_FRAGMENT_SHADER),
       },
       renderEdgeLabels: false,
       labelDensity: .08,
