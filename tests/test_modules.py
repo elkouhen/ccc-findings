@@ -400,11 +400,9 @@ def test_modules_cli_subcommands_render_endpoints_properties_and_openapi(tmp_pat
     assert json.loads(openapi.output)["contracts"][0]["path"] == "src/main/resources/openapi.yml"
 
 
-def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
+def test_modules_graph_reads_indexed_build_dependencies_and_exports_html(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import xml.etree.ElementTree as ET
-
     shared = tmp_path / "shared"
     orders = tmp_path / "orders"
     core = tmp_path / "core"
@@ -446,25 +444,6 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
         ],
     }
 
-    # Le graphe d'interactions reste indépendant des dépendances de build.
-    interactions = runner.invoke(app, ["graph", "--json"])
-    assert interactions.exit_code == 0
-    assert json.loads(interactions.output)["edges"] == []
-
-    drawio = tmp_path / "module-dependencies.drawio"
-    export = runner.invoke(app, ["export", "modules", "--drawio", str(drawio)])
-    assert export.exit_code == 0
-    root = ET.fromstring(drawio.read_text(encoding="utf-8"))
-    vertices = [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]
-    assert len(vertices) == 3
-    assert len([cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]) == 2
-    y_by_module = {
-        next(name for name in ("orders-api", "shared-kernel", "core-kernel") if name in (cell.get("value") or "")):
-        float(next(child for child in cell if child.tag == "mxGeometry").get("y"))
-        for cell in vertices
-    }
-    assert y_by_module["orders-api"] < y_by_module["shared-kernel"] < y_by_module["core-kernel"]
-
     html = tmp_path / "module-dependencies.html"
     html_export = runner.invoke(app, ["export", "modules", "--html", str(html)])
     assert html_export.exit_code == 0
@@ -481,13 +460,6 @@ def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
     assert orders_node["kafkaTopicsPublished"] == ["orders.created"]
     assert orders_node["kafkaTopicsConsumed"] == ["payments.completed"]
     assert 'appendList("APIs exposees", node.httpApisExposed)' in document
-
-    both_formats = runner.invoke(
-        app, ["export", "modules", "--drawio", str(drawio), "--html", str(html)]
-    )
-    assert both_formats.exit_code == 2
-    assert "--drawio ou --html" in both_formats.output
-
 
 def test_modules_are_read_from_the_persisted_index_snapshot(tmp_path: Path) -> None:
     module = tmp_path / "orders"

@@ -134,7 +134,6 @@ module build dependencies:
 
 ```bash
 cccr export microservices --html graph.html
-cccr export microservices --drawio graph.drawio
 cccr export microservices --c4 architecture-likec4
 cccr export modules --html modules.html
 ```

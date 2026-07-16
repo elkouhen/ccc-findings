@@ -688,7 +688,7 @@ where it came from:
   between two unattributed sites that would arbitrarily fall into the same
   `None` bucket).
 
-CLI `cccr graph` / MCP tool `graph` (§2/§3): without `--workspace`/
+CLI `cccr export microservices --json` / MCP tool `graph` (§2/§3): without `--workspace`/
 `workspace_root`, they first try `group_endpoints_by_module` on endpoints from
 the current project; if the result is non-empty, they build the graph directly
 (no federation). Otherwise (no Maven module or Gradle service detected), `services`/`nodes`/
@@ -697,54 +697,11 @@ BACKLOG-13.
 Providing `--workspace`/`workspace_root` always triggers full federation,
 unchanged.
 
-`render_graph_json`/`render_graph_text` expose the topology as
+`render_graph_json` exposes the topology for `cccr export microservices --json`;
+`render_graph_text` remains available to programmatic callers. The result has
 `services` (the keys of `endpoints_by_service`), `nodes` (services + Kafka
 topics), `edges` (every `GraphEdge` returned by `build_graph`, REST or Kafka,
 with both endpoint sites), plus `outbound_calls_in_consumers`.
-
-### 6bis-bis. Visual graph export (`render.py`, BACKLOG-14 G1)
-
-`render_graph_drawio(endpoints_by_service: dict[str, list[MessageEndpoint]],
-edges: list[GraphEdge]) -> str` — pure function, no
-dependency on SQLite nor the CLI. Renders the **complete** graph (all
-`build_graph` edges) as
-mxGraph XML (native diagrams.net/drawio format):
-- one rounded blue node (`mxCell vertex="1"`) per service name in
-  `endpoints_by_service`, including a service with no edge at all, plus one
-  orange cylinder node per Kafka topic used by an inter-service edge. A service
-  label contains a sorted, distinct exposed REST resource table: count,
-  verb-colored badge, and aligned route (or an explicit empty-state message).
-  Card height reserves enough rows for the longest list;
-- a deterministic elastic/force-directed placement inspired by browser force
-  simulation: link springs keep Kafka topics close to the services that produce
-  or consume them, many-body repulsion separates unrelated nodes, collision
-  forces reserve node space, and a weak component center force keeps disconnected
-  groups coherent. The simulation cools until alpha convergence, then runs a
-  rectangle-overlap separation pass before writing coordinates. The process has
-  bounded iteration counts. It does not encode layer constraints, topological
-  ordering, fixed ports, or waypoints;
-- one visual edge for a REST `GraphEdge` (`caller → server`), and two for a
-  Kafka `GraphEdge` (`producer → topic → consumer`). REST edges are solid blue;
-  Kafka segments are orange and dashed. All edges use orthogonal routing,
-  arrowheads, and a white label background to keep route/topic labels legible.
-  Visual edges sharing both endpoints are bundled into one unconstrained
-  connector with a stable multi-line label. This projection is Draw.io-only:
-  `render_graph_json`
-  and `render_graph_d2` retain one relation per route;
-- duplicate visual edges with the same source, target, and label are removed.
-
-Any value derived from source code (service name, route/topic) is escaped via
-`xml.sax.saxutils.quoteattr` before interpolation into an XML attribute — never
-raw f-strings on untrusted content, so that a service name or path containing
-`<`/`&`/`"` can never produce a malformed document (BACKLOG-14 G1 AC3).
-
-`cccr export microservices --drawio FILE` (CLI, §2): computes `services_by_name`/`edges`
-exactly like `--json` does (same `--workspace`/module-grouping branching),
-writes the result of `render_graph_drawio` to `FILE`, displays a
-short confirmation, then if `render_graph_json(...) ["note"]` is non-empty,
-displays it too — never a silent failure, a file with no node/edge still
-remains valid XML (AC2). No equivalent MCP tool (§3): a file is not a
-JSON result an agent can consume.
 
 ### 6ter. Multi-service federation (`workspace.py`, BACKLOG-11 A2, ADR-30)
 

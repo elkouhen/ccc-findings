@@ -322,7 +322,7 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr graph [--workspace ROOT] [--json]`
+### `cccr export microservices [--workspace ROOT] (--html FILE | --c4 DIR | --json)`
 *Java/Spring microservices extension — beta.*
 
 Inter-service graph built from indexed endpoints: microservices linked by
@@ -332,9 +332,9 @@ included: synchronous REST calls detected inside a Kafka consumer handler
 **of the current project** (same file, call site inside the handler's line
 range).
 
-`cccr graph` remains the text/JSON exploration command. Visual and LikeC4
-exports are grouped under `cccr export microservices`; they always include the
-indexed MongoDB collections. Collections are detected from `@Document`,
+`cccr export microservices` is the only command for the microservice dependency
+graph. `--json` writes the structured graph to standard output; the visual and
+LikeC4 formats always include the indexed MongoDB collections. Collections are detected from `@Document`,
 repository entity mappings, and a literal trailing collection argument on
 indexed `MongoTemplate`/`MongoOperations` calls. Dynamic expressions are not
 guessed.
@@ -364,7 +364,7 @@ remain empty, with a `note`
 explicitly saying so (see ADR-27) rather than making the absence of a result
 ambiguous.
 
-`--json` rendering:
+`--json` output:
 ```json
 {
   "services": ["service-x", "service-y", "service-z"],
@@ -396,33 +396,6 @@ Same “index absent” rules as `findings`/`summary` (same message, code 2) —
 `endpoints` lives in the same database as `findings` (`.cccr/findings.db`).
 `--workspace` never makes the command fail: a missing or incompatible federated
 service is reported in `note`, not as an error.
-
-### `cccr export microservices [--workspace ROOT] (--drawio FILE | --html FILE | --c4 DIR)`
-
-Exports the same runtime dependency graph as `cccr graph`: microservices,
-Kafka topics, and indexed MongoDB collections. Exactly one output format is
-required.
-
-`--drawio FILE` writes the complete graph in
-`.drawio` (mxGraph XML, directly openable in diagrams.net) to `FILE`, then
-displays a short confirmation (number of services/graph edges). It renders one
-node per known service — including services without interactions — and one
-distinct node per inter-service Kafka topic. REST calls are solid blue arrows;
-Kafka flows are orange dashed arrows split into `producer → topic` and
-`topic → consumer` segments. The `.drawio` export deliberately avoids layer,
-topological-order, port, or waypoint constraints: node coordinates are computed
-with a deterministic elastic layout that pulls each topic toward the services
-that use it and repels unrelated nodes until movement stabilizes, then separates
-any remaining overlapping node rectangles. Each
-microservice card shows its exposed HTTP resources as an aligned method/path
-list with verb-colored badges and a resource count (or an explicit empty
-state). To limit visual noise, several relations HTTP with the same source and
-destination are rendered as one unconstrained connector whose multi-line label
-lists all methods/routes; the JSON graph remains detailed with one relation per
-route. Node and edge labels contain the service name and route/topic
-respectively. Without
-inter-module data, it writes a valid document but with no node/edge and
-displays the same explanatory `note` as `--json` (never a silent failure).
 
 When a service has Kafka entries from an indexed Markdown manifest, those
 entries are authoritative for that service and replace its Kafka endpoints
@@ -613,13 +586,10 @@ error.
   inventory, synthetic configuration example, or local API contracts for that
   module.
 - `cccr modules graph` returns the declared Maven/Gradle dependencies whose
-  source and target are both indexed modules. It is distinct from `cccr graph`:
+  source and target are both indexed modules. It is distinct from `cccr export microservices`:
   it never contains REST/Kafka interactions or topics.
-- `cccr export modules --drawio modules.drawio` exports that module-dependency
-  graph in Draw.io format, with sources and their dependencies arranged by
-  hierarchical levels.
 - `cccr export modules --html modules.html` exports the same hierarchical view
-  as an interactive Sigma.js graph. Exactly one format is required.
+  as an interactive Sigma.js graph.
 
 The configuration example is generated during that indexation and follows the
 same no-real-values policy as `microservices properties`.
@@ -707,7 +677,7 @@ the **Java/Spring microservices extension**.
 | `reindex_findings()` | `IndexReport` (dataclass from `indexer.py`, reused as-is) | Incremental reindexing | Fields `scanned, skipped, findings_added, findings_removed, deleted_files` |
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed HTTP/Kafka integrations — equivalent to CLI `cccr integrations` | — |
-| `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
+| `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr export microservices --json` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
 | `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
 | `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Detailed MCP-only trace of a topic/route and its sites (producers/consumers, or servers/callers), including overlapping findings | No-match or ambiguous query → `ToolError` |
 
@@ -835,7 +805,7 @@ Like the liveness pack, it lives in `ccc-radar-skill`
 **not a findings pack**: `metadata.severity` (`INFO`) has no meaningful
 thresholding use. It is nevertheless run during `cccr index` whenever it appears
 in `rules:` (microservices audit workflow of the skill), and feeds
-`cccr integrations` / `cccr graph`.
+`cccr integrations` / `cccr export microservices`.
 
 | Rule | Language | Role | Detects |
 |---|---|---|---|

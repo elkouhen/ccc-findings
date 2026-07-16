@@ -123,7 +123,7 @@ rewriting an analysis engine.
 
 - REST/Kafka endpoint inventory from dedicated Semgrep rules.
 - Inter-service graph and flow tracing.
-- Multi-service Maven workspace discovery and `.drawio` export.
+- Multi-service Maven workspace discovery and HTML/LikeC4 graph exports.
 - Scope focused on Java/Spring repos; best-effort behavior currently being
   stabilized.
 

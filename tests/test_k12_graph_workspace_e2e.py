@@ -1,4 +1,4 @@
-"""E2E `cccr graph --workspace` sur un workspace multi-services indexé
+"""E2E `cccr export microservices --workspace --json` sur un workspace multi-services indexé
 séparément : le CLI doit remonter la topologie inter-services fédérée."""
 
 import json
@@ -31,13 +31,13 @@ def indexed_cycle_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.integration
-def test_graph_workspace_reports_the_three_service_rest_topology(
+def test_export_workspace_reports_the_three_service_rest_topology(
     indexed_cycle_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(indexed_cycle_workspace / "service-x")
 
     result = runner.invoke(
-        app, ["graph", "--workspace", str(indexed_cycle_workspace), "--json"]
+        app, ["export", "microservices", "--workspace", str(indexed_cycle_workspace), "--json"]
     )
 
     assert result.exit_code == 0
@@ -54,20 +54,7 @@ def test_graph_workspace_reports_the_three_service_rest_topology(
 
 
 @pytest.mark.integration
-def test_graph_text_renders_inter_service_topology(
-    indexed_cycle_workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(indexed_cycle_workspace / "service-y")
-
-    result = runner.invoke(app, ["graph", "--workspace", str(indexed_cycle_workspace)])
-
-    assert result.exit_code == 0
-    assert "Arêtes du graphe" in result.output
-    assert "service-x" in result.output and "service-y" in result.output
-    assert "GET /x-status" in result.output
-
-
-def test_graph_without_workspace_still_reports_the_no_workspace_note(
+def test_export_without_workspace_still_reports_the_no_workspace_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ccc_radar.store import Store
@@ -76,61 +63,10 @@ def test_graph_without_workspace_still_reports_the_no_workspace_note(
     with Store(tmp_path):
         pass
 
-    result = runner.invoke(app, ["graph", "--json"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["services"] == []
     assert data["edges"] == []
     assert "--workspace" in data["note"]
-
-
-@pytest.mark.integration
-def test_graph_drawio_writes_a_valid_mxgraph_file(
-    indexed_cycle_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import xml.etree.ElementTree as ET
-
-    monkeypatch.chdir(indexed_cycle_workspace / "service-x")
-    out_file = tmp_path / "graph.drawio"
-
-    result = runner.invoke(
-        app, ["export", "microservices", "--workspace", str(indexed_cycle_workspace), "--drawio", str(out_file)]
-    )
-
-    assert result.exit_code == 0, result.output
-    assert str(out_file) in result.output
-    assert out_file.is_file()
-
-    root = ET.fromstring(out_file.read_text(encoding="utf-8"))
-    node_values = {cell.get("value") for cell in root.iter("mxCell") if cell.get("vertex") == "1"}
-    # Les nœuds Drawio incluent désormais une table HTML qui récapitule les
-    # ressources exposées. Le contrat utile est la présence de chaque service,
-    # pas l'ancien libellé HTML minimal.
-    assert {name for name in ("service-x", "service-y", "service-z") if any(
-        f"<b>{name}</b>" in (value or "") for value in node_values
-    )} == {"service-x", "service-y", "service-z"}
-    edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
-    assert len(edge_cells) == 3
-    assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
-
-
-def test_graph_drawio_without_cross_module_data_writes_an_empty_file_and_the_note(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import xml.etree.ElementTree as ET
-
-    from ccc_radar.store import Store
-
-    monkeypatch.chdir(tmp_path)
-    with Store(tmp_path):
-        pass
-    out_file = tmp_path / "graph.drawio"
-
-    result = runner.invoke(app, ["export", "microservices", "--drawio", str(out_file)])
-
-    assert result.exit_code == 0
-    assert "--workspace" in result.output
-    assert out_file.is_file()
-    root = ET.fromstring(out_file.read_text(encoding="utf-8"))
-    assert [cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"] == []

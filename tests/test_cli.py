@@ -1,6 +1,5 @@
 import json
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +7,6 @@ import pytest
 from typer.testing import CliRunner
 
 import ccc_radar.embedder as embedder_module
-import ccc_radar.render as render_module
 from ccc_radar.cli import DEFAULT_REGISTRY_RULESETS, DEFAULT_RULE_PACKS, app
 from ccc_radar.indexer import IndexReport
 from ccc_radar.models import ArchitectureRelation, Finding, MessageEndpoint, compute_endpoint_id
@@ -26,7 +24,6 @@ runner = CliRunner()
 def test_architecture_command_help_is_short_and_task_oriented() -> None:
     root_help = runner.invoke(app, ["--help"])
     microservices_help = runner.invoke(app, ["microservices", "--help"])
-    graph_help = runner.invoke(app, ["graph", "--help"])
     topics_help = runner.invoke(app, ["topics", "--help"])
     dtos_help = runner.invoke(app, ["dtos", "--help"])
     apis_help = runner.invoke(app, ["apis", "--help"])
@@ -47,9 +44,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert microservices_help.exit_code == 0
     assert "Explorer les microservices indexés." in microservices_help.output
     assert "mongodb" in microservices_help.output
-    assert graph_help.exit_code == 0
-    assert "Afficher les interactions HTTP et Kafka" in graph_help.output
-    assert "--drawio" not in graph_help.output
+    assert "│ graph" not in root_help.output
     assert topics_help.exit_code == 0
     assert "show" in topics_help.output
     assert "consumers" in topics_help.output
@@ -63,7 +58,7 @@ def test_architecture_command_help_is_short_and_task_oriented() -> None:
     assert "coverage" in analyze_help.output
     assert "microservices" in analyze_help.output
     assert export_help.exit_code == 0
-    assert "--drawio" in export_help.output
+    assert "--drawio" not in export_help.output
     assert "--html" in export_help.output
     assert "--c4" in export_help.output
 
@@ -128,7 +123,6 @@ def test_analyze_coverage_reports_unresolved_inventory_facts(
         ["findings", "--help"],
         ["summary", "--help"],
         ["integrations", "--help"],
-        ["graph", "--help"],
         ["microservices", "--help"],
         ["modules", "--help"],
         ["mcp", "--help"],
@@ -142,6 +136,25 @@ def test_visible_command_help_includes_examples(command: list[str]) -> None:
 
     assert result.exit_code == 0
     assert "Exemple" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["resources"],
+        ["endpoints"],
+        ["audit"],
+        ["graph"],
+        ["export", "microservices", "--drawio", "graph.drawio"],
+        ["export", "modules", "--drawio", "modules.drawio"],
+        ["microservices", "resources", "orders"],
+        ["modules", "endpoints", "orders"],
+    ],
+)
+def test_obsolete_cli_commands_are_not_available(command: list[str]) -> None:
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 2
 
 
 def install_fake_skill_rules(home: Path, packs: tuple[str, ...] = DEFAULT_RULE_PACKS) -> Path:
@@ -680,10 +693,10 @@ def _make_endpoint(
     )
 
 
-def test_graph_without_index_exits_with_code_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_export_microservices_without_index_exits_with_code_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["graph"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 2
     assert "Index absent" in result.output
@@ -700,7 +713,7 @@ def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
     with Store(tmp_path) as store:
         store.replace_endpoints_for_files(["app/OrderConsumer.java"], [consumer, call])
 
-    result = runner.invoke(app, ["graph", "--json"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -711,75 +724,6 @@ def test_graph_json_reports_outbound_call_in_kafka_consumer_handler(
     assert hit["call"]["topic"] == "POST /payments"
     assert hit["consumer"]["topic"] == "orders.created"
     assert "--workspace" in data["note"]
-
-
-def test_graph_text_reports_no_outbound_calls_when_none_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    with Store(tmp_path):
-        pass  # crée .cccr/findings.db, vide
-
-    result = runner.invoke(app, ["graph"])
-
-    assert result.exit_code == 0
-    assert "Aucun appel REST détecté dans un handler Kafka." in result.output
-
-
-def test_graph_d2_writes_source_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    produce = _make_endpoint(
-        "produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service", "OrderCreated"
-    )
-    consume = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service", "OrderCreated"
-    )
-    with Store(tmp_path) as store:
-        store.replace_endpoints_for_files(
-            ["order-service/Producer.java", "payment-service/Consumer.java"],
-            [produce, consume],
-        )
-    out_file = tmp_path / "graph.d2"
-
-    result = runner.invoke(app, ["graph", "--d2", str(out_file)])
-
-    assert result.exit_code == 0
-    assert out_file.is_file()
-    content = out_file.read_text(encoding="utf-8")
-    assert "label: |md" in content
-    assert "  **order-service**" in content
-    assert 'label: "orders.created"' in content
-
-
-def test_graph_d2_renders_svg_via_d2_cli(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    produce = _make_endpoint(
-        "produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service", "OrderCreated"
-    )
-    consume = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service", "OrderCreated"
-    )
-    with Store(tmp_path) as store:
-        store.replace_endpoints_for_files(
-            ["order-service/Producer.java", "payment-service/Consumer.java"],
-            [produce, consume],
-        )
-    out_file = tmp_path / "graph.svg"
-
-    def fake_run(*args, **kwargs):
-        out_file.write_text("<svg />", encoding="utf-8")
-        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(render_module.subprocess, "run", fake_run)
-
-    result = runner.invoke(app, ["graph", "--d2", str(out_file)])
-
-    assert result.exit_code == 0
-    assert out_file.read_text(encoding="utf-8") == "<svg />"
 
 
 def test_graph_html_writes_interactive_sigma_document(
@@ -913,22 +857,6 @@ def test_export_microservices_c4_requires_a_project_directory(
 
     assert result.exit_code == 2
     assert "attend un répertoire" in result.output
-
-
-def test_graph_rejects_drawio_and_d2_together(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    with Store(tmp_path):
-        pass
-
-    result = runner.invoke(
-        app,
-        ["graph", "--drawio", str(tmp_path / "graph.drawio"), "--d2", str(tmp_path / "graph.d2")],
-    )
-
-    assert result.exit_code == 2
-    assert "--drawio, --html ou --d2" in result.output
 
 
 def test_integrations_without_index_exits_with_code_2(
@@ -1350,7 +1278,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
 def test_graph_and_integrations_reflect_a_real_cccr_index_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BACKLOG-11 A1 CA4 : cccr graph/endpoints reflètent une indexation
+    """BACKLOG-11 A1 CA4 : cccr export microservices/integrations reflètent une indexation
     standard (init + index), sans fixture injectée directement dans le
     store — le scénario de OrderConsumer.java (@KafkaListener contenant un
     appel RestTemplate) doit ressortir de bout en bout."""
@@ -1368,7 +1296,7 @@ def test_graph_and_integrations_reflect_a_real_cccr_index_run(
     endpoints = json.loads(endpoints_result.output)
     assert {e["role"] for e in endpoints} == {"consume", "call"}
 
-    graph_result = runner.invoke(app, ["graph", "--json"])
+    graph_result = runner.invoke(app, ["export", "microservices", "--json"])
     assert graph_result.exit_code == 0
     data = json.loads(graph_result.output)
     assert data["services"] == []
@@ -1629,7 +1557,7 @@ def test_graph_json_reports_stale_endpoint_inventory_warning(
         store.replace_endpoints_for_files(["app/Consumer.java"], [endpoint])
         store.set_meta("endpoint_inventory_signature", "endpoint-inventory-v0")
 
-    result = runner.invoke(app, ["graph", "--json"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.output)

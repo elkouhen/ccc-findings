@@ -198,7 +198,7 @@ class GraphEdgeInfo(TypedDict):
 
 
 class GraphResult(TypedDict):
-    """Shape returned by `cccr graph --json` et le tool MCP `graph`.
+    """Shape returned by `cccr export microservices --json` and the MCP `graph` tool.
 
     `services`/`nodes`/`edges` restent vides tant qu'aucune donnée
     inter-module n'est disponible : ni fédération explicite

@@ -1,4 +1,4 @@
-"""`cccr graph`/`cccr topics` sans `--workspace` sur un index parent Maven
+"""`cccr export microservices --json`/`cccr topics` sans `--workspace` sur un index parent Maven
 multi-modules : attribution correcte des services/modules et topologie réelle."""
 
 import json
@@ -31,10 +31,10 @@ def single_index_cycle_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.integration
-def test_graph_without_workspace_reports_cross_module_topology_from_single_parent_index(
+def test_export_without_workspace_reports_cross_module_topology_from_single_parent_index(
     single_index_cycle_parent: Path,
 ) -> None:
-    result = runner.invoke(app, ["graph", "--json"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
@@ -49,7 +49,7 @@ def test_graph_without_workspace_reports_cross_module_topology_from_single_paren
 
 
 @pytest.mark.integration
-def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
+def test_export_without_workspace_still_reports_the_note_when_no_module_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ccc_radar.store import Store
@@ -58,7 +58,7 @@ def test_graph_without_workspace_still_reports_the_note_when_no_module_data(
     with Store(tmp_path):
         pass
 
-    result = runner.invoke(app, ["graph", "--json"])
+    result = runner.invoke(app, ["export", "microservices", "--json"])
 
     assert result.exit_code == 0
     data = json.loads(result.output)

@@ -48,15 +48,11 @@ from ccc_radar.render import (
     render_endpoints_json,
     render_endpoints_text,
     render_fallback_findings_text,
-    render_graph_d2,
-    render_graph_drawio,
     render_graph_html,
     render_graph_likec4,
     render_graph_json,
-    render_graph_text,
     render_module_detail_json,
     render_module_detail_text,
-    render_module_graph_drawio,
     render_module_graph_html,
     render_module_graph_json,
     render_module_graph_text,
@@ -68,7 +64,6 @@ from ccc_radar.render import (
     render_summary_text,
     render_workspace_json,
     render_workspace_text,
-    write_graph_d2,
 )
 from ccc_radar.scanner import SemgrepError
 from ccc_radar.search import SearchError, search_findings
@@ -88,7 +83,7 @@ app = typer.Typer(
 export_app = typer.Typer(
     help=(
         "Exporter les graphes de dépendances d'architecture.\n\n"
-        "Exemples : `cccr export microservices --drawio graph.drawio`, "
+        "Exemples : `cccr export microservices --html graph.html`, "
         "`cccr export modules --html modules.html`."
     )
 )
@@ -345,16 +340,6 @@ def apis_cmd(
         return
     typer.echo("Usage : `cccr apis [list|show|neighbors|search] [api]`.", err=True)
     raise typer.Exit(code=2)
-
-
-@app.command(name="resources", hidden=True)
-def resources_alias(
-    arguments: list[str] = typer.Argument(None),
-    root: Optional[Path] = typer.Option(None, "--root"),  # noqa: UP007
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Alias de compatibilité de `cccr apis`."""
-    apis_cmd(arguments, root, json_output)
 
 
 def mongodb_cmd(
@@ -1181,119 +1166,6 @@ def integrations_cmd(
         typer.echo(render_endpoints_text(endpoints, [warning] if warning else []))
 
 
-@app.command(name="endpoints", hidden=True)
-def endpoints_alias(
-    system: Optional[str] = typer.Option(None, "--system"),  # noqa: UP007
-    role: Optional[str] = typer.Option(None, "--role"),  # noqa: UP007
-    topic: Optional[str] = typer.Option(None, "--topic"),  # noqa: UP007
-    path: Optional[str] = typer.Option(None, "--path"),  # noqa: UP007
-    module: Optional[str] = typer.Option(None, "--module"),  # noqa: UP007
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Alias de compatibilité de `cccr integrations`."""
-    integrations_cmd(system, role, topic, path, module, json_output)
-
-
-@app.command(name="graph")
-def graph_cmd(
-    workspace: Optional[Path] = typer.Option(  # noqa: UP007
-        None,
-        "--workspace",
-        help="Répertoire contenant plusieurs services indexés séparément.",
-    ),
-    json_output: bool = typer.Option(False, "--json"),
-    drawio: Optional[Path] = typer.Option(  # noqa: UP007
-        None,
-        "--drawio",
-        help="Exporter le graphe au format Draw.io.",
-        hidden=True,
-    ),
-    html: Optional[Path] = typer.Option(  # noqa: UP007
-        None,
-        "--html",
-        help="Exporter un graphe HTML interactif.",
-        hidden=True,
-    ),
-    d2: Optional[Path] = typer.Option(  # noqa: UP007
-        None,
-        "--d2",
-        help="Exporter le graphe en D2 ou dans un format rendu par D2.",
-        hidden=True,
-    ),
-    d2_layout: Literal["dagre", "elk"] = typer.Option(
-        "elk",
-        "--d2-layout",
-        help="Moteur de placement D2 pour les formats rendus.",
-        hidden=True,
-    ),
-    include_mongodb: bool = typer.Option(
-        False,
-        "--include-mongodb",
-        help="Ajoute les collections MongoDB indexées aux exports Draw.io, HTML et D2.",
-        hidden=True,
-    ),
-) -> None:
-    """Afficher les interactions HTTP et Kafka entre microservices.
-
-    Utilisez `cccr export microservices` pour générer Draw.io, HTML ou LikeC4.
-
-    Exemples : `cccr graph`, `cccr graph --workspace ../services`,
-    `cccr graph --json`.
-    """
-    if sum(output is not None for output in (drawio, html, d2)) > 1:
-        typer.echo("Choisissez un seul rendu parmi --drawio, --html ou --d2.", err=True)
-        raise typer.Exit(code=2)
-    graph_data = _load_microservice_graph(Path.cwd(), workspace, include_mongodb)
-    services_by_name = graph_data.services_by_name
-    edges = graph_data.edges
-    collections_by_service = graph_data.collections_by_service
-    result = graph_data.result
-
-    if drawio is not None:
-        drawio.write_text(
-            render_graph_drawio(services_by_name, edges, collections_by_service), encoding="utf-8"
-        )
-        typer.echo(f"Graphe écrit dans {drawio} ({len(services_by_name)} services, {len(edges)} arêtes).")
-        if result["note"]:
-            typer.echo(result["note"])
-        return
-
-    if html is not None:
-        html.write_text(
-            render_graph_html(
-                services_by_name,
-                edges,
-                collections_by_service,
-                graph_data.findings_by_service,
-            ),
-            encoding="utf-8",
-        )
-        typer.echo(f"Graphe écrit dans {html} ({len(services_by_name)} services, {len(edges)} arêtes).")
-        if result["note"]:
-            typer.echo(result["note"])
-        return
-
-    if d2 is not None:
-        try:
-            write_graph_d2(
-                d2,
-                render_graph_d2(services_by_name, edges, collections_by_service),
-                layout=d2_layout,
-            )
-        except RuntimeError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=2) from exc
-        typer.echo(f"Graphe écrit dans {d2} ({len(services_by_name)} services, {len(edges)} arêtes).")
-        if result["note"]:
-            typer.echo(result["note"])
-        return
-
-    if json_output:
-        typer.echo(json.dumps(result))
-    else:
-        typer.echo(render_graph_text(result))
-
-
 @dataclass(frozen=True)
 class _MicroserviceGraphData:
     services_by_name: dict[str, list[MessageEndpoint]]
@@ -1432,34 +1304,30 @@ def export_microservices_cmd(
     workspace: Optional[Path] = typer.Option(
         None, "--workspace", help="Répertoire contenant plusieurs services indexés séparément."
     ),
-    drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
     html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
     c4: Optional[Path] = typer.Option(
         None, "--c4", help="Répertoire du projet LikeC4 à produire."
     ),
+    json_output: bool = typer.Option(False, "--json", help="Écrire le graphe structuré sur la sortie standard."),
 ) -> None:
     """Exporter les dépendances microservices, topics Kafka et collections MongoDB.
 
-    Exemples : `cccr export microservices --drawio graph.drawio`,
-    `cccr export microservices --html graph.html`,
-    `cccr export microservices --c4 architecture-likec4`.
+    Exemples : `cccr export microservices --html graph.html`,
+    `cccr export microservices --c4 architecture-likec4`,
+    `cccr export microservices --json`.
     """
-    outputs = [output for output in (drawio, html, c4) if output is not None]
-    if len(outputs) != 1:
-        typer.echo("Choisissez un seul format parmi --drawio, --html ou --c4.", err=True)
+    outputs = [output for output in (html, c4) if output is not None]
+    if len(outputs) + int(json_output) != 1:
+        typer.echo("Choisissez un seul format parmi --html, --c4 ou --json.", err=True)
         raise typer.Exit(code=2)
     if c4 is not None and c4.suffix:
         typer.echo("`--c4` attend un répertoire de projet, pas un fichier `.c4`.", err=True)
         raise typer.Exit(code=2)
     graph_data = _load_microservice_graph(Path.cwd(), workspace, include_mongodb=True)
-    if drawio is not None:
-        drawio.write_text(
-            render_graph_drawio(
-                graph_data.services_by_name, graph_data.edges, graph_data.collections_by_service
-            ),
-            encoding="utf-8",
-        )
-    elif html is not None:
+    if json_output:
+        typer.echo(json.dumps(graph_data.result))
+        return
+    if html is not None:
         html.write_text(
             render_graph_html(
                 graph_data.services_by_name,
@@ -1498,17 +1366,14 @@ def export_microservices_cmd(
 
 @export_app.command(name="modules")
 def export_modules_cmd(
-    drawio: Optional[Path] = typer.Option(None, "--drawio", help="Fichier Draw.io à produire."),
     html: Optional[Path] = typer.Option(None, "--html", help="Fichier HTML Sigma.js à produire."),
 ) -> None:
     """Exporter les dépendances de build entre modules indexés.
 
-    Exemples : `cccr export modules --drawio modules.drawio`,
-    `cccr export modules --html modules.html`.
+    Exemple : `cccr export modules --html modules.html`.
     """
-    outputs = [output for output in (drawio, html) if output is not None]
-    if len(outputs) != 1:
-        typer.echo("Choisissez un seul format parmi --drawio ou --html.", err=True)
+    if html is None:
+        typer.echo("`cccr export modules` requiert --html FILE.", err=True)
         raise typer.Exit(code=2)
     repo_root = Path.cwd()
     if not db_path(repo_root).is_file():
@@ -1518,26 +1383,11 @@ def export_modules_cmd(
         modules = store.all_modules()
         dependencies = store.all_module_dependencies()
         endpoints = store.all_endpoints()
-    output = outputs[0]
-    if drawio is not None:
-        drawio.write_text(render_module_graph_drawio(modules, dependencies), encoding="utf-8")
-    else:
-        html.write_text(render_module_graph_html(modules, dependencies, endpoints), encoding="utf-8")
+    html.write_text(render_module_graph_html(modules, dependencies, endpoints), encoding="utf-8")
     typer.echo(
-        f"Export modules écrit dans {output} "
+        f"Export modules écrit dans {html} "
         f"({len(modules)} modules, {len(dependencies)} dépendances)."
     )
-
-
-@app.command(name="audit", hidden=True)
-def audit_cmd(
-    workspace: Optional[Path] = typer.Option(
-        None, "--workspace", help="Workspace de services indexés séparément."
-    ),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Alias de compatibilité de `cccr analyze audit`."""
-    _render_audit(Path.cwd(), workspace, json_output)
 
 
 def _render_audit(repo_root: Path, workspace: Path | None, json_output: bool) -> None:
@@ -1596,12 +1446,12 @@ def microservices_cmd(
     json_output = _option_json(json_output)
     root = _option_root(root)
     commands = {
-        "topics", "apis", "resources", "mongodb", "properties", "openapi", "show", "neighbors", "path", "analyze", "implementation"
+        "topics", "apis", "mongodb", "properties", "openapi", "show", "neighbors", "path", "analyze", "implementation"
     }
     if arguments and arguments[0] in commands:
         workspace_root = root
         command = arguments[0]
-        if command in {"topics", "apis", "resources", "mongodb", "properties", "openapi", "show"}:
+        if command in {"topics", "apis", "mongodb", "properties", "openapi", "show"}:
             if len(arguments) != 2:
                 typer.echo(f"`microservices {command}` requiert un nom de microservice.", err=True)
                 raise typer.Exit(code=2)
@@ -1623,7 +1473,7 @@ def microservices_cmd(
             raise typer.Exit(code=2)
         if command == "topics":
             _render_microservice_topics(service, workspace_root, json_output)
-        elif command in {"apis", "resources"}:
+        elif command == "apis":
             _render_microservice_apis(service, workspace_root, json_output)
         elif command == "mongodb":
             _render_microservice_mongodb(service, workspace_root, json_output)
@@ -1924,9 +1774,6 @@ def modules_cmd(
         None, help="Sous-commande et module, ou nom de module à détailler."
     ),
     json_output: bool = typer.Option(False, "--json"),
-    drawio: Optional[Path] = typer.Option(
-        None, "--drawio", help="Exporte le graphe de dépendances de modules en .drawio.", hidden=True
-    ),
     html: Optional[Path] = typer.Option(
         None, "--html", help="Exporte le graphe de dépendances de modules en HTML Sigma.js.", hidden=True
     ),
@@ -1936,19 +1783,19 @@ def modules_cmd(
     `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
     `integrations`, `properties` et `openapi` prennent un module dans le
     répertoire courant déjà indexé. `graph` affiche les dépendances de build
-    entre modules. Utilisez `cccr export modules` pour générer Draw.io ou HTML.
+    entre modules. Utilisez `cccr export modules` pour générer le rendu HTML.
 
     Exemples : `cccr modules`, `cccr modules order-service`,
     `cccr modules integrations order-service`, `cccr modules graph`.
     """
     arguments = arguments or []
-    commands = {"integrations", "endpoints", "properties", "openapi", "graph"}
+    commands = {"integrations", "properties", "openapi", "graph"}
     if arguments and arguments[0] in commands:
         if arguments[0] == "graph":
             if len(arguments) != 1:
                 typer.echo("`modules graph` ne prend pas de nom de module.", err=True)
                 raise typer.Exit(code=2)
-            _render_module_graph(Path.cwd().resolve(), json_output, drawio, html)
+            _render_module_graph(Path.cwd().resolve(), json_output, html)
             return
         if len(arguments) != 2:
             typer.echo(f"`modules {arguments[0]}` requiert un nom de module.", err=True)
@@ -1956,7 +1803,7 @@ def modules_cmd(
         repo_root = Path.cwd().resolve()
         selected = _selected_indexed_module(arguments[1], repo_root)
         with Store(repo_root, readonly=True) as store:
-            if arguments[0] in {"integrations", "endpoints"}:
+            if arguments[0] == "integrations":
                 endpoints = [endpoint for endpoint in store.all_endpoints() if endpoint.module == selected.name]
                 typer.echo(json.dumps(render_endpoints_json(endpoints)) if json_output else render_endpoints_text(endpoints))
             elif arguments[0] == "properties":
@@ -1997,7 +1844,7 @@ def modules_cmd(
 
 
 def _render_module_graph(
-    repo_root: Path, json_output: bool, drawio: Path | None, html: Path | None
+    repo_root: Path, json_output: bool, html: Path | None
 ) -> None:
     if not db_path(repo_root).is_file():
         typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
@@ -2010,13 +1857,6 @@ def _render_module_graph(
     except StoreError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
-    if drawio is not None and html is not None:
-        typer.echo("Choisissez un seul rendu parmi --drawio ou --html.", err=True)
-        raise typer.Exit(code=2)
-    if drawio is not None:
-        drawio.write_text(render_module_graph_drawio(modules, dependencies), encoding="utf-8")
-        typer.echo(f"Graphe écrit dans {drawio} ({len(modules)} modules, {len(dependencies)} dépendances).")
-        return
     if html is not None:
         html.write_text(render_module_graph_html(modules, dependencies, endpoints), encoding="utf-8")
         typer.echo(f"Graphe écrit dans {html} ({len(modules)} modules, {len(dependencies)} dépendances).")
@@ -2099,43 +1939,43 @@ def microservices_openapi(service: str, root: Path | None = typer.Option(None, "
 def modules_root(ctx: typer.Context, json_output: bool = typer.Option(False, "--json")) -> None:
     """Lister les modules sans sous-commande."""
     if ctx.invoked_subcommand is None:
-        modules_cmd([], json_output, None, None)
+        modules_cmd([], json_output, None)
 
 
 @modules_app.command("list")
 def modules_list(json_output: bool = typer.Option(False, "--json")) -> None:
     """Lister les modules."""
-    modules_cmd([], json_output, None, None)
+    modules_cmd([], json_output, None)
 
 
 @modules_app.command("show")
 def modules_show(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
     """Résumer un module."""
-    modules_cmd([module], json_output, None, None)
+    modules_cmd([module], json_output, None)
 
 
 @modules_app.command("integrations")
 def modules_integrations(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
     """Lister les intégrations d'un module."""
-    modules_cmd(["integrations", module], json_output, None, None)
+    modules_cmd(["integrations", module], json_output, None)
 
 
 @modules_app.command("properties")
 def modules_properties(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
     """Afficher explicitement la configuration indexée d'un module."""
-    modules_cmd(["properties", module], json_output, None, None)
+    modules_cmd(["properties", module], json_output, None)
 
 
 @modules_app.command("openapi")
 def modules_openapi(module: str, json_output: bool = typer.Option(False, "--json")) -> None:
     """Afficher explicitement les contrats OpenAPI locaux."""
-    modules_cmd(["openapi", module], json_output, None, None)
+    modules_cmd(["openapi", module], json_output, None)
 
 
 @modules_app.command("graph")
 def modules_graph(json_output: bool = typer.Option(False, "--json")) -> None:
     """Afficher les dépendances de build entre modules."""
-    modules_cmd(["graph"], json_output, None, None)
+    modules_cmd(["graph"], json_output, None)
 
 
 def _selected_indexed_module(name: str, repo_root: Path):
