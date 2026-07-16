@@ -431,7 +431,8 @@ detected from code. Services absent from the manifest keep code detection.
 `--html FILE` writes an interactive Sigma.js graph backed by Graphology. Nodes
 can be zoomed, panned, searched, or selected; selecting one mutes unrelated
 nodes and edges so dense hubs remain inspectable. The details panel lists the
-APIs exposed by the selected microservice and its direct relations. The
+APIs exposed by the selected microservice, and the published and consumed Java
+message types of a selected Kafka topic when statically known, as well as direct relations. The
 generated document embeds graph data locally and loads Sigma.js from its CDN
 when opened. Microservices are hexagons, Kafka topics circles and MongoDB
 collections squares; a blue, orange or red border reflects the node's number

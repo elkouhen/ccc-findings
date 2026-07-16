@@ -610,6 +610,7 @@ def _make_endpoint(
     start_line: int,
     end_line: int,
     module: str | None = None,
+    message_type: str | None = None,
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
@@ -624,6 +625,7 @@ def _make_endpoint(
         end_line=end_line,
         snippet="",
         module=module,
+        message_type=message_type,
     )
 
 
@@ -677,9 +679,11 @@ def test_graph_d2_writes_source_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    produce = _make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service", "OrderCreated"
+    )
     consume = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service", "OrderCreated"
     )
     with Store(tmp_path) as store:
         store.replace_endpoints_for_files(
@@ -702,9 +706,11 @@ def test_graph_d2_renders_svg_via_d2_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    produce = _make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service", "OrderCreated"
+    )
     consume = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service", "OrderCreated"
     )
     with Store(tmp_path) as store:
         store.replace_endpoints_for_files(
@@ -729,9 +735,11 @@ def test_graph_html_writes_interactive_sigma_document(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    produce = _make_endpoint("produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service")
+    produce = _make_endpoint(
+        "produce", "orders.created", "order-service/Producer.java", 10, 10, "order-service", "OrderCreated"
+    )
     consume = _make_endpoint(
-        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service"
+        "consume", "orders.created", "payment-service/Consumer.java", 5, 7, "payment-service", "OrderCreated"
     )
     with Store(tmp_path) as store:
         store.replace_modules(
@@ -789,6 +797,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "new Sigma(network" in document
     assert "order-service" in document
     assert "orders.created" in document
+    assert '"published_message_types": ["OrderCreated"]' in document
+    assert '"consumed_message_types": ["OrderCreated"]' in document
+    assert "Types publies" in document
+    assert "Types consommes" in document
     assert "mongodb_collection:order-service:orders" in document
     assert '"complexity": {"score": 2' in document
     assert "Complexite elevee" in document

@@ -508,6 +508,17 @@ def render_graph_html(
     """
     ordered_services = sorted(endpoints_by_service)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
+    topic_message_types: dict[str, dict[str, set[str]]] = {
+        topic: {"produce": set(), "consume": set()} for topic in kafka_topics
+    }
+    for endpoints in endpoints_by_service.values():
+        for endpoint in endpoints:
+            if (
+                endpoint.system == "kafka"
+                and endpoint.topic in topic_message_types
+                and endpoint.message_type
+            ):
+                topic_message_types[endpoint.topic][endpoint.role].add(endpoint.message_type)
     nodes = []
     for name in ordered_services:
         resources = _rest_resources_served(endpoints_by_service.get(name, []))
@@ -533,6 +544,8 @@ def render_graph_html(
             "kind": "kafka_topic",
             "name": name,
             "label": name,
+            "published_message_types": sorted(topic_message_types[name]["produce"]),
+            "consumed_message_types": sorted(topic_message_types[name]["consume"]),
             "width": 190,
             "height": 42,
         }
@@ -1104,6 +1117,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const complexity = node.complexity;
       details.append(title, document.createTextNode(`${kindLabel} - score ${complexity.score} (${complexity.level}) - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
       if (node.kind === "microservice") appendList("APIs exposees", node.resources);
+      if (node.kind === "kafka_topic") {
+        appendList("Types publies", node.published_message_types);
+        appendList("Types consommes", node.consumed_message_types);
+      }
       if (node.kind === "microservice" && complexity.findings) {
         appendList("Findings", Object.entries(complexity.severity_counts)
           .filter(([, count]) => count)
