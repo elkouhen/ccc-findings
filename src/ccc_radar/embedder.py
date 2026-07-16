@@ -24,7 +24,7 @@ def finding_to_text(f: Finding) -> str:
 def endpoint_to_text(e: MessageEndpoint) -> str:
     """BACKLOG-10 K3 : rôle + topic/route + framework + extrait normalisé —
     même esprit que `finding_to_text`, pour la recherche NL sur les
-    endpoints (résolution `cccr flow` en dernier recours, quand aucune
+    endpoints (résolution `cccr topics search` ou `cccr resources search` en dernier recours, quand aucune
     correspondance textuelle exacte/non ambiguë n'existe)."""
     return (
         f"{e.role} {e.system} | {e.topic} | {e.framework or ''} | "

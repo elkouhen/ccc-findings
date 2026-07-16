@@ -1,4 +1,4 @@
-"""`cccr graph`/`cccr flow` sans `--workspace` sur un index parent Maven
+"""`cccr graph`/`cccr topics` sans `--workspace` sur un index parent Maven
 multi-modules : attribution correcte des services/modules et topologie réelle."""
 
 import json
@@ -81,14 +81,13 @@ def single_index_kafka_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.integration
-def test_flow_without_workspace_attributes_sites_to_their_module_from_single_parent_index(
+def test_topics_show_attributes_producers_and_consumers_from_single_parent_index(
     single_index_kafka_parent: Path,
 ) -> None:
-    result = runner.invoke(app, ["flow", "orders.created", "--json"])
+    result = runner.invoke(app, ["topics", "show", "orders.created", "--json"])
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
-    assert data["resolved_topic"] == "orders.created"
-    sites_by_module = {site["service"]: site for site in data["sites"]}
-    assert sites_by_module["order-service"]["role"] == "produce"
-    assert sites_by_module["payment-service"]["role"] == "consume"
+    assert data["name"] == "orders.created"
+    assert data["producers"] == ["order-service"]
+    assert data["consumers"] == ["payment-service"]

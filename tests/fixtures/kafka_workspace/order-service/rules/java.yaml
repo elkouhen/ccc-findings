@@ -44,7 +44,7 @@ rules:
           - pattern: new ProducerRecord($TOPIC, $VAL)
 
   # Règle de findings (pas d'inventaire) : sert à couvrir le recouvrement
-  # finding/site utilisé par `cccr flow` (BACKLOG-10 K5).
+  # finding/site utilisé par le traçage MCP (BACKLOG-10 K5).
   - id: cccr.demo.kafka-send-fire-and-forget
     languages: [java]
     severity: WARNING

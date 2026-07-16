@@ -16,7 +16,6 @@ from ccc_radar.architecture import (
     endpoint_implementation,
     list_objects as list_architecture_objects,
     neighbors as architecture_neighbors,
-    normalize_kind as normalize_architecture_kind,
     render_text as render_architecture_text,
     show_object as show_architecture_object,
 )
@@ -26,11 +25,8 @@ from ccc_radar.config import ConfigError, init_config, load_config
 from ccc_radar.embedder import EmbeddingError, make_embedder, resolve_embedding_model
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
 from ccc_radar.flow import (
-    FlowError,
-    group_endpoints_by_module_for_flow,
-    group_findings_by_module_for_flow,
+    resolve_topic,
     resolve_topic_by_similarity,
-    trace_flow,
 )
 from ccc_radar.graph import (
     GraphEdge,
@@ -41,13 +37,12 @@ from ccc_radar.graph import (
 from ccc_radar.indexer import index_repo
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.models import MessageEndpoint
+from ccc_radar.modules import discover_modules
 from ccc_radar.render import (
     render_code_search_text,
     render_endpoints_json,
     render_endpoints_text,
     render_fallback_findings_text,
-    render_flow_json,
-    render_flow_text,
     render_graph_d2,
     render_graph_drawio,
     render_graph_html,
@@ -55,6 +50,9 @@ from ccc_radar.render import (
     render_graph_text,
     render_module_detail_json,
     render_module_detail_text,
+    render_module_graph_drawio,
+    render_module_graph_json,
+    render_module_graph_text,
     render_modules_list_json,
     render_modules_list_text,
     render_search_json,
@@ -76,10 +74,6 @@ from ccc_radar.doctor import has_errors, run_doctor
 app = typer.Typer(
     help="ccc-radar: indexe findings, code associé et signaux d'architecture exploitables par agent"
 )
-architecture_app = typer.Typer(
-    help="Exploration orientée objets métier : modules, APIs, topics et collections."
-)
-app.add_typer(architecture_app, name="architecture")
 
 _SEMGREP_CONFIG_CANDIDATES = [".semgrep.yml", "semgrep.yml", ".semgrep"]
 DEFAULT_REGISTRY_PACK = "p/security-audit"
@@ -135,101 +129,99 @@ def main() -> None:
     """ccc-radar: indexe findings, code associé et signaux d'architecture."""
 
 
-def _architecture_catalog():
-    repo_root = Path.cwd()
-    _require_index(repo_root)
-    with Store(repo_root, readonly=True) as store:
-        return build_catalog(store.all_modules(), store.all_endpoints())
-
-
-def _architecture_kind_or_error(kind: str) -> str:
-    normalized = normalize_architecture_kind(kind)
-    if normalized is None:
-        typer.echo(
-            "Type inconnu : utilisez module, microservice, endpoint, topic, api ou collection.", err=True
-        )
-        raise typer.Exit(code=2)
-    return normalized
-
-
 def _emit_architecture(result: object, json_output: bool) -> None:
     typer.echo(json.dumps(result) if json_output else render_architecture_text(result))
 
 
-@architecture_app.command("list")
-def architecture_list_cmd(
-    kind: str = typer.Argument("microservices", help="Type d'objet à lister."),
+@app.command(name="topics")
+def topics_cmd(
+    arguments: list[str] = typer.Argument(
+        None, help="Sous-commande et topic Kafka à explorer."
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Niveau découverte : liste les objets métier sans afficher les fichiers."""
-    catalog = _architecture_catalog()
-    _emit_architecture(list_architecture_objects(catalog, _architecture_kind_or_error(kind)), json_output)
+    """Explore les topics Kafka et leurs producteurs/consommateurs."""
+    arguments = arguments or []
+    workspace_root = (root or Path.cwd()).resolve()
+    catalog = _microservice_catalog(workspace_root)
+    if not arguments or arguments[0] == "list":
+        if len(arguments) > 1:
+            typer.echo("Usage : `cccr topics [list] --root <workspace>`.", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(list_architecture_objects(catalog, "topic"), json_output)
+        return
+    command = arguments[0]
+    if command in {"show", "neighbors", "consumers", "producers", "search"}:
+        if len(arguments) != 2:
+            typer.echo(f"`cccr topics {command}` requiert un topic.", err=True)
+            raise typer.Exit(code=2)
+        topic = arguments[1]
+        if command == "show":
+            result = show_architecture_object(catalog, "topic", topic)
+        elif command == "neighbors":
+            result = architecture_neighbors(catalog, "topic", topic)
+        elif command == "search":
+            result = _search_architecture_object(workspace_root, catalog, "topic", "kafka", topic)
+        else:
+            result = analyze_architecture(catalog, command, topic)
+        if result is None:
+            typer.echo(f"Topic introuvable : {topic}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(result, json_output)
+        return
+    typer.echo("Usage : `cccr topics [list|show|neighbors|consumers|producers|search] [topic]`.", err=True)
+    raise typer.Exit(code=2)
 
 
-@architecture_app.command("show")
-def architecture_show_cmd(
-    kind: str = typer.Argument(..., help="module, microservice, endpoint, topic, api ou collection"),
-    name: str = typer.Argument(..., help="Nom métier exact de l'objet."),
+@app.command(name="resources")
+def resources_cmd(
+    arguments: list[str] = typer.Argument(
+        None, help="Sous-commande et ressource HTTP à explorer."
+    ),
+    root: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--root", help="Répertoire parent indexé. Défaut : répertoire courant."
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Niveau résumé : décrit le rôle et les capacités d'un objet métier."""
-    catalog = _architecture_catalog()
-    result = show_architecture_object(catalog, _architecture_kind_or_error(kind), name)
-    if result is None:
-        typer.echo(f"Objet d'architecture introuvable : {kind} {name}", err=True)
-        raise typer.Exit(code=2)
-    _emit_architecture(result, json_output)
-
-
-@architecture_app.command("neighbors")
-def architecture_neighbors_cmd(
-    kind: str = typer.Argument(..., help="module, microservice, endpoint, topic, api ou collection"),
-    name: str = typer.Argument(..., help="Nom métier exact de l'objet."),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Niveau navigation : affiche les objets directement reliés."""
-    catalog = _architecture_catalog()
-    result = architecture_neighbors(catalog, _architecture_kind_or_error(kind), name)
-    if result is None:
-        typer.echo(f"Objet d'architecture introuvable : {kind} {name}", err=True)
-        raise typer.Exit(code=2)
-    _emit_architecture(result, json_output)
-
-
-@architecture_app.command("analyze")
-def architecture_analyze_cmd(
-    query: str = typer.Argument(..., help="consumers, producers, calls, external-apis, orphan-endpoints ou impact"),
-    target: Optional[str] = typer.Argument(None, help="Topic ou objet cible selon l'analyse."),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Répond à des questions d'architecture sur les relations indexées."""
-    catalog = _architecture_catalog()
-    result = analyze_architecture(catalog, query, target)
-    if result is None:
-        typer.echo(
-            "Analyse impossible : vérifiez la question et sa cible (consumers/producers/calls/"
-            "external-apis/orphan-endpoints/impact).",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-    _emit_architecture(result, json_output)
-
-
-@architecture_app.command("implementation")
-def architecture_implementation_cmd(
-    kind: str = typer.Argument(..., help="Seul le type endpoint est actuellement disponible."),
-    identifier: str = typer.Argument(..., help="Identifiant de l'endpoint retourné par l'inventaire."),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Niveau implémentation : affiche explicitement la localisation et l'extrait d'un endpoint."""
-    if kind.casefold() != "endpoint":
-        typer.echo("Seule l'implémentation d'un endpoint est disponible.", err=True)
-        raise typer.Exit(code=2)
-    result = endpoint_implementation(_architecture_catalog(), identifier)
-    if result is None:
-        typer.echo(f"Endpoint introuvable : {identifier}", err=True)
-        raise typer.Exit(code=2)
-    _emit_architecture(result, json_output)
+    """Explore les ressources HTTP et leurs fournisseurs/consommateurs."""
+    arguments = arguments or []
+    workspace_root = (root or Path.cwd()).resolve()
+    catalog = _microservice_catalog(workspace_root)
+    if not arguments or arguments[0] == "list":
+        if len(arguments) > 1:
+            typer.echo("Usage : `cccr resources [list] --root <workspace>`.", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(list_architecture_objects(catalog, "api"), json_output)
+        return
+    command = arguments[0]
+    if command in {"show", "neighbors", "providers", "consumers", "search"}:
+        if len(arguments) != 2:
+            typer.echo(f"`cccr resources {command}` requiert une ressource HTTP.", err=True)
+            raise typer.Exit(code=2)
+        resource = arguments[1]
+        if command == "show":
+            result = show_architecture_object(catalog, "api", resource)
+        elif command == "neighbors":
+            result = architecture_neighbors(catalog, "api", resource)
+        elif command == "search":
+            result = _search_architecture_object(workspace_root, catalog, "api", "rest", resource)
+        else:
+            summary = show_architecture_object(catalog, "api", resource)
+            result = (
+                {"query": command, "resource": resource, "microservices": summary[command]}
+                if summary is not None
+                else None
+            )
+        if result is None:
+            typer.echo(f"Ressource HTTP introuvable : {resource}", err=True)
+            raise typer.Exit(code=2)
+        _emit_architecture(result, json_output)
+        return
+    typer.echo("Usage : `cccr resources [list|show|neighbors|providers|consumers|search] [ressource]`.", err=True)
+    raise typer.Exit(code=2)
 
 
 @app.command()
@@ -603,7 +595,7 @@ def graph_cmd(
     html: Optional[Path] = typer.Option(  # noqa: UP007
         None,
         "--html",
-        help="Écrit un graphe HTML interactif propulsé par AntV G6.",
+        help="Écrit un graphe HTML interactif propulsé par Sigma.js.",
     ),
     d2: Optional[Path] = typer.Option(  # noqa: UP007
         None,
@@ -728,7 +720,7 @@ def audit_cmd(
 def microservices_cmd(
     arguments: list[str] = typer.Argument(
         None,
-        help="Sous-commande et microservice, ou anciennement la racine du workspace.",
+        help="Sous-commande et microservice à explorer.",
     ),
     root: Optional[Path] = typer.Option(  # noqa: UP007
         None,
@@ -742,31 +734,71 @@ def microservices_cmd(
     (`cccr index`) pour compter endpoints/findings par service — n'écrit
     jamais dans leurs bases. Un service non indexé ou dont la base est
     incompatible est signalé en avertissement, sans faire échouer la
-    commande. Sous-commandes : `endpoints <service>`, `flow <service>`,
-    `properties <service>` et `openapi <service>`, avec `--root <workspace>`.
+    commande. Sous-commandes : `show <service>`, `topics <service>`,
+    `resources <service>`, `neighbors <service>`,
+    `analyze <calls|external-apis|orphan-endpoints|impact> [cible]`,
+    `properties <service>`, `openapi <service>` et
+    `implementation endpoint <id>`, avec `--root <workspace>`.
     """
     arguments = arguments or []
-    commands = {"endpoints", "flow", "properties", "openapi"}
+    commands = {
+        "topics", "resources", "properties", "openapi", "show", "neighbors", "analyze", "implementation"
+    }
     if arguments and arguments[0] in commands:
-        if len(arguments) != 2:
-            typer.echo(f"`microservices {arguments[0]}` requiert un nom de microservice.", err=True)
-            raise typer.Exit(code=2)
-        service = arguments[1]
         workspace_root = (root or Path.cwd()).resolve()
-        if arguments[0] == "endpoints":
-            _render_microservice_endpoints(service, workspace_root, json_output)
-        elif arguments[0] == "flow":
-            _render_microservice_flow(service, workspace_root, json_output)
-        elif arguments[0] == "properties":
+        command = arguments[0]
+        if command in {"topics", "resources", "properties", "openapi", "show"}:
+            if len(arguments) != 2:
+                typer.echo(f"`microservices {command}` requiert un nom de microservice.", err=True)
+                raise typer.Exit(code=2)
+            service = arguments[1]
+        elif command == "neighbors":
+            if len(arguments) != 2:
+                typer.echo("`microservices neighbors` requiert un nom de microservice.", err=True)
+                raise typer.Exit(code=2)
+        elif command == "implementation":
+            if len(arguments) != 3:
+                typer.echo(f"`microservices {command}` requiert un type et un nom.", err=True)
+                raise typer.Exit(code=2)
+        elif len(arguments) not in {2, 3}:
+            typer.echo("`microservices analyze` requiert une question et accepte une cible optionnelle.", err=True)
+            raise typer.Exit(code=2)
+        if command == "topics":
+            _render_microservice_topics(service, workspace_root, json_output)
+        elif command == "resources":
+            _render_microservice_resources(service, workspace_root, json_output)
+        elif command == "properties":
             _render_microservice_properties(service, workspace_root, json_output)
-        else:
+        elif command == "openapi":
             _render_microservice_openapi(service, workspace_root, json_output)
+        elif command == "show":
+            _render_microservice_summary(service, workspace_root, json_output)
+        elif command == "neighbors":
+            _render_microservice_neighbors(arguments[1], workspace_root, json_output)
+        elif command == "analyze":
+            _render_microservice_analysis(
+                arguments[1], arguments[2] if len(arguments) == 3 else None, workspace_root, json_output
+            )
+        else:
+            _render_microservice_implementation(arguments[1], arguments[2], workspace_root, json_output)
         return
+    if len(arguments) == 1:
+        argument = arguments[0]
+        explicit_workspace = (
+            Path(argument).is_absolute() or argument in {".", ".."} or argument.startswith(f".{os.sep}")
+        )
+        if not explicit_workspace:
+            _render_microservice_summary(argument, (root or Path.cwd()).resolve(), json_output)
+            return
     if len(arguments) > 1:
-        typer.echo("Usage : `cccr microservices [root]` ou `cccr microservices <endpoints|flow|properties|openapi> <service> --root <root>`.", err=True)
+        typer.echo("Usage : `cccr microservices [--root <root>]` ou `cccr microservices <service> --root <root>`.", err=True)
         raise typer.Exit(code=2)
     workspace_root = Path(arguments[0]) if arguments else (root or Path.cwd())
-    services = discover_maven_services(workspace_root)
+    services = [
+        service
+        for service in discover_maven_services(workspace_root)
+        if service.kind == "microservice"
+    ]
     federation = load_federation(services)
     result = render_workspace_json(services, federation)
 
@@ -789,30 +821,119 @@ def _selected_microservice(name: str, root: Path):
     return matches[0], load_federation(services)
 
 
-def _render_microservice_endpoints(service: str, root: Path, json_output: bool) -> None:
-    """Liste les endpoints indexés d'un microservice du workspace."""
-    _, federation = _selected_microservice(service, root)
-    endpoints = federation.endpoints_by_service.get(service, [])
-    typer.echo(
-        json.dumps(render_endpoints_json(endpoints))
-        if json_output
-        else render_endpoints_text(endpoints, federation.warnings)
-    )
-
-
-def _render_microservice_flow(service: str, root: Path, json_output: bool) -> None:
-    """Affiche les flux HTTP/Kafka entrants et sortants d'un microservice."""
-    _, federation = _selected_microservice(service, root)
-    edges = [
-        edge for edge in build_graph(dict(federation.endpoints_by_service))
-        if edge.from_service == service or edge.to_service == service
+def _microservice_catalog(root: Path):
+    if db_path(root).is_file():
+        with Store(root, readonly=True) as store:
+            modules = store.all_modules()
+            if modules:
+                return build_catalog(modules, store.all_endpoints())
+    services = discover_maven_services(root)
+    federation = load_federation(services)
+    modules = [module for module in discover_modules(root) if module.starts_application]
+    endpoints = [
+        endpoint
+        for service_endpoints in federation.endpoints_by_service.values()
+        for endpoint in service_endpoints
     ]
-    involved_services = sorted({service} | {edge.from_service for edge in edges} | {edge.to_service for edge in edges})
-    result = render_graph_json(
-        involved_services, edges, [], warnings=federation.warnings,
-        cross_module_data_available=True,
+    return build_catalog(modules, endpoints)
+
+
+def _search_architecture_object(
+    root: Path, catalog, kind: str, system: str, query: str
+) -> dict[str, object] | None:
+    endpoints = [endpoint for endpoint in catalog.endpoints if endpoint.system == system]
+    resolved = resolve_topic(query, {endpoint.topic for endpoint in endpoints})
+    if resolved is None and db_path(root).is_file():
+        try:
+            with Store(root, readonly=True) as store:
+                config = load_config(root)
+                resolved = resolve_topic_by_similarity(
+                    store, make_embedder(config.embedding_model), query, endpoints
+                )
+        except (ConfigError, EmbeddingError, StoreError):
+            resolved = None
+    if resolved is None:
+        return None
+    summary = show_architecture_object(catalog, kind, resolved)
+    return {"query": query, "resolved": resolved, "object": summary} if summary else None
+
+
+def _render_microservice_summary(service: str, root: Path, json_output: bool) -> None:
+    result = show_architecture_object(_microservice_catalog(root), "microservice", service)
+    if result is None:
+        typer.echo(f"Microservice introuvable : {service}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+def _render_microservice_neighbors(name: str, root: Path, json_output: bool) -> None:
+    result = architecture_neighbors(_microservice_catalog(root), "microservice", name)
+    if result is None:
+        typer.echo(f"Microservice introuvable : {name}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+def _render_microservice_analysis(
+    query: str, target: str | None, root: Path, json_output: bool
+) -> None:
+    if query.casefold() in {"consumers", "consumer", "producers", "producer"}:
+        typer.echo("Utilisez `cccr topics consumers <topic>` ou `cccr topics producers <topic>`.", err=True)
+        raise typer.Exit(code=2)
+    result = analyze_architecture(_microservice_catalog(root), query, target)
+    if result is None:
+        typer.echo(
+            "Analyse impossible : vérifiez la question et sa cible (consumers/producers/calls/"
+            "external-apis/orphan-endpoints/impact).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+def _render_microservice_implementation(
+    kind: str, identifier: str, root: Path, json_output: bool
+) -> None:
+    if kind.casefold() != "endpoint":
+        typer.echo("Seule l'implémentation d'un endpoint est disponible.", err=True)
+        raise typer.Exit(code=2)
+    result = endpoint_implementation(_microservice_catalog(root), identifier)
+    if result is None:
+        typer.echo(f"Endpoint introuvable : {identifier}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(result, json_output)
+
+
+def _render_microservice_topics(service: str, root: Path, json_output: bool) -> None:
+    """Liste les topics Kafka publiés et consommés par un microservice."""
+    summary = show_architecture_object(_microservice_catalog(root), "microservice", service)
+    if summary is None:
+        typer.echo(f"Microservice introuvable : {service}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(
+        {
+            "microservice": service,
+            "published": summary["kafka_topics_published"],
+            "consumed": summary["kafka_topics_consumed"],
+        },
+        json_output,
     )
-    typer.echo(json.dumps(result) if json_output else render_graph_text(result))
+
+
+def _render_microservice_resources(service: str, root: Path, json_output: bool) -> None:
+    """Liste les ressources HTTP exposées et consommées par un microservice."""
+    summary = show_architecture_object(_microservice_catalog(root), "microservice", service)
+    if summary is None:
+        typer.echo(f"Microservice introuvable : {service}", err=True)
+        raise typer.Exit(code=2)
+    _emit_architecture(
+        {
+            "microservice": service,
+            "exposed": summary["http_apis_exposed"],
+            "consumed": summary["http_apis_consumed"],
+        },
+        json_output,
+    )
 
 
 def _render_microservice_properties(service: str, root: Path, json_output: bool) -> None:
@@ -860,16 +981,26 @@ def modules_cmd(
         None, help="Sous-commande et module, ou nom de module à détailler."
     ),
     json_output: bool = typer.Option(False, "--json"),
+    drawio: Optional[Path] = typer.Option(
+        None, "--drawio", help="Exporte le graphe de dépendances de modules en .drawio."
+    ),
 ) -> None:
     """Liste les modules indexés ou détaille l'un d'eux.
 
     `cccr modules` liste. `cccr modules <module>` détaille. Les sous-commandes
-    `endpoints`, `flow`, `properties` et `openapi` prennent un module dans le
-    répertoire courant déjà indexé.
+    `endpoints`, `properties` et `openapi` prennent un module dans le
+    répertoire courant déjà indexé. `graph` affiche les dépendances de build
+    entre modules et accepte `--drawio`.
     """
     arguments = arguments or []
-    commands = {"endpoints", "flow", "properties", "openapi"}
+    commands = {"endpoints", "properties", "openapi", "graph"}
     if arguments and arguments[0] in commands:
+        if arguments[0] == "graph":
+            if len(arguments) != 1:
+                typer.echo("`modules graph` ne prend pas de nom de module.", err=True)
+                raise typer.Exit(code=2)
+            _render_module_graph(Path.cwd().resolve(), json_output, drawio)
+            return
         if len(arguments) != 2:
             typer.echo(f"`modules {arguments[0]}` requiert un nom de module.", err=True)
             raise typer.Exit(code=2)
@@ -879,15 +1010,6 @@ def modules_cmd(
             if arguments[0] == "endpoints":
                 endpoints = [endpoint for endpoint in store.all_endpoints() if endpoint.module == selected.name]
                 typer.echo(json.dumps(render_endpoints_json(endpoints)) if json_output else render_endpoints_text(endpoints))
-            elif arguments[0] == "flow":
-                endpoints_by_module = group_endpoints_by_module(store.all_endpoints())
-                edges = [
-                    edge for edge in build_graph(endpoints_by_module)
-                    if edge.from_service == selected.name or edge.to_service == selected.name
-                ]
-                involved = sorted({selected.name} | {edge.from_service for edge in edges} | {edge.to_service for edge in edges})
-                result = render_graph_json(involved, edges, [], cross_module_data_available=True)
-                typer.echo(json.dumps(result) if json_output else render_graph_text(result))
             elif arguments[0] == "properties":
                 result = {"name": selected.name, "properties_example": selected.configuration_example}
                 typer.echo(json.dumps(result) if json_output else selected.configuration_example.rstrip())
@@ -895,7 +1017,7 @@ def modules_cmd(
                 _render_openapi_contracts(selected.name, selected.path, json_output)
         return
     if len(arguments) > 1:
-        typer.echo("Usage : `cccr modules [module]` ou `cccr modules <endpoints|flow|properties|openapi> <module>`.", err=True)
+        typer.echo("Usage : `cccr modules [module]` ou `cccr modules <endpoints|properties|openapi> <module>` ou `cccr modules graph`.", err=True)
         raise typer.Exit(code=2)
     module = arguments[0] if arguments else None
     repo_root = Path.cwd().resolve()
@@ -925,6 +1047,25 @@ def modules_cmd(
     typer.echo(json.dumps(result) if json_output else render_module_detail_text(result))
 
 
+def _render_module_graph(repo_root: Path, json_output: bool, drawio: Path | None) -> None:
+    if not db_path(repo_root).is_file():
+        typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        with Store(repo_root, readonly=True) as store:
+            modules = store.all_modules()
+            dependencies = store.all_module_dependencies()
+    except StoreError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if drawio is not None:
+        drawio.write_text(render_module_graph_drawio(modules, dependencies), encoding="utf-8")
+        typer.echo(f"Graphe écrit dans {drawio} ({len(modules)} modules, {len(dependencies)} dépendances).")
+        return
+    result = render_module_graph_json(modules, dependencies)
+    typer.echo(json.dumps(result) if json_output else render_module_graph_text(result))
+
+
 def _selected_indexed_module(name: str, repo_root: Path):
     if not db_path(repo_root).is_file():
         typer.echo("Index absent : lancez d'abord `cccr index` dans ce répertoire.", err=True)
@@ -943,79 +1084,6 @@ def _selected_indexed_module(name: str, repo_root: Path):
         typer.echo(f"Module ambigu : {name} ({paths})", err=True)
         raise typer.Exit(code=2)
     return matches[0]
-@app.command(name="flow")
-def flow_cmd(
-    query: str,
-    workspace: Optional[Path] = typer.Option(  # noqa: UP007
-        None,
-        "--workspace",
-        help="Répertoire parent Maven/Gradle à fédérer (BACKLOG-11 A2) pour tracer "
-        "un flux inter-services.",
-    ),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Résout un topic Kafka ou une route REST (nom exact, sinon sous-chaîne
-    non ambiguë parmi les endpoints indexés, sinon plus proche voisin par
-    similarité vectorielle — BACKLOG-10 K3) et liste tous ses sites
-    (producteurs/consommateurs Kafka, ou serveurs/appelants REST) avec les
-    findings Semgrep qui les recouvrent (BACKLOG-10 K5). Sans `--workspace`,
-    ne cherche que dans le projet courant (la similarité vectorielle n'est
-    disponible que dans ce mode) — chaque site est attribué à son module
-    Maven ou service Gradle si l'index couvre un répertoire multi-modules
-    (BACKLOG-13/15) ;
-    avec `--workspace <root>`, fédère en plus les autres microservices
-    indexés séparément (lecture seule, BACKLOG-11 A2).
-    """
-    repo_root = Path.cwd()
-
-    if workspace is not None:
-        services = discover_maven_services(workspace)
-        federation = load_federation(services)
-        endpoints_by_service = dict(federation.endpoints_by_service)
-        findings_by_service = dict(federation.findings_by_service)
-        try:
-            result = trace_flow(
-                query, endpoints_by_service, findings_by_service, federation.warnings
-            )
-        except FlowError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=2) from exc
-    else:
-        _require_index(repo_root)
-        with Store(repo_root) as store:
-            endpoints = store.all_endpoints()
-            endpoints_by_service = group_endpoints_by_module_for_flow(endpoints)
-            findings_by_service = group_findings_by_module_for_flow(store.all_findings())
-            warnings = []
-            repo_warning = _current_repo_endpoint_warning(store)
-            if repo_warning is not None:
-                warnings.append(repo_warning)
-            try:
-                result = trace_flow(query, endpoints_by_service, findings_by_service, warnings)
-            except FlowError as exc:
-                fallback_topic = None
-                try:
-                    config = load_config(repo_root)
-                    embedder = make_embedder(config.embedding_model)
-                    fallback_topic = resolve_topic_by_similarity(
-                        store, embedder, query, endpoints
-                    )
-                except (ConfigError, EmbeddingError):
-                    pass
-                if fallback_topic is None:
-                    typer.echo(str(exc), err=True)
-                    raise typer.Exit(code=2) from exc
-                result = trace_flow(
-                    fallback_topic, endpoints_by_service, findings_by_service, warnings
-                )
-
-    rendered = render_flow_json(result)
-    if json_output:
-        typer.echo(json.dumps(rendered))
-    else:
-        typer.echo(render_flow_text(rendered))
-
-
 @app.command(name="mcp")
 def mcp_cmd() -> None:
     """Lance le serveur MCP (stdio) exposant les findings du repo courant.

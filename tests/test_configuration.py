@@ -36,7 +36,7 @@ def test_service_configuration_example_reports_when_no_config_exists(tmp_path: P
     )
 
 
-def test_workspace_result_includes_one_yaml_example_per_microservice(tmp_path: Path) -> None:
+def test_workspace_result_does_not_include_configuration_content_by_default(tmp_path: Path) -> None:
     source = tmp_path / "orders" / "src" / "main" / "java" / "App.java"
     source.parent.mkdir(parents=True)
     source.write_text('@Value("${spring.application.name}") class App {}\n')
@@ -52,5 +52,4 @@ def test_workspace_result_includes_one_yaml_example_per_microservice(tmp_path: P
         [service], FederationResult(endpoints_by_service={}, findings_by_service={}, warnings=[])
     )
 
-    assert set(result["configuration_examples"]) == {"orders"}
-    assert "name: <string>" in result["configuration_examples"]["orders"]
+    assert "configuration_examples" not in result

@@ -13,14 +13,14 @@
 | `config.py` | `Config`, `load_config`, `init_config`, `ConfigError` | — |
 | `scanner.py` | Semgrep execution (subprocess) + JSON parsing → `Finding` ; `run_semgrep_endpoints`/`parse_semgrep_endpoints` + `infer_framework_endpoints` → `MessageEndpoint` (rules `metadata.category: endpoint-inventory`, REST K11 + Kafka K2, plus inferred Spring endpoints) ; `resolve_spring_property` (K2, ADR-28) ; `_module_for_path` (Maven then Gradle fallback, BACKLOG-15 H1) | `models`, `config`, `maven`, `gradle` |
 | `gradle.py` | Gradle service detection by Spring Boot `main()` class, complementing `maven.py` when no `pom.xml` exists (BACKLOG-15 H1, ADR-33): `gradle_service_for_path` | — |
-| `store.py` | `Store`: SQLite persistence (findings, endpoints, experimental code chunks, file hashes, meta, embeddings) | `models` |
+| `store.py` | `Store`: SQLite persistence (findings, endpoints, module dependencies, experimental code chunks, file hashes, meta, embeddings) | `models` |
 | `indexer.py` | `index_repo`: incremental orchestration (file diff → targeted scan → findings + endpoints (A1) → embedding ; can also index code chunks) | `config`, `scanner`, `store`, `embedder` |
 | `coco_indexer.py` | Experimental `--engine cocoindex` adapter: findings + code chunks as typed target states | `config`, `indexer`, `store` |
 | `embedder.py` | `Embedder` (sentence-transformers), `finding_to_text` | `models` |
 | `search.py` | `search_findings` (precision-first lexical), `summary`, `get_context` | `store`, `models` |
 | `graph.py` | Interaction graph derived at query time (BACKLOG-10 K12): `build_graph`, `find_outbound_calls_in_consumers`, `group_endpoints_by_module`, `paths_match` | `models` |
 | `workspace.py` | Read-only federation of a multi-service Maven/Gradle directory (BACKLOG-11 A2, ADR-30/33): `discover_workspace_services`, `load_federation` | `models`, `store` |
-| `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery (including safe YAML configuration examples) ; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `configuration`, `search`, `ccc_bridge`, `graph`, `workspace` |
+| `render.py` | Text/JSON serialization of search results (findings, code+findings), summary, graph, and workspace discovery; `.drawio` visual export of the graph (`render_graph_drawio`, BACKLOG-14 G1) | `search`, `ccc_bridge`, `graph`, `workspace` |
 | `configuration.py` | Extracts Spring property keys from production code and constructs a synthetic typed YAML template (`<secret>` for sensitive keys) | — |
 | `modules.py` | Discovers every Maven/Gradle module and creates its persisted audit snapshot for `cccr modules` | `configuration`, `maven`, `gradle` |
 | `ccc_bridge.py` | Bridge to the external `ccc` CLI: `search_code`, `annotate_with_findings` | `models`, `store` |
@@ -227,6 +227,12 @@ does not exist yet at that point (`CREATE TABLE IF NOT EXISTS` does not add a
 column to an already existing table); the two `CREATE INDEX` statements
 therefore live in `_migrate_module_columns`, after the `ALTER TABLE`, never in
 the initial script.
+
+**Schema migration v11 → v12**: `Store` creates `module_dependencies`
+(`source`, `target`, unique pair). The table is replaced on every enabled
+module-inventory phase of `cccr index`; it stores only declared Maven/Gradle
+dependencies whose two modules are present locally. It is consumed solely by
+`cccr modules graph`, never by the REST/Kafka interaction graph.
 
 ## 3. Indexing pipeline (`indexer.index_repo`)
 
@@ -831,21 +837,18 @@ Pure functions, no SQLite write:
   contract, and `trace_flow` never compares keys with each other (no false edge
   risk to avoid here, unlike the graph).
 
-CLI `cccr flow <query> [--workspace ROOT]` (§2 SPEC-FONC): without
-`--workspace`, `endpoints_by_service = group_endpoints_by_module_for_flow
-(store.all_endpoints())` on the current project — `service` reflects the Maven
-module of each site when the index covers several modules (BACKLOG-13), `None`
-otherwise ; with `--workspace`, it reuses `discover_maven_services`/
-`load_federation` (§6ter) as-is. `render_flow_json`/`render_flow_text`
-(`render.py`) define the `--json`/text contract, shared with the MCP tool
-`trace_message_flow` (BACKLOG-10 K6).
+The MCP tool `trace_message_flow(query, workspace_root=None)` uses
+`group_endpoints_by_module_for_flow(store.all_endpoints())` on the current
+project, or `discover_maven_services`/`load_federation` (§6ter) for a
+workspace. `render_flow_json` (`render.py`) defines its response contract.
 
 **Similarity fallback (BACKLOG-10 K3)**, current-project mode only
 (no federation — each federated service would need its own KNN query on its own
-store, not wired): when `trace_flow` raises `FlowError`, CLI/MCP retry through
-`resolve_topic_by_similarity` before giving up; `ConfigError`/`EmbeddingError`
-during that attempt (missing config, unavailable model) are silently absorbed
-**only to fall back to the original textual error**, never to hide another
+store, not wired): `topics search` and `resources search` retry through
+`resolve_topic_by_similarity` after textual resolution fails. The MCP trace
+keeps its own explicit flow handling. `ConfigError`/`EmbeddingError` during
+the CLI attempt (missing config, unavailable model) are silently absorbed
+**only to preserve the original textual error**, never to hide another
 problem — tested in `tests/test_flow.py` (threshold, with directly built
 vectors) and `tests/test_k5_flow_e2e.py`/`tests/test_mcp_server.py`
 (CLI/MCP wiring, by substituting `resolve_topic_by_similarity` rather than

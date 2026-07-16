@@ -2,6 +2,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -627,7 +628,7 @@ def test_graph_d2_renders_svg_via_d2_cli(
     assert out_file.read_text(encoding="utf-8") == "<svg />"
 
 
-def test_graph_html_writes_interactive_g6_document(
+def test_graph_html_writes_interactive_sigma_document(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -646,7 +647,7 @@ def test_graph_html_writes_interactive_g6_document(
 
     assert result.exit_code == 0
     document = out_file.read_text(encoding="utf-8")
-    assert "new G6.Graph" in document
+    assert "new Sigma(network" in document
     assert "order-service" in document
     assert "orders.created" in document
 
@@ -746,7 +747,7 @@ def test_endpoints_text_reports_none_when_empty(
     assert "Aucun endpoint indexé." in result.output
 
 
-def test_architecture_commands_explore_business_objects_without_source_by_default(
+def test_microservices_commands_explore_business_objects_without_source_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -803,14 +804,7 @@ def test_architecture_commands_explore_business_objects_without_source_by_defaul
             [publish.path, consume.path, call.path, serve.path], [publish, consume, call, serve]
         )
 
-    listed = runner.invoke(app, ["architecture", "list", "microservices", "--json"])
-    assert listed.exit_code == 0
-    listed_payload = json.loads(listed.output)
-    assert [item["name"] for item in listed_payload] == ["orders", "payments"]
-    assert "path" not in listed_payload[0]
-    assert "snippet" not in listed.output
-
-    summary = runner.invoke(app, ["architecture", "show", "module", "orders", "--json"])
+    summary = runner.invoke(app, ["microservices", "show", "orders", "--root", str(tmp_path), "--json"])
     assert summary.exit_code == 0
     summary_payload = json.loads(summary.output)
     assert summary_payload["http_apis_exposed"] == []
@@ -818,8 +812,29 @@ def test_architecture_commands_explore_business_objects_without_source_by_defaul
     assert summary_payload["kafka_topics_published"] == ["orders.created"]
     assert summary_payload["databases"]["mongodb_collections"] == ["orders"]
 
+    short_summary = runner.invoke(app, ["microservices", "orders", "--json"])
+    assert short_summary.exit_code == 0
+    assert json.loads(short_summary.output)["name"] == "orders"
+    assert json.loads(short_summary.output)["kafka_topics_published"] == ["orders.created"]
+
+    service_topics = runner.invoke(
+        app, ["microservices", "topics", "orders", "--root", str(tmp_path), "--json"]
+    )
+    assert service_topics.exit_code == 0
+    assert json.loads(service_topics.output) == {
+        "microservice": "orders", "published": ["orders.created"], "consumed": []
+    }
+
+    service_resources = runner.invoke(
+        app, ["microservices", "resources", "orders", "--root", str(tmp_path), "--json"]
+    )
+    assert service_resources.exit_code == 0
+    assert json.loads(service_resources.output) == {
+        "microservice": "orders", "exposed": [], "consumed": ["POST /payments"]
+    }
+
     topic_neighbors = runner.invoke(
-        app, ["architecture", "neighbors", "topic", "orders.created", "--json"]
+        app, ["topics", "neighbors", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert topic_neighbors.exit_code == 0
     assert json.loads(topic_neighbors.output) == [
@@ -827,18 +842,46 @@ def test_architecture_commands_explore_business_objects_without_source_by_defaul
         {"kind": "module", "name": "payments", "relation": "consumer"},
     ]
 
-    endpoints = runner.invoke(app, ["architecture", "list", "endpoints", "--json"])
-    assert endpoints.exit_code == 0
-    assert publish.id in {item["id"] for item in json.loads(endpoints.output)}
-
     consumers = runner.invoke(
-        app, ["architecture", "analyze", "consumers", "orders.created", "--json"]
+        app, ["topics", "consumers", "orders.created", "--root", str(tmp_path), "--json"]
     )
     assert consumers.exit_code == 0
     assert json.loads(consumers.output)["microservices"] == ["payments"]
 
+    topic_search = runner.invoke(
+        app, ["topics", "search", "created", "--root", str(tmp_path), "--json"]
+    )
+    assert topic_search.exit_code == 0
+    assert json.loads(topic_search.output)["resolved"] == "orders.created"
+
+    resource_search = runner.invoke(
+        app, ["resources", "search", "payments", "--root", str(tmp_path), "--json"]
+    )
+    assert resource_search.exit_code == 0
+    assert json.loads(resource_search.output)["resolved"] == "POST /payments"
+
+    monkeypatch.setattr(
+        "ccc_radar.cli.load_config", lambda _root: SimpleNamespace(embedding_model="test-model")
+    )
+    monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
+    monkeypatch.setattr(
+        "ccc_radar.cli.resolve_topic_by_similarity",
+        lambda _store, _embedder, _query, endpoints: endpoints[0].topic,
+    )
+    semantic_topic_search = runner.invoke(
+        app, ["topics", "search", "publication de commande", "--root", str(tmp_path), "--json"]
+    )
+    assert semantic_topic_search.exit_code == 0
+    assert json.loads(semantic_topic_search.output)["resolved"] == "orders.created"
+
+    semantic_resource_search = runner.invoke(
+        app, ["resources", "search", "encaissement", "--root", str(tmp_path), "--json"]
+    )
+    assert semantic_resource_search.exit_code == 0
+    assert json.loads(semantic_resource_search.output)["resolved"] == "POST /payments"
+
     implementation = runner.invoke(
-        app, ["architecture", "implementation", "endpoint", publish.id, "--json"]
+        app, ["microservices", "implementation", "endpoint", publish.id, "--root", str(tmp_path), "--json"]
     )
     assert implementation.exit_code == 0
     assert json.loads(implementation.output)["implementation"]["snippet"] == "send"
@@ -884,7 +927,7 @@ def test_graph_and_endpoints_reflect_a_real_cccr_index_run(
     assert sum(json.loads(summary_result.output)["by_severity"].values()) == 1
 
 
-def test_microservices_discovers_maven_modules_and_flags_unindexed(
+def test_microservices_lists_only_runtime_services(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dest = tmp_path / "maven_workspace"
@@ -896,12 +939,9 @@ def test_microservices_discovers_maven_modules_and_flags_unindexed(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
-    by_name = {s["name"]: s for s in data["services"]}
-    # Un plugin Spring Boot sans classe main n'est pas un runtime déployable.
-    assert by_name["order-service"]["kind"] == "shared-module"
-    assert by_name["order-service"]["indexed"] is True
-    assert by_name["common-lib"]["kind"] == "shared-module"
-    assert any("payment-service" in w for w in data["warnings"])
+    # Les modules Maven sans point d'entrée Spring Boot ne sont pas des
+    # microservices, même si une base .cccr locale existe.
+    assert data == {"services": [], "warnings": []}
 
 
 def test_microservices_text_reports_no_modules_for_empty_directory(
@@ -929,8 +969,7 @@ def test_microservices_defaults_to_current_directory(
 
     assert result.exit_code == 0
     data = json.loads(result.output)
-    by_name = {s["name"]: s for s in data["services"]}
-    assert by_name["order-service"]["kind"] == "shared-module"
+    assert data == {"services": [], "warnings": []}
 
 
 def test_microservices_discovers_gradle_services(tmp_path: Path) -> None:
@@ -960,7 +999,6 @@ public class BillingServiceMain {
     assert data["services"] == [
         {
             "name": "billing-service",
-            "path": str(project.resolve()),
             "kind": "microservice",
             "indexed": True,
             "endpoint_count": 0,
@@ -969,7 +1007,7 @@ public class BillingServiceMain {
     ]
 
 
-def test_microservices_service_subcommands_render_endpoints_flows_and_properties(
+def test_microservices_service_subcommands_render_endpoints_resources_and_properties(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -1006,13 +1044,19 @@ def test_microservices_service_subcommands_render_endpoints_flows_and_properties
     with Store(service_b) as store:
         store.replace_endpoints_for_files([serve.path], [serve])
 
-    endpoints = runner.invoke(app, ["microservices", "endpoints", "order-service", "--root", str(workspace), "--json"])
-    assert endpoints.exit_code == 0
-    assert json.loads(endpoints.output)[0]["topic"] == "GET /payments"
+    resources_by_service = runner.invoke(
+        app, ["microservices", "resources", "order-service", "--root", str(workspace), "--json"]
+    )
+    assert resources_by_service.exit_code == 0
+    assert json.loads(resources_by_service.output) == {
+        "microservice": "order-service", "exposed": [], "consumed": ["GET /payments"]
+    }
 
-    flow = runner.invoke(app, ["microservices", "flow", "order-service", "--root", str(workspace), "--json"])
-    assert flow.exit_code == 0
-    assert json.loads(flow.output)["edges"][0]["to_node"] == "payment-service"
+    resources = runner.invoke(
+        app, ["resources", "consumers", "GET /payments", "--root", str(workspace), "--json"]
+    )
+    assert resources.exit_code == 0
+    assert json.loads(resources.output)["microservices"] == ["order-service"]
 
     properties = runner.invoke(app, ["microservices", "properties", "order-service", "--root", str(workspace), "--json"])
     assert properties.exit_code == 0

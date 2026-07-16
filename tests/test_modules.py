@@ -8,19 +8,29 @@ from ccc_radar.cli import app
 from ccc_radar.config import Config
 from ccc_radar.indexer import index_repo
 from ccc_radar.models import MessageEndpoint
-from ccc_radar.modules import discover_modules
+from ccc_radar.modules import ModuleDependency, discover_module_dependencies, discover_modules
 from ccc_radar.store import Store
 
 runner = CliRunner()
 
 
-def _write_pom(path: Path, artifact: str, version: str | None, packaging: str = "jar") -> None:
+def _write_pom(
+    path: Path,
+    artifact: str,
+    version: str | None,
+    packaging: str = "jar",
+    dependencies: tuple[str, ...] = (),
+) -> None:
     version_xml = f"<version>{version}</version>" if version is not None else ""
+    dependencies_xml = "".join(
+        f"<dependency><groupId>example</groupId><artifactId>{dependency}</artifactId></dependency>"
+        for dependency in dependencies
+    )
     path.write_text(
         "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
         "<modelVersion>4.0.0</modelVersion>"
         f"<artifactId>{artifact}</artifactId>{version_xml}"
-        f"<packaging>{packaging}</packaging></project>"
+        f"<packaging>{packaging}</packaging><dependencies>{dependencies_xml}</dependencies></project>"
     )
 
 
@@ -41,6 +51,32 @@ def test_discover_modules_includes_maven_aggregators_libraries_and_gradle_projec
         ("platform", "maven", "1.2.3", "aggregator"),
         ("adapter-api", "gradle", "2.0.0", "library"),
         ("shared-kernel", "maven", "1.2.3", "library"),
+    ]
+
+
+def test_discover_module_dependencies_keeps_only_local_maven_and_gradle_targets(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared"
+    orders = tmp_path / "orders"
+    gradle_core = tmp_path / "gradle-core"
+    gradle_app = tmp_path / "gradle-app"
+    for module in (shared, orders, gradle_core, gradle_app):
+        module.mkdir()
+    _write_pom(shared / "pom.xml", "shared-kernel", "1.0.0")
+    _write_pom(
+        orders / "pom.xml", "orders-api", "1.0.0", dependencies=("shared-kernel", "external-client")
+    )
+    (gradle_core / "build.gradle").write_text("archivesName = 'gradle-core'\n")
+    (gradle_app / "build.gradle").write_text(
+        "archivesName = 'gradle-app'\ndependencies { implementation project(':gradle-core') }\n"
+    )
+
+    modules = discover_modules(tmp_path)
+
+    assert discover_module_dependencies(tmp_path, modules) == [
+        ModuleDependency(source="gradle-app", target="gradle-core"),
+        ModuleDependency(source="orders-api", target="shared-kernel"),
     ]
 
 
@@ -335,7 +371,7 @@ def test_modules_cli_rejects_removed_root_and_properties_options(tmp_path: Path,
     assert "No such option: --properties" in properties.output
 
 
-def test_modules_cli_subcommands_render_endpoints_flow_properties_and_openapi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_modules_cli_subcommands_render_endpoints_properties_and_openapi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     orders = tmp_path / "orders"
     payments = tmp_path / "payments"
     for module, artifact in ((orders, "orders-api"), (payments, "payments-api")):
@@ -352,15 +388,50 @@ def test_modules_cli_subcommands_render_endpoints_flow_properties_and_openapi(tm
     endpoints = runner.invoke(app, ["modules", "endpoints", "orders-api", "--json"])
     assert endpoints.exit_code == 0
     assert json.loads(endpoints.output)[0]["topic"] == "GET /payments"
-    flow = runner.invoke(app, ["modules", "flow", "orders-api", "--json"])
-    assert flow.exit_code == 0
-    assert json.loads(flow.output)["edges"][0]["to_node"] == "payments-api"
     properties = runner.invoke(app, ["modules", "properties", "orders-api", "--json"])
     assert properties.exit_code == 0
     assert properties.output
     openapi = runner.invoke(app, ["modules", "openapi", "orders-api", "--json"])
     assert openapi.exit_code == 0
     assert json.loads(openapi.output)["contracts"][0]["path"] == "src/main/resources/openapi.yml"
+
+
+def test_modules_graph_reads_indexed_build_dependencies_and_exports_drawio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import xml.etree.ElementTree as ET
+
+    shared = tmp_path / "shared"
+    orders = tmp_path / "orders"
+    shared.mkdir()
+    orders.mkdir()
+    _write_pom(shared / "pom.xml", "shared-kernel", "1.0.0")
+    _write_pom(orders / "pom.xml", "orders-api", "1.0.0", dependencies=("shared-kernel",))
+    modules = discover_modules(tmp_path)
+    with Store(tmp_path) as store:
+        store.replace_modules(modules)
+        store.replace_module_dependencies(discover_module_dependencies(tmp_path, modules))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modules", "graph", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {
+        "modules": ["orders-api", "shared-kernel"],
+        "dependencies": [{"source": "orders-api", "target": "shared-kernel"}],
+    }
+
+    # Le graphe d'interactions reste indépendant des dépendances de build.
+    interactions = runner.invoke(app, ["graph", "--json"])
+    assert interactions.exit_code == 0
+    assert json.loads(interactions.output)["edges"] == []
+
+    drawio = tmp_path / "module-dependencies.drawio"
+    export = runner.invoke(app, ["modules", "graph", "--drawio", str(drawio)])
+    assert export.exit_code == 0
+    root = ET.fromstring(drawio.read_text(encoding="utf-8"))
+    assert len([cell for cell in root.iter("mxCell") if cell.get("vertex") == "1"]) == 2
+    assert len([cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]) == 1
 
 
 def test_modules_are_read_from_the_persisted_index_snapshot(tmp_path: Path) -> None:
@@ -392,3 +463,23 @@ def test_index_repo_materializes_modules_snapshot(
         persisted = store.all_modules()
 
     assert [(item.name, item.version) for item in persisted] == [("orders-api", "3.1.0")]
+
+
+def test_index_repo_materializes_local_module_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared = tmp_path / "shared"
+    orders = tmp_path / "orders"
+    shared.mkdir()
+    orders.mkdir()
+    _write_pom(shared / "pom.xml", "shared-kernel", "3.1.0")
+    _write_pom(orders / "pom.xml", "orders-api", "3.1.0", dependencies=("shared-kernel",))
+    monkeypatch.setattr(
+        "ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}'
+    )
+
+    with Store(tmp_path) as store:
+        index_repo(tmp_path, Config(rules=[]), store, embedder=object())
+        dependencies = store.all_module_dependencies()
+
+    assert dependencies == [ModuleDependency(source="orders-api", target="shared-kernel")]

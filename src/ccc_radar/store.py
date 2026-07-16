@@ -10,10 +10,17 @@ import numpy as np
 import sqlite_vec
 
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import BlockingPoint, DiscoveredModule, KafkaMethod, MongoMethod, SourceEvidence
+from ccc_radar.modules import (
+    BlockingPoint,
+    DiscoveredModule,
+    KafkaMethod,
+    ModuleDependency,
+    MongoMethod,
+    SourceEvidence,
+)
 from ccc_radar.paths import db_path
 
-SCHEMA_VERSION = "11"
+SCHEMA_VERSION = "12"
 SEVERITY_ORDER = ["INFO", "WARNING", "ERROR"]
 _COUNTABLE_DIMENSIONS = ("rule_id", "severity")
 _SQLITE_BIND_LIMIT = 900
@@ -209,6 +216,11 @@ class Store:
                 kafka_methods TEXT NOT NULL DEFAULT '[]',
                 blocking_points TEXT NOT NULL DEFAULT '[]'
             );
+            CREATE TABLE IF NOT EXISTS module_dependencies (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                PRIMARY KEY (source, target)
+            );
             """
         )
         self._migrate_legacy_embeddings()
@@ -279,6 +291,7 @@ class Store:
     def replace_modules(self, modules: list[DiscoveredModule]) -> None:
         """Persist the build inventory produced during `cccr index`."""
         self.conn.execute("DELETE FROM modules")
+        self.conn.execute("DELETE FROM module_dependencies")
         for module in modules:
             relative_path = module.path.resolve().relative_to(self._repo_root).as_posix()
             self.conn.execute(
@@ -327,6 +340,20 @@ class Store:
             )
             for row in rows
         ]
+
+    def replace_module_dependencies(self, dependencies: list[ModuleDependency]) -> None:
+        """Remplace le graphe des dépendances de build local au workspace."""
+        self.conn.execute("DELETE FROM module_dependencies")
+        self.conn.executemany(
+            "INSERT INTO module_dependencies (source, target) VALUES (?, ?)",
+            [(dependency.source, dependency.target) for dependency in dependencies],
+        )
+
+    def all_module_dependencies(self) -> list[ModuleDependency]:
+        rows = self.conn.execute(
+            "SELECT source, target FROM module_dependencies ORDER BY source, target"
+        ).fetchall()
+        return [ModuleDependency(source=row["source"], target=row["target"]) for row in rows]
 
     def get_embedding_dim(self) -> int | None:
         raw = self.get_meta("embedding_dim")

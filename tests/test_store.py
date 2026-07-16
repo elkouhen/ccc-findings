@@ -79,10 +79,10 @@ def test_set_and_iter_embeddings(tmp_path: Path) -> None:
 
 def test_reopening_existing_database_reads_schema_version(tmp_path: Path) -> None:
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "11"
+        assert store.get_meta("schema_version") == "12"
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "11"
+        assert store.get_meta("schema_version") == "12"
 
 
 def _make_legacy_v1_db(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_opening_legacy_v1_database_migrates_to_vec0_and_forces_reembed(
     _make_legacy_v1_db(tmp_path)
 
     with Store(tmp_path) as store:
-        assert store.get_meta("schema_version") == "11"
+        assert store.get_meta("schema_version") == "12"
         # signature/dim cleared -> next `cccr index` re-embeds everything
         assert store.get_meta("embedding_signature") is None
         assert store.get_embedding_dim() is None

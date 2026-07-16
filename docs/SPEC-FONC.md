@@ -77,7 +77,7 @@ Creates `.cccr/config.yml`.
   `p/security-audit` (no error): informational stdout message explaining the
   fallback and how to customize it, exit code 0. This fallback keeps the
   **core product** usable, but does not by itself activate the microservices
-  extension (`endpoints` / `graph` / `workspace` / `flow`). Priority order:
+  extension (`endpoints` / `graph` / `microservices` / `topics` / `resources`). Priority order:
   explicit `--rules` > detected local config > copied skill packs > default
   registry pack.
 - Each automatic copy writes `.cccr/rules/manifest.json`, recording the source
@@ -312,30 +312,6 @@ for a non-Java file.
 Same “index absent” rules as `findings` (same message, code 2) — `endpoints`
 lives in the same database as `findings`.
 
-### `cccr architecture <list|show|neighbors|analyze|implementation>`
-
-The architecture explorer is the object-oriented navigation surface for the
-indexed domain model. It works with business objects rather than source files:
-`module`, `microservice`, `endpoint`, `topic`, `api` and MongoDB `collection`.
-
-- `architecture list [kind]`: discovery-level inventory. The default kind is
-  `microservices`.
-- `architecture show <kind> <name>`: concise object summary. A module includes
-  its build tool, language, exposed and consumed HTTP APIs, produced and
-  consumed Kafka topics, MongoDB collections, technologies, OpenAPI presence
-  and direct dependencies.
-- `architecture neighbors <kind> <name>`: direct graph relations, allowing a
-  user to move from a module to its APIs/topics/collections or from a topic to
-  its producers and consumers.
-- `architecture analyze <consumers|producers|calls|external-apis|orphan-endpoints|impact> [target]`:
-  architecture questions based on the same relationships.
-- `architecture implementation endpoint <id>`: the only navigation command
-  that exposes source evidence (path, line range, qualified class when known,
-  and indexed snippet), because the user explicitly requested implementation.
-
-All commands support `--json`. Except `implementation`, neither text nor JSON
-output includes source file paths or source snippets.
-
 ### `cccr graph [--workspace ROOT] [--json] [--drawio FILE] [--html FILE] [--d2 FILE]`
 *Java/Spring microservices extension — beta.*
 
@@ -429,11 +405,12 @@ When a service has Kafka entries from an indexed Markdown manifest, those
 entries are authoritative for that service and replace its Kafka endpoints
 detected from code. Services absent from the manifest keep code detection.
 
-`--html FILE`: writes an interactive AntV G6 graph. Nodes can be zoomed, dragged,
-searched, or selected; selecting one mutes unrelated nodes and edges so dense
-hubs remain inspectable. Each microservice card shows its name and up to four
-exposed REST APIs; extra APIs are summarized by a count. The generated document embeds graph data locally and
-loads AntV G6 from its CDN when opened.
+`--html FILE`: writes an interactive Sigma.js graph backed by Graphology. Nodes
+can be zoomed, panned, searched, or selected; selecting one mutes unrelated
+nodes and edges so dense hubs remain inspectable. The details panel lists the
+APIs exposed by the selected microservice and its direct relations. The
+generated document embeds graph data locally and loads Sigma.js from its CDN
+when opened.
 
 `--d2 FILE`: also replaces JSON/text rendering. With a `.d2` extension it
 writes D2 source; for another extension (for example `.svg` or `.png`) it
@@ -441,7 +418,7 @@ renders through the D2 CLI. `--d2-layout` selects `elk` (default) or `dagre`.
 `--drawio`, `--html`, and `--d2` cannot be combined. No equivalent MCP tool — visual files
 are not agent-consumable results, unlike the JSON returned by `graph`.
 
-### `cccr microservices [root] [--json]`
+### `cccr microservices [--root ROOT] [--json]`
 *Java/Spring microservices extension — beta.*
 
 Discovers Maven modules and Gradle Spring Boot services under `root` (default:
@@ -464,24 +441,72 @@ another project's database) to count its endpoints and findings.
 ```json
 {
   "services": [
-    {"name": "order-service", "path": "/repo/order-service", "kind": "microservice",
-     "indexed": true, "endpoint_count": 4, "finding_count": 2},
-    {"name": "common-lib", "path": "/repo/common-lib", "kind": "shared-module",
-     "indexed": true, "endpoint_count": 0, "finding_count": 1}
+    {"name": "order-service", "kind": "microservice",
+     "indexed": true, "endpoint_count": 4, "finding_count": 2}
   ],
-  "configuration_examples": {
-    "order-service": "server:\\n  port: 0\\n"
-  },
-  "warnings": ["payment-service (/repo/payment-service): not indexed, ignored (run cccr index in this project)."]
+  "warnings": ["payment-service: not indexed, ignored (run cccr index in this project)."]
 }
 ```
 
-`configuration_examples` contains one safe YAML template per runtime
-microservice. It is constructed from Spring property keys referenced by
-production code (`${...}`, `@Value`, `Environment.getProperty`,
-`@ConditionalOnProperty`), never from existing `application*` files. **No
-value from the repository is rendered**: key-name heuristics produce generic
-values such as `<string>`, `0`, `false` or `<secret>`; test code is excluded.
+Les bibliothèques et modules partagés ne figurent pas dans cette commande ;
+ils sont listés par `cccr modules`.
+
+The discovery command never includes configuration content. The synthetic YAML
+template is available only after an explicit request through
+`cccr microservices properties <service> --root <root>`; it is constructed
+from Spring property keys referenced by production code (`${...}`, `@Value`,
+`Environment.getProperty`, `@ConditionalOnProperty`), never from existing
+`application*` files. **No value from the repository is rendered**: key-name
+heuristics produce generic values such as `<string>`, `0`, `false` or
+`<secret>`; test code is excluded.
+
+The same command is the architecture explorer. Its navigation remains on
+business objects and never includes source paths or snippets by default:
+
+- `cccr microservices show <service>` returns the summary of one microservice:
+  build tool, language, APIs, Kafka topics, MongoDB collections, technologies,
+  OpenAPI presence and direct dependencies.
+- `cccr microservices <service>` is the short form of `show <service>`.
+- `cccr microservices topics <service>` lists published and consumed Kafka
+  topics.
+- `cccr microservices resources <service>` lists exposed and consumed HTTP
+  resources.
+- `cccr microservices neighbors <service>` lists direct relations of that
+  microservice.
+- `cccr microservices analyze <calls|external-apis|orphan-endpoints|impact> [target]`
+  answers architecture questions centered on microservices.
+- `cccr microservices implementation endpoint <id>` is the explicit final
+  level that returns location and indexed source evidence.
+
+### `cccr topics [list|show|neighbors|consumers|producers|search] [topic]`
+
+Explores Kafka topic objects from the same indexed graph. With no argument or
+with `list`, it returns the discovered topics. The remaining subcommands take
+one exact topic name:
+
+- `show` returns the topic summary;
+- `neighbors` returns its producer and consumer microservices;
+- `consumers` answers which microservices consume the topic;
+- `producers` answers which microservices publish it.
+- `search` resolves an exact name or a unique case-insensitive substring; on a
+  locally indexed project only, it falls back to endpoint vector similarity.
+
+The command returns business objects only, without source paths or snippets.
+
+### `cccr resources [list|show|neighbors|providers|consumers|search] [resource]`
+
+Explores HTTP resource objects from the same indexed graph. With no argument or
+with `list`, it returns the discovered resources. The remaining subcommands
+take one resource name:
+
+- `show` returns the resource summary;
+- `neighbors` returns its provider and consumer microservices;
+- `providers` answers which microservices expose the resource;
+- `consumers` answers which microservices call the resource;
+- `search` resolves an exact name or a unique case-insensitive substring, then
+  uses the same local vector-similarity fallback as `topics search`.
+
+The command returns business objects only, without source paths or snippets.
 
 `endpoint_count` of a Maven `shared-module` is always `0`: a shared module is never
 handled as a runtime producer/consumer, even if endpoints were detected there by
@@ -504,12 +529,17 @@ error.
   project/archive name, declared version (or `null`), build system,
   classification (`microservice`, `library`, `aggregator`) and absolute path.
 - `cccr modules <module>` returns the detailed record for one exact module name.
-- `cccr modules endpoints|flow|properties|openapi <module>` returns the targeted
-  inventory, interaction graph, synthetic configuration example, or local API
-  contracts for that module.
+- `cccr modules endpoints|properties|openapi <module>` returns the targeted
+  inventory, synthetic configuration example, or local API contracts for that
+  module.
+- `cccr modules graph` returns the declared Maven/Gradle dependencies whose
+  source and target are both indexed modules. It is distinct from `cccr graph`:
+  it never contains REST/Kafka interactions or topics.
+- `cccr modules graph --drawio modules.drawio` exports that module-dependency
+  graph in Draw.io format.
 
-The configuration example is generated during that indexation and follows
-the same no-real-values policy as `microservices.configuration_examples`.
+The configuration example is generated during that indexation and follows the
+same no-real-values policy as `microservices properties`.
 
 ### `cccr audit [--workspace ROOT] [--json]`
 
@@ -525,64 +555,6 @@ runtime path.
    "kind": "microservice", "path": "/repo/orders"}
 ]
 ```
-
-### `cccr flow <query> [--workspace ROOT] [--json]`
-*Java/Spring microservices extension — beta.*
-
-Resolves `<query>` into a Kafka topic or REST route: exact name
-first, otherwise case-insensitive substring **if it designates a unique
-route/topic** among indexed endpoints — an ambiguous match (several topics
-contain the substring) fails rather than choosing arbitrarily.
-
-Without `--workspace` only: if textual resolution fails, a last-resort
-**vector similarity** fallback looks for the nearest neighbor
-among endpoints already embedded by `cccr index` (`cccr endpoints`/`cccr graph`
-also depend on it indirectly, same indexing pipeline) — useful for a natural-
-language query that contains no literal topic/route name. Below a minimum
-similarity threshold, no result is kept (same policy as `topic_dynamic`: never
-resolved by guesswork) and the failure remains the same message as for an
-unsuccessful textual resolution. This fallback is not available with
-`--workspace` (multi-service federation).
-
-Without `--workspace`: searches only the current project, but `service` now
-reflects the Maven module of each site (`endpoint.module`) when the
-index covers a multi-module directory — `null` only for a non-Maven repo or a
-site outside the Maven tree, never to hide federation. With `--workspace ROOT`:
-also federates separately indexed Maven microservices under `ROOT`
-(read-only). In both cases, every site in the flow
-(Kafka producer/consumer, or REST server/caller) appears assigned to its
-service, and for each site the overlapping Semgrep findings (overlapping file +
-lines, same service — spirit of ADR-19) are listed by `rule_id`. A stale
-endpoint inventory is surfaced through `warnings` rather than silently being
-confused with the absence of a site.
-
-`--json` rendering:
-```json
-{
-  "query": "orders.created",
-  "resolved_topic": "orders.created",
-  "sites": [
-    {"service": "order-service", "role": "produce", "system": "kafka",
-     "framework": "spring-kafka", "path": "app/OrderProducer.java",
-     "start_line": 14, "end_line": 14, "topic_dynamic": false,
-     "finding_rule_ids": ["rules.cccr.demo.kafka-send-fire-and-forget"]},
-    {"service": "payment-service", "role": "consume", "system": "kafka",
-     "framework": "spring-kafka", "path": "app/OrderConsumer.java",
-     "start_line": 7, "end_line": 10, "topic_dynamic": false,
-     "finding_rule_ids": []}
-  ],
-  "warnings": []
-}
-```
-
-Query with no match, or ambiguous query (several topics match as a substring):
-explicit stderr message, exit code 2. Same “index absent” rules as
-`findings`/`summary` (same message, code 2) when `--workspace` is not provided;
-with `--workspace`, a missing or incompatible federated service never makes
-`flow` fail (same guarantees as `cccr graph --workspace`/`cccr microservices`),
-but is **not** silently absorbed either: it appears in `warnings` — a
-missing site caused by a non-federated service must stay visible, not be
-confused with the real absence of a producer/consumer.
 
 ### `cccr mcp`
 Starts the MCP server (stdio) on the current repo (execution directory).
@@ -615,8 +587,8 @@ the **Java/Spring microservices extension**.
 | `search(query, limit=5, offset=0, lang=None, path=None, refresh=False)` | `CodeSearchResult` | Code search annotated with findings from the returned file/class — same tool name, parameters and ordering as `ccc`'s `search`, and equivalent to CLI `cccr search` (shared implementation, `code_search.py`) | Always delegates code search to `ccc` |
 | `list_endpoints(system=None, role=None, topic=None, path_glob=None)` | `list[EndpointHit]` | Filterable list of indexed REST/Kafka endpoints — equivalent to CLI `cccr endpoints` | — |
 | `graph(workspace_root=None)` | `GraphResult` | Inter-service topology + outbound REST calls in Kafka consumers — equivalent to CLI `cccr graph`/`cccr graph --workspace` | Without inter-module data, `services`/`nodes`/`edges` are empty and `note` explains why |
-| `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts and safe YAML configuration examples per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30); secrets are redacted |
-| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Resolves a topic/route and lists its sites (producers/consumers, or servers/callers) with the findings overlapping them — equivalent to CLI `cccr flow`/`cccr flow --workspace` | No-match or ambiguous query → `ToolError` |
+| `list_workspace_services(root)` | `WorkspaceResult` | Maven/Gradle workspace discovery + endpoint/finding counts per runtime service — equivalent to CLI `cccr microservices` | Read-only (ADR-30) |
+| `trace_message_flow(query, workspace_root=None)` | `FlowResultInfo` | Detailed MCP-only trace of a topic/route and its sites (producers/consumers, or servers/callers), including overlapping findings | No-match or ambiguous query → `ToolError` |
 
 `search` adds to each code result:
 - `findings`: list of findings whose `path` is identical to the returned source

@@ -2,8 +2,8 @@
 par A2, l'intention de K7 : deux dépôts indexés séparément (un producteur
 Kafka dans l'un, un consommateur dans l'autre) sont fédérés, chaque site
 attribué à son propre service, et la relation entre les deux ressort du
-graphe. K7 visait initialement `cccr flow --workspace <nom>` (jamais
-livré, K5) ; l'adaptation actée (voir `archive/BACKLOG-PRIORITY.md`,
+graphe. K7 visait initialement un traçage de flux fédéré ; l'adaptation actée
+(voir `archive/BACKLOG-PRIORITY.md`,
 cadrage 2026-07-13) est la découverte automatique d'un répertoire parent
 Maven (A2) plutôt qu'un fichier de workspace nommé — ce test valide que
 cette adaptation tient la même promesse.

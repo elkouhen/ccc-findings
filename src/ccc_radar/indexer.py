@@ -13,7 +13,7 @@ from ccc_radar.config import Config
 from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import discover_modules
+from ccc_radar.modules import discover_module_dependencies, discover_modules
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
@@ -430,6 +430,9 @@ def index_repo(
         _report_progress(progress, "→ Indexation : inventaire des modules et propriétés...")
         _trace("store.modules.begin", count=len(discovered_modules))
         store.replace_modules(discovered_modules)
+        store.replace_module_dependencies(
+            discover_module_dependencies(repo_root, discovered_modules)
+        )
         _trace("store.modules.end")
     else:
         _report_progress(progress, "→ Indexation : propriétés et inventaire des modules désactivés, snapshot conservé.")

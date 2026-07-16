@@ -12,8 +12,8 @@ The chosen positioning is intentionally **two-layered**:
   (`init`, `index`, `findings`, `summary`, `search`, MCP `search_findings` /
   `findings_summary` / `search` / `reindex_findings`).
 - **Java/Spring microservices audit extension**: REST/Kafka inventory,
-  inter-service graph, and flow tracing (`endpoints`, `graph`, `workspace`,
-  `flow`, `.drawio` export) built on top of the same index, but to be treated
+  inter-service graph, and business-object exploration (`microservices`,
+  `topics`, `resources`, `.drawio` export) built on top of the same index, but to be treated
   as a microservices-focused extension still being stabilized.
 
 ## Architecture — how `cccr` extends `ccc`
@@ -165,7 +165,7 @@ cccr summary                    # aggregated view (severities, top rules, top di
 The `p/security-audit` fallback is enough for the **core product** (findings).
 For the microservices extension, `cccr init` must be able to copy the skill
 packs (`default`, `liveness`, `rest`, `kafka`, `kafka-security`); otherwise
-`cccr endpoints` / `graph` / `flow` have no usable inventory.
+`cccr endpoints` / `graph` / `topics` / `resources` have no usable inventory.
 During `cccr index`, the CLI prints stage progress (file inventory, delta,
 Semgrep scan, persistence, embedding) before the final
 `scanned=... skipped=... +findings=...` summary line.
@@ -178,30 +178,22 @@ cccr endpoints                  # indexed REST/Kafka inventory
 cccr graph                      # inter-service REST/Kafka topology
 cccr audit                      # high-confidence architectural risks
 cccr microservices              # discovery of indexed Maven/Gradle services from current dir
+cccr microservices show order-service
+cccr microservices topics order-service
+cccr microservices resources order-service
+cccr microservices implementation endpoint <endpoint-id>
+cccr topics                     # discovered Kafka topics
+cccr topics consumers orders.created
+cccr topics producers orders.created
+cccr topics neighbors orders.created
+cccr topics search created
+cccr resources                  # discovered HTTP resources
+cccr resources consumers "POST /payments"
+cccr resources search payments
 cccr modules                    # Maven/Gradle modules, entrypoints, Mongo/Kafka facts, OpenAPI files and config templates
-cccr flow "orders.created"      # producers/consumers or callers/servers for a flow
+cccr modules graph              # declared local build dependencies between modules
+cccr modules graph --drawio modules.drawio
 ```
-
-### Architecture explorer
-
-`architecture` is the object-oriented entry point. Its default views contain
-only architecture facts: they never return file paths or source code. Source
-evidence is available only through the explicit `implementation` command.
-
-```bash
-cccr architecture list microservices
-cccr architecture show module order-service
-cccr architecture list topics
-cccr architecture neighbors topic orders.created
-cccr architecture analyze consumers orders.created
-cccr architecture analyze calls order-service
-cccr architecture analyze orphan-endpoints
-cccr architecture implementation endpoint <endpoint-id>
-```
-
-The available objects are `module`, `microservice`, `endpoint`, `topic`, `api`
-and `collection`. Use `--json` for a structured representation of the same
-object graph.
 
 For a **Java microservices audit** driven by the `ccc-radar-skill` skill,
 `cccr init` first tries to copy these packs from the skill repo into

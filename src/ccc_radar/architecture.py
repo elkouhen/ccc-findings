@@ -167,6 +167,7 @@ def endpoint_summary(endpoint: MessageEndpoint) -> dict[str, object]:
         "kind": "endpoint",
         "id": endpoint.id,
         "name": endpoint.topic,
+        "topic": endpoint.topic,
         "role": endpoint.role,
         "system": endpoint.system,
         "module": endpoint.module,

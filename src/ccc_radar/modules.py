@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -33,6 +34,14 @@ class DiscoveredModule:
     openapi_files: tuple[str, ...] = ()
     kafka_methods: tuple["KafkaMethod", ...] = ()
     blocking_points: tuple["BlockingPoint", ...] = ()
+
+
+@dataclass(frozen=True, order=True)
+class ModuleDependency:
+    """Dépendance de build entre deux modules présents dans le workspace."""
+
+    source: str
+    target: str
 
 
 @dataclass(frozen=True)
@@ -594,3 +603,67 @@ def discover_modules(
     )
     _trace("modules.enrich.end", count=len(enriched))
     return enriched
+
+
+def discover_module_dependencies(root: Path, modules: list[DiscoveredModule]) -> list[ModuleDependency]:
+    """Retourne les dépendances de build dont les deux extrémités sont locales.
+
+    Les coordonnées Maven sont rapprochées sur l'``artifactId`` des modules
+    découverts. Les dépendances Gradle ``project(':...')`` sont rapprochées sur
+    leur chemin de projet, puis sur le nom d'artefact. Les dépendances externes
+    ne sont volontairement pas ajoutées au graphe.
+    """
+    names = {module.name for module in modules}
+    gradle_projects = {
+        ":" + module.path.resolve().relative_to(root.resolve()).as_posix().replace("/", ":"): module.name
+        for module in modules
+        if module.build_system == "gradle" and module.path.resolve() != root.resolve()
+    }
+    dependencies: set[ModuleDependency] = set()
+    for module in modules:
+        if module.build_system == "maven":
+            targets = _maven_module_dependencies(module.path / "pom.xml")
+        else:
+            targets = _gradle_module_dependencies(module.path)
+        for target in targets:
+            resolved = gradle_projects.get(target, target)
+            if resolved in names and resolved != module.name:
+                dependencies.add(ModuleDependency(source=module.name, target=resolved))
+    return sorted(dependencies)
+
+
+def _maven_module_dependencies(pom_path: Path) -> set[str]:
+    try:
+        root = ET.fromstring(pom_path.read_text(encoding="utf-8", errors="replace"))
+    except (ET.ParseError, OSError):
+        return set()
+    namespace = "{http://maven.apache.org/POM/4.0.0}"
+    dependencies = root.find(f"{namespace}dependencies")
+    if dependencies is None:
+        dependencies = root.find("dependencies")
+    if dependencies is None:
+        return set()
+    targets: set[str] = set()
+    for dependency in list(dependencies):
+        artifact = dependency.findtext(f"{namespace}artifactId") or dependency.findtext("artifactId")
+        if artifact:
+            targets.add(artifact.strip())
+    return targets
+
+
+_GRADLE_PROJECT_DEPENDENCY_RE = re.compile(
+    r"\b(?:api|compileOnly|implementation|runtimeOnly|testImplementation)\s*\(?\s*"
+    r"project\s*\(\s*(?:path\s*:\s*)?['\"](:[^'\"]+)['\"]"
+)
+
+
+def _gradle_module_dependencies(module_dir: Path) -> set[str]:
+    targets: set[str] = set()
+    for filename in ("build.gradle", "build.gradle.kts"):
+        path = module_dir / filename
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        targets.update(_GRADLE_PROJECT_DEPENDENCY_RE.findall(text))
+    return targets

@@ -210,7 +210,7 @@ def test_render_graph_drawio_produces_well_formed_xml() -> None:
     assert all("strokeColor=#d32f2f" not in cell.get("style", "") for cell in edge_cells)
 
 
-def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
+def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     endpoints_by_service = {
         "service-</script>": [
             make_endpoint("produce", "orders.created", "producer/Producer.java", system="kafka")
@@ -222,17 +222,16 @@ def test_render_graph_html_embeds_g6_and_safe_graph_data() -> None:
 
     document = render_graph_html(endpoints_by_service, build_graph(endpoints_by_service))
 
-    assert 'src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"' in document
-    assert "new G6.Graph" in document
-    assert "preventOverlap: true" in document
-    assert "type: datum => datum.data.kind === \"microservice\" ? \"html\" : \"rect\"" in document
-    assert "const serviceCard = datum" in document
-    assert "Aucune API exposée" in document
-    assert "graph.zoomBy(1.25" in document
+    assert 'src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"' in document
+    assert 'src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"' in document
+    assert "new Sigma(network" in document
+    assert "new graphology.MultiDirectedGraph" in document
+    assert "for (let iteration = 0; iteration < 720; iteration += 1)" in document
+    assert "APIs exposees" in document
+    assert "renderer.getCamera().animatedZoom" in document
     assert 'id="fit-view"' in document
-    assert 'type: "zoom-canvas"' in document
-    assert "graph.setElementVisibility(visibility)" in document
-    assert '"visible" : "hidden"' in document
+    assert 'renderer.on("clickNode"' in document
+    assert "nodeReducer:" in document
     assert "<\\/script>" in document
     assert "service-</script>" not in document
 

@@ -855,7 +855,7 @@ unrelated standalone repos.
 
 **Consequences**: `src/ccc_radar/workspace.py` (new), no dependency on a
 third-party Maven parser (only `xml.etree.ElementTree`, stdlib). CLI
-`cccr microservices [root]` and MCP tool `list_workspace_services` expose
+`cccr microservices [--root ROOT]` and MCP tool `list_workspace_services` expose
 service discovery + endpoint/finding counts, ahead of K12 which consumes
 `load_federation` to build the real graph.
 `tests/test_workspace.py` freezes the contract: names/classification, indexing

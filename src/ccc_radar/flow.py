@@ -65,7 +65,7 @@ def group_endpoints_by_module_for_flow(
     endpoints: list[MessageEndpoint],
 ) -> dict[str | None, list[MessageEndpoint]]:
     """Regroupe par module Maven (`endpoint.module`, BACKLOG-13 M1) pour
-    `cccr flow` (M3). Contrairement à `graph.group_endpoints_by_module`
+    `trace_message_flow` (M3). Contrairement à `graph.group_endpoints_by_module`
     (qui ignore les endpoints sans module — sans nom stable, ils ne
     peuvent jamais former une arête inter-service fiable), `flow` ne
     supprime jamais un site : lister tous les producteurs/consommateurs

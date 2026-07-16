@@ -97,7 +97,7 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
     for service in services:
         if not service.indexed:
             warnings.append(
-                f"{service.name} ({service.path}) : non indexé, ignoré "
+                f"{service.name} : non indexé, ignoré "
                 "(lancez cccr index sur ce projet)."
             )
             continue
@@ -120,6 +120,6 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
                 if stale_warning is not None:
                     warnings.append(stale_warning)
         except StoreError as exc:
-            warnings.append(f"{service.name} ({service.path}) : {exc}")
+            warnings.append(f"{service.name} : {exc}")
 
     return FederationResult(endpoints_by_service, findings_by_service, warnings)
