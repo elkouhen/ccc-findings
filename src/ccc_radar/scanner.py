@@ -16,7 +16,7 @@ from ccc_radar import java_parser
 from ccc_radar import maven as maven_module
 from ccc_radar.gradle import gradle_service_for_path
 from ccc_radar.maven import module_name_for_path
-from ccc_radar.modules import _has_rest_controllers
+from ccc_radar.modules import _has_rest_controllers, _maven_module_dependencies
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 from ccc_radar.topic_expressions import spring_topic_reference
 
@@ -1025,7 +1025,70 @@ def _infer_generic_request_mapping_endpoints(repo_root: Path, rel_path: str) -> 
     return endpoints
 
 
+_INTERFACE_DECL_RE = re.compile(
+    r"^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?interface\s+(\w+)\b"
+)
+# Capture l'entité (premier argument type) d'un `extends ...Repository<Entity, ...>`.
+_REPO_EXTENDS_ENTITY_RE = re.compile(
+    r"\bextends\b[^{;]*?\b\w*Repository\s*<\s*([\w.<>]+?)\s*,"
+)
+_EXPORTED_FALSE_RE = re.compile(r"exported\s*=\s*false", re.IGNORECASE)
+
+
+def _simple_type_name(qualified: str) -> str:
+    """`a.b.Foo<Bar>` -> `Foo`."""
+    cleaned = qualified.strip().split("<", 1)[0]
+    return cleaned.rsplit(".", 1)[-1]
+
+
+def _pluralize(word: str) -> str:
+    """Pluralisation anglaise best-effort, alignée sur Spring Data REST."""
+    word = word.strip()
+    if not word:
+        return word
+    if word.endswith(("s", "x", "z", "ch", "sh")):
+        return word + "es"
+    if word.endswith("y") and len(word) > 1 and word[-2].lower() not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
+
+
+@lru_cache(maxsize=256)
+def _module_has_spring_data_rest(repo_root_str: str, rel_path: str) -> bool:
+    """True si le module Maven contenant ce fichier déclare data-rest.
+
+    Spring Data REST n'auto-expose les repositories qu'avec la dépendance
+    `spring-boot-starter-data-rest`. Ce portillon évite les faux positifs sur
+    les modules JPA purs (ex. `invoicing` ici, dont `InvoiceRepository` n'est
+    pas exposé). On remonte au `pom.xml` du module le plus proche.
+    """
+    repo_root = Path(repo_root_str)
+    current = (repo_root / rel_path).parent
+    pom: Path | None = None
+    while True:
+        candidate = current / "pom.xml"
+        if candidate.exists():
+            pom = candidate
+            break
+        if current == repo_root or current.parent == current:
+            break
+        current = current.parent
+    if pom is None:
+        return False
+    return any("data-rest" in dependency for dependency in _maven_module_dependencies(pom))
+
+
 def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    """Inventorie les endpoints Spring Data REST d'un repository.
+
+    Deux cas :
+    - `@RepositoryRestResource(path = "...")` : chemin explicite (l'annotation
+      implique la présence de data-rest, pas de portillon classpath) ;
+    - interface Spring Data sans `exported=false` et sans `path` : chemin par
+      défaut `/<entité-pluriel>`, uniquement si le module déclare data-rest.
+      C'est le cas d'un `UserRepository extends JpaRepository<User, ...>` sans
+      annotation, qu'aucun littéral de chemin ne permettait jusque-là de lier.
+    """
     path = repo_root / rel_path
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -1034,13 +1097,38 @@ def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[Me
 
     endpoints: list[MessageEndpoint] = []
     for idx, line in enumerate(lines):
-        match = _REPOSITORY_REST_RESOURCE_RE.search(line)
-        if match is None:
+        if _INTERFACE_DECL_RE.search(line) is None:
             continue
-        rest_path = _named_string_arg(match.group(1) or "", "path")
-        if not rest_path:
+        entity_match = _REPO_EXTENDS_ENTITY_RE.search("\n".join(lines[idx : idx + 4]))
+        if entity_match is None:
             continue
-        base_path = _normalize_rest_path(rest_path)
+        entity = _simple_type_name(entity_match.group(1))
+
+        # `@RepositoryRestResource` la plus proche au-dessus de l'interface.
+        anno_args = ""
+        anno_line = idx
+        for back in range(idx - 1, max(-1, idx - 6), -1):
+            anno = _REPOSITORY_REST_RESOURCE_RE.search(lines[back])
+            if anno:
+                anno_args = anno.group(1) or ""
+                anno_line = back
+                break
+
+        if _EXPORTED_FALSE_RE.search(anno_args):
+            continue
+
+        rest_path = _named_string_arg(anno_args, "path")
+        if rest_path:
+            base_path = _normalize_rest_path(rest_path)
+            snippet = lines[anno_line].strip()
+            decl_line = anno_line + 1
+        else:
+            if not _module_has_spring_data_rest(str(repo_root), rel_path):
+                continue
+            base_path = "/" + _pluralize(entity.lower())
+            snippet = lines[idx].strip()
+            decl_line = idx + 1
+
         for topic in (
             f"GET {base_path}",
             f"POST {base_path}",
@@ -1053,13 +1141,13 @@ def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[Me
                 _build_endpoint(
                     repo_root,
                     rel_path,
-                    idx + 1,
-                    idx + 1,
+                    decl_line,
+                    decl_line,
                     "serve",
                     "rest",
                     topic,
                     "spring-data-rest",
-                    line.strip(),
+                    snippet,
                 )
             )
     return endpoints

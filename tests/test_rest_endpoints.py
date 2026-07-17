@@ -145,6 +145,89 @@ def test_framework_generated_endpoints_are_inferred() -> None:
     assert topics["GET /actuator/**"] == "spring-actuator"
 
 
+def test_spring_data_rest_default_path_when_data_rest_present(tmp_path: Path) -> None:
+    """Un repository Spring Data sans `path` ni `exported=false` est auto-exposé
+    par Spring Data REST sur `/<entité-pluriel>`, mais seulement si le module
+    déclare `spring-boot-starter-data-rest`. Régression pour `microservices-kafka-mq`
+    où `UserRepository extends JpaRepository<User, ...>` (sans annotation) expose `/users`."""
+    module = tmp_path / "microservice-order"
+    java_dir = module / "src" / "main" / "java" / "de" / "f"
+    java_dir.mkdir(parents=True)
+    (module / "pom.xml").write_text(
+        "<project><artifactId>microservice-order</artifactId>"
+        "<dependencies>"
+        "<dependency><groupId>org.springframework.boot</groupId>"
+        "<artifactId>spring-boot-starter-data-rest</artifactId></dependency>"
+        "</dependencies></project>"
+    )
+    repo = java_dir / "UserRepository.java"
+    repo.write_text(
+        "package de.f;\n"
+        "import org.springframework.data.jpa.repository.JpaRepository;\n"
+        "import org.springframework.stereotype.Repository;\n"
+        "@Repository\n"
+        "public interface UserRepository extends JpaRepository<User, Integer> {}\n"
+    )
+    rel = repo.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+
+    assert {endpoint.topic for endpoint in endpoints} == {
+        "GET /users", "POST /users", "GET /users/{id}",
+        "PUT /users/{id}", "PATCH /users/{id}", "DELETE /users/{id}",
+    }
+    assert all(endpoint.framework == "spring-data-rest" for endpoint in endpoints)
+
+
+def test_spring_data_rest_default_path_suppressed_without_data_rest(tmp_path: Path) -> None:
+    """Sans `spring-boot-starter-data-rest`, un repository JPA sans annotation
+    n'est PAS exposé (garde-fou faux positif, ex. `InvoiceRepository` côté invoicing)."""
+    module = tmp_path / "microservice-invoicing"
+    java_dir = module / "src" / "main" / "java" / "de" / "f"
+    java_dir.mkdir(parents=True)
+    (module / "pom.xml").write_text(
+        "<project><artifactId>microservice-invoicing</artifactId>"
+        "<dependencies>"
+        "<dependency><groupId>org.springframework.boot</groupId>"
+        "<artifactId>spring-boot-starter-data-jpa</artifactId></dependency>"
+        "</dependencies></project>"
+    )
+    repo = java_dir / "InvoiceRepository.java"
+    repo.write_text(
+        "package de.f;\n"
+        "import org.springframework.data.repository.PagingAndSortingRepository;\n"
+        "public interface InvoiceRepository extends PagingAndSortingRepository<Invoice, Long> {}\n"
+    )
+    rel = repo.relative_to(tmp_path).as_posix()
+
+    assert infer_framework_endpoints(tmp_path, files=[rel]) == []
+
+
+def test_spring_data_rest_exported_false_suppresses_default_path(tmp_path: Path) -> None:
+    """`@RepositoryRestResource(exported = false)` supprime l'exposition même
+    avec data-rest présent."""
+    module = tmp_path / "m"
+    java_dir = module / "src" / "main" / "java"
+    java_dir.mkdir(parents=True)
+    (module / "pom.xml").write_text(
+        "<project><dependencies>"
+        "<dependency><groupId>org.springframework.boot</groupId>"
+        "<artifactId>spring-boot-starter-data-rest</artifactId></dependency>"
+        "</dependencies></project>"
+    )
+    repo = java_dir / "CustomerRepository.java"
+    repo.write_text(
+        "package m;\n"
+        "import org.springframework.data.repository.PagingAndSortingRepository;\n"
+        "import org.springframework.data.rest.core.annotation.RepositoryRestResource;\n"
+        "@RepositoryRestResource(exported = false)\n"
+        "public interface CustomerRepository extends PagingAndSortingRepository<Customer, Long> {}\n"
+    )
+    rel = repo.relative_to(tmp_path).as_posix()
+
+    assert infer_framework_endpoints(tmp_path, files=[rel]) == []
+
+
 def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_path: Path) -> None:
     contract = tmp_path / "src" / "main" / "resources" / "openapi.yml"
     contract.parent.mkdir(parents=True)
