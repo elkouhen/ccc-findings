@@ -1570,6 +1570,317 @@ def _infer_message_builder_kafka_producers(
     return inferred
 
 
+def _invocation_receiver(source: bytes, object_node) -> str | None:
+    """Trailing identifier of a call receiver: ``kafkaTemplate`` ou
+    ``this.kafkaTemplate`` -> ``kafkaTemplate``."""
+    if object_node is None:
+        return None
+    if object_node.type == "identifier":
+        return java_parser.node_text(source, object_node)
+    if object_node.type == "field_access":
+        field = object_node.child_by_field_name("field")
+        return java_parser.node_text(source, field) if field is not None else None
+    return None
+
+
+def _kafka_topic_from_value(value_node, source: bytes, repo_root: Path, rel_path: str) -> tuple[str, bool]:
+    """Résout un nœud expression (topic) en (topic, dynamique).
+
+    Littéral `${...}` -> résolu via ``resolve_spring_property`` (jamais au
+    hasard) ; identifiant nu -> champ ``@Value`` ; appel imbriqué
+    (ex. ``Collections.singletonList("x")``) -> on descend chercher le
+    littéral ; sinon ``<dynamic>``."""
+    if value_node is None:
+        return "<dynamic>", True
+    node_type = value_node.type
+    if node_type == "string_literal":
+        literal = java_parser.string_value(value_node, source)
+        reference = spring_topic_reference(literal)
+        if reference is not None:
+            resolved = resolve_spring_property(repo_root, reference.property_key, rel_path)
+            if resolved is not None:
+                return resolved, False
+            return reference.display_name, True
+        return literal, False
+    if node_type == "identifier":
+        resolved = _resolve_value_annotated_variable(
+            repo_root, rel_path, java_parser.node_text(source, value_node)
+        )
+        if resolved is not None:
+            return resolved, False
+        return "<dynamic>", True
+    for descendant in java_parser.walk(value_node):
+        if descendant.type == "string_literal":
+            return _kafka_topic_from_value(descendant, source, repo_root, rel_path)
+    return "<dynamic>", True
+
+
+def _object_creation_type(source: bytes, node) -> str:
+    """Type construit d'un ``new Foo<...>(...)`` : ``ProducerRecord<...>``."""
+    type_node = node.child_by_field_name("type")
+    return java_parser.node_text(source, type_node) if type_node is not None else ""
+
+
+def _type_simple_name(source: bytes, type_node) -> str | None:
+    """Nom non paramétré d'un type AST : ``ProducerRecord`` pour
+    ``ProducerRecord<String, Order>``.
+
+    Avec tree-sitter-java, les arguments génériques sont des enfants du
+    ``generic_type`` ; comparer le texte complet du nœud au nom du type
+    manquait donc tous les ``new ProducerRecord<K, V>(...)``.
+    """
+    if type_node is None:
+        return None
+    text = java_parser.node_text(source, type_node)
+    return text.split("<", 1)[0].rsplit(".", 1)[-1].strip() or None
+
+
+def _declaration_anchor(node):
+    """Ancre l'évidence d'un appel dans sa déclaration locale quand il y en a.
+
+    Une invocation imbriquée comme ``builder.stream(...)`` peut commencer à
+    la ligne suivant ``KStream<...> joined =``. L'inventaire historique
+    pointait la déclaration entière ; conserver cette position évite des
+    déplacements artificiels lors de la migration vers l'AST.
+    """
+    return java_parser.enclosing(node, "local_variable_declaration") or node
+
+
+def _listener_payload_type(source: bytes, method_node) -> str | None:
+    """Type de payload du premier paramètre utile d'un ``@KafkaListener``."""
+    params = method_node.child_by_field_name("parameters")
+    if params is None:
+        return None
+    for param in params.children:
+        if param.type != "formal_parameter":
+            continue
+        if any(
+            java_parser.annotation_name(ann, source) in {"Header", "Headers"}
+            for ann in java_parser.annotations_of(param)
+        ):
+            continue
+        type_node = param.child_by_field_name("type")
+        if type_node is None:
+            continue
+        type_name = java_parser.node_text(source, type_node)
+        if type_name in {"Acknowledgment", "Consumer", "ConsumerRecordMetadata"}:
+            continue
+        payload = _message_payload_type(type_name)
+        if payload is not None:
+            return payload
+    return None
+
+
+def _method_param_payload_type(source: bytes, method_node, var_name: str) -> str | None:
+    params = method_node.child_by_field_name("parameters")
+    if params is None:
+        return None
+    for param in params.children:
+        if param.type != "formal_parameter":
+            continue
+        name_node = param.child_by_field_name("name")
+        if name_node is None or java_parser.node_text(source, name_node) != var_name:
+            continue
+        type_node = param.child_by_field_name("type")
+        return _message_payload_type(java_parser.node_text(source, type_node)) if type_node else None
+    return None
+
+
+def _producer_send_payload_type(source: bytes, invocation) -> str | None:
+    """Type de payload d'un ``send(topic, payload, ...)`` : 2e argument
+    résolu contre le paramètre de la méthode englobante."""
+    method = java_parser.enclosing(invocation, "method_declaration")
+    if method is None:
+        return None
+    for arg in java_parser.argument_nodes(invocation)[1:]:
+        if arg.type == "identifier":
+            payload = _method_param_payload_type(source, method, java_parser.node_text(source, arg))
+            if payload is not None:
+                return payload
+        elif arg.type == "object_creation_expression":
+            payload = _message_payload_type(_object_creation_type(source, arg))
+            if payload is not None:
+                return payload
+    return None
+
+
+def _kafka_endpoint(
+    repo_root: Path, rel_path: str, source: bytes, node, role: str, framework: str,
+    topic: str, topic_dynamic: bool, message_type: str | None, end_node=None,
+) -> MessageEndpoint:
+    start_line = node.start_point.row + 1
+    end_node = end_node or node
+    end_line = end_node.end_point.row + 1
+    snippet = source[node.start_byte : end_node.end_byte].decode("utf-8", errors="replace")
+    return MessageEndpoint(
+        id=compute_endpoint_id(role, topic, rel_path, start_line, end_line),
+        role=role,
+        system="kafka",
+        topic=topic,
+        topic_dynamic=topic_dynamic,
+        source="code",
+        framework=framework,
+        path=rel_path,
+        start_line=start_line,
+        end_line=end_line,
+        snippet=snippet,
+        module=_module_for_path(repo_root, rel_path),
+        qualified_name=_java_qualified_name(str(repo_root), rel_path),
+        message_type=message_type,
+    )
+
+
+def _message_builder_topic_for(
+    source: bytes, send_invocation, var_name: str, repo_root: Path, rel_path: str
+) -> tuple[str, bool] | None:
+    """Topic posé par ``MessageBuilder...setHeader(TOPIC, ...).build()`` pour
+    la variable ``var_name`` déclarée dans la même méthode que l'envoi.
+
+    Scope-aware : la variable du message est locale à la méthode englobant le
+    ``.send(msg)``, donc on cherche le ``variable_declarator`` correspondant
+    dans cette méthode (et pas globalement — plusieurs méthodes peuvent
+    réutiliser le même nom ``message``)."""
+    method = java_parser.enclosing(send_invocation, "method_declaration")
+    if method is None:
+        return None
+    for declarator in java_parser.walk(method):
+        if declarator.type != "variable_declarator":
+            continue
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None or java_parser.node_text(source, name_node) != var_name:
+            continue
+        initializer = declarator.child_by_field_name("value")
+        if initializer is None:
+            continue
+        for invocation in java_parser.walk(initializer):
+            if invocation.type != "method_invocation":
+                continue
+            _, method_name, args = java_parser.invocation_parts(invocation, source)
+            if method_name != "setHeader" or len(args) < 2:
+                continue
+            header = java_parser.node_text(source, args[0])
+            if header == "TOPIC" or header.endswith(".TOPIC"):
+                return _kafka_topic_from_value(args[1], source, repo_root, rel_path)
+    return None
+
+
+def _method_return_payload_type(source: bytes, method_node) -> str | None:
+    """Type de payload déduit du type de retour de la méthode englobante
+    (ex. ``KStream<Long, Order>`` -> ``Order``), via ``_message_payload_type``."""
+    if method_node is None:
+        return None
+    type_node = method_node.child_by_field_name("type")
+    if type_node is None:
+        return None
+    return _message_payload_type(java_parser.node_text(source, type_node))
+
+
+def infer_kafka_endpoints(repo_root: Path, files: list[str] | None = None) -> list[MessageEndpoint]:
+    """Découvre tous les endpoints Kafka depuis le code Java via tree-sitter.
+
+    Source unique des endpoints Kafka (P2) : ``@KafkaListener`` (consume),
+    ``KafkaTemplate.send/sendDefault`` (produce), ``new ProducerRecord<...>``
+    (produce), ``MessageBuilder...setHeader(TOPIC,...).build()`` puis
+    ``.send(msg)`` (produce), ``builder.stream(...)``/``KafkaConsumer.subscribe``
+    (consume) et ``KStream.to(...)`` (produce). Le type de message est inféré
+    depuis les signatures/generics de l'AST."""
+    if files is None:
+        candidate_files = [
+            path.relative_to(repo_root).as_posix()
+            for path in repo_root.rglob("*.java")
+            if path.is_file()
+        ]
+    else:
+        candidate_files = sorted(path for path in files if path.endswith(".java"))
+
+    endpoints: dict[str, MessageEndpoint] = {}
+    for rel_path in candidate_files:
+        parsed = java_parser.parse_java(str(repo_root), rel_path)
+        if parsed is None:
+            continue
+        source, root = parsed
+        source_text = source.decode("utf-8", errors="replace")
+        has_kafka_streams = "KStream" in source_text or "StreamsBuilder" in source_text
+        has_kafka_consumer = "KafkaConsumer" in source_text
+
+        def add(node, role: str, framework: str, topic: str, dynamic: bool, message_type: str | None) -> None:
+            endpoint = _kafka_endpoint(
+                repo_root, rel_path, source, node, role, framework, topic, dynamic, message_type
+            )
+            endpoints[endpoint.id] = endpoint
+
+        for method_node in java_parser.walk(root):
+            if method_node.type != "method_declaration":
+                continue
+            listener_ann = next(
+                (
+                    ann
+                    for ann in java_parser.annotations_of(method_node)
+                    if java_parser.annotation_name(ann, source) == "KafkaListener"
+                ),
+                None,
+            )
+            if listener_ann is None:
+                continue
+            topics_arg = java_parser.annotation_argument(listener_ann, source, key="topics")
+            topic, dynamic = _kafka_topic_from_value(topics_arg, source, repo_root, rel_path)
+            endpoint = _kafka_endpoint(
+                repo_root,
+                rel_path,
+                source,
+                listener_ann,
+                "consume",
+                "spring-kafka",
+                topic,
+                dynamic,
+                _listener_payload_type(source, method_node),
+                end_node=method_node,
+            )
+            endpoints[endpoint.id] = endpoint
+
+        for node in java_parser.walk(root):
+            if node.type == "method_invocation":
+                object_node, method_name, args = java_parser.invocation_parts(node, source)
+                receiver = _invocation_receiver(source, object_node)
+                if method_name in {"send", "sendDefault"} and receiver and receiver.lower().endswith("kafkatemplate"):
+                    if len(args) >= 2:
+                        topic, dynamic = _kafka_topic_from_value(args[0], source, repo_root, rel_path)
+                        add(node, "produce", "spring-kafka", topic, dynamic,
+                            _producer_send_payload_type(source, node))
+                    elif len(args) == 1 and args[0].type == "identifier":
+                        built = _message_builder_topic_for(
+                            source, node, java_parser.node_text(source, args[0]), repo_root, rel_path
+                        )
+                        if built is not None:
+                            topic, dynamic = built
+                            add(node, "produce", "spring-kafka", topic, dynamic, None)
+                elif method_name == "to" and has_kafka_streams and args:
+                    topic, dynamic = _kafka_topic_from_value(args[0], source, repo_root, rel_path)
+                    add(node, "produce", "kafka-streams", topic, dynamic,
+                        _method_return_payload_type(source, java_parser.enclosing(node, "method_declaration")))
+                elif method_name == "stream" and receiver == "builder" and has_kafka_streams and args:
+                    topic, dynamic = _kafka_topic_from_value(args[0], source, repo_root, rel_path)
+                    add(_declaration_anchor(node), "consume", "kafka-streams", topic, dynamic,
+                        _method_return_payload_type(source, java_parser.enclosing(node, "method_declaration")))
+                elif (
+                    method_name == "subscribe"
+                    and receiver
+                    and receiver.lower().endswith("consumer")
+                    and has_kafka_consumer
+                    and args
+                ):
+                    topic, dynamic = _kafka_topic_from_value(args[0], source, repo_root, rel_path)
+                    add(node, "consume", "kafka-clients", topic, dynamic, None)
+            elif node.type == "object_creation_expression":
+                type_node = node.child_by_field_name("type")
+                if _type_simple_name(source, type_node) == "ProducerRecord":
+                    first_arg = next(iter(java_parser.argument_nodes(node)), None)
+                    topic, dynamic = _kafka_topic_from_value(first_arg, source, repo_root, rel_path)
+                    add(node, "produce", "kafka-clients", topic, dynamic,
+                        _message_payload_type(_object_creation_type(source, node)))
+    return list(endpoints.values())
+
+
 def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -> list[MessageEndpoint]:
     if files is None:
         candidate_files = [
@@ -1588,7 +1899,6 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_routes(repo_root, rel_path)
                 + _infer_spring_webflux_routes(repo_root, rel_path)
-                + _infer_message_builder_kafka_producers(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith((".properties", ".yml", ".yaml")):
@@ -2013,7 +2323,9 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             continue
 
         system = metadata.get("system", "rest")
-        if system not in ("rest", "kafka"):
+        # P2 : les endpoints Kafka viennent désormais de tree-sitter
+        # (`infer_kafka_endpoints`) ; le chemin Semgrep ne traite plus que REST.
+        if system != "rest":
             continue
 
         try:
@@ -2136,6 +2448,7 @@ def run_semgrep_endpoints(
     raw = invoke_semgrep_raw(repo_root, config, files)
     endpoints = parse_semgrep_endpoints(raw, repo_root)
     endpoints.extend(infer_framework_endpoints(repo_root, files))
+    endpoints.extend(infer_kafka_endpoints(repo_root, files))
     endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, files))
     return endpoints
 

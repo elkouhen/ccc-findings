@@ -19,6 +19,7 @@ from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
     infer_framework_endpoints,
+    infer_kafka_endpoints,
     infer_kafka_topic_strategy1_endpoints,
     infer_json_kafka_flow_graph_endpoints,
     infer_markdown_topic_manifest_endpoints,
@@ -418,6 +419,7 @@ def index_repo(
         endpoints = parse_semgrep_endpoints(raw, repo_root)
         _trace("endpoint_inference.begin")
         endpoints.extend(infer_framework_endpoints(repo_root, changed))
+        endpoints.extend(infer_kafka_endpoints(repo_root, changed))
         endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, changed))
         endpoints.extend(infer_json_kafka_flow_graph_endpoints(repo_root, changed))
         if topic_strategy == "strategy1":
