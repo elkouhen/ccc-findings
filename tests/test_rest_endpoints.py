@@ -331,7 +331,9 @@ def test_restclient_concatenation_preserves_path_variable_and_framework(tmp_path
     assert endpoints[0].topic_dynamic is True
 
 
-def test_api_client_uses_domain_from_rest_configuration_bean(tmp_path: Path) -> None:
+def test_api_client_uses_domain_from_rest_configuration_bean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Un client injecté hérite de `DOMAIN_*` passé à `createInternalClientApi`."""
     config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
     config.parent.mkdir(parents=True)
@@ -365,10 +367,16 @@ def test_api_client_uses_domain_from_rest_configuration_bean(tmp_path: Path) -> 
     }]}
     """
 
+    monkeypatch.setenv("CCCR_TRACE_REST_CLIENTS", "1")
     endpoint = parse_semgrep_endpoints(raw, tmp_path)[0]
+    trace = capsys.readouterr().err
 
     assert endpoint.topic == "GET <dynamic>"
     assert "cccr-api-domain:domain-annuaire" in endpoint.snippet
+    assert "stage=rest_client.search.module" in trace
+    assert "stage=rest_client.search.bean" in trace
+    assert "stage=rest_client.search.helper" in trace
+    assert "stage=rest_client.search.match" in trace
 
 
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:

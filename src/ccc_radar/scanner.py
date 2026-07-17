@@ -51,6 +51,22 @@ def _trace(stage: str, **fields: object) -> None:
     )
 
 
+def _trace_rest_client(stage: str, **fields: object) -> None:
+    """Trace exhaustive de la recherche de clients API.
+
+    Activée séparément avec `CCCR_TRACE_REST_CLIENTS=1`, afin d'éviter le
+    volume des fichiers Java parcourus dans la trace générale `CCCR_TRACE`.
+    """
+    if os.environ.get("CCCR_TRACE_REST_CLIENTS") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(
+        f"CCCR_TRACE_REST_CLIENTS ts={time.monotonic():.6f} stage={stage} {details}".rstrip(),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _semgrep_env() -> dict[str, str]:
     """Give Semgrep a private writable location for its log.
 
@@ -2451,10 +2467,26 @@ def _bean_api_domain(method_node, source: bytes) -> str | None:
         _, method_name, args = java_parser.invocation_parts(invocation, source)
         if method_name != "createInternalClientApi" or not args:
             continue
+        _trace_rest_client(
+            "rest_client.search.helper",
+            helper=method_name,
+            first_argument=java_parser.node_text(source, args[0]),
+            argument_count=len(args),
+        )
         domain = _api_domain_argument(args[0], source)
         if domain is not None:
             domains.add(domain)
-    return next(iter(domains)) if len(domains) == 1 else None
+            _trace_rest_client("rest_client.search.domain", domain=domain)
+        else:
+            _trace_rest_client(
+                "rest_client.search.domain_ignored",
+                argument=java_parser.node_text(source, args[0]),
+            )
+    if len(domains) == 1:
+        return next(iter(domains))
+    if domains:
+        _trace_rest_client("rest_client.search.domain_ambiguous", domains=sorted(domains))
+    return None
 
 
 def _rest_configuration_module_root(repo_root: Path, source_path: str) -> Path:
@@ -2464,7 +2496,13 @@ def _rest_configuration_module_root(repo_root: Path, source_path: str) -> Path:
         if parent == repo_root.parent:
             break
         if (parent / "pom.xml").is_file() or (parent / "build.gradle").is_file() or (parent / "build.gradle.kts").is_file():
+            _trace_rest_client(
+                "rest_client.search.module",
+                caller=source_path,
+                module=parent.relative_to(repo_root),
+            )
             return parent
+    _trace_rest_client("rest_client.search.module_fallback", caller=source_path, module=".")
     return repo_root
 
 
@@ -2493,29 +2531,51 @@ def _rest_configuration_client_domains_in_module(
     )
     clients: list[tuple[str, str, str]] = []
     for candidate in module_root.rglob("*.java"):
+        candidate_rel = candidate.relative_to(repo_root).as_posix()
+        _trace_rest_client("rest_client.search.source", path=candidate_rel)
         parsed = java_parser.parse_java(
-            repo_root_str, candidate.relative_to(repo_root).as_posix()
+            repo_root_str, candidate_rel
         )
         if parsed is None:
+            _trace_rest_client("rest_client.search.source_unparsed", path=candidate_rel)
             continue
         source, root = parsed
         for type_node in java_parser.type_declarations(root):
             if java_parser.declaration_name(type_node, source) != "RestConfiguration":
                 continue
+            _trace_rest_client("rest_client.search.configuration", path=candidate_rel)
             for method_node in java_parser.walk(type_node):
                 if method_node.type != "method_declaration":
                     continue
+                name_node = method_node.child_by_field_name("name")
+                method_name = java_parser.node_text(source, name_node) if name_node is not None else "<anonymous>"
                 if not any(
                     java_parser.annotation_name(annotation, source) == "Bean"
                     for annotation in java_parser.annotations_of(method_node)
                 ):
                     continue
+                _trace_rest_client(
+                    "rest_client.search.bean",
+                    path=candidate_rel,
+                    bean=method_name,
+                )
                 type_node_return = method_node.child_by_field_name("type")
-                name_node = method_node.child_by_field_name("name")
                 if type_node_return is None or name_node is None:
+                    _trace_rest_client(
+                        "rest_client.search.bean_ignored",
+                        path=candidate_rel,
+                        bean=method_name,
+                        reason="missing_type_or_name",
+                    )
                     continue
                 domain = _bean_api_domain(method_node, source)
                 if domain is None:
+                    _trace_rest_client(
+                        "rest_client.search.bean_ignored",
+                        path=candidate_rel,
+                        bean=method_name,
+                        reason="no_unique_createInternalClientApi_domain",
+                    )
                     continue
                 clients.append(
                     (
@@ -2581,13 +2641,27 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
     """Domaine du client injecté au point d'appel, si non ambigu."""
     receiver_match = _REST_CLIENT_RECEIVER_RE.search(snippet)
     if receiver_match is None:
+        _trace_rest_client("rest_client.search.call_ignored", path=source_path, reason="no_receiver")
         return None
     receiver = receiver_match.group(1)
+    _trace_rest_client("rest_client.search.call", path=source_path, receiver=receiver)
     clients = _rest_configuration_client_domains(str(repo_root), source_path)
     if not clients:
+        _trace_rest_client(
+            "rest_client.search.call_ignored",
+            path=source_path,
+            receiver=receiver,
+            reason="no_configured_client",
+        )
         return None
     parsed = java_parser.parse_java(str(repo_root), source_path)
     if parsed is None:
+        _trace_rest_client(
+            "rest_client.search.call_ignored",
+            path=source_path,
+            receiver=receiver,
+            reason="caller_unparsed",
+        )
         return None
     source, root = parsed
     client_type = _client_type_for_receiver(source, root, receiver)
@@ -2597,6 +2671,13 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
         if receiver == bean_name or (client_type is not None and client_type == declared_type)
     ]
     unique_domains = set(candidates)
+    _trace_rest_client(
+        "rest_client.search.match",
+        path=source_path,
+        receiver=receiver,
+        api_type=client_type,
+        candidates=sorted(unique_domains),
+    )
     if len(unique_domains) != 1:
         _trace(
             "rest_client.configuration.unresolved",
