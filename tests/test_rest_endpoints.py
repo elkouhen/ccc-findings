@@ -383,6 +383,39 @@ def test_api_client_uses_domain_from_rest_configuration_bean(
     assert "stage=rest_client.search.workspace_module" in trace
 
 
+def test_configured_api_client_invocation_is_inferred_without_semgrep(tmp_path: Path) -> None:
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestConfiguration {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    client = tmp_path / "src" / "main" / "java" / "OrderClient.java"
+    client.write_text(
+        "interface AnnuaireApi { Object getDirectory(); }\n"
+        "class OrderClient {\n"
+        "  private final AnnuaireApi annuaireApi;\n"
+        "  OrderClient(AnnuaireApi annuaireApi) { this.annuaireApi = annuaireApi; }\n"
+        "  Object get() { return annuaireApi.getDirectory(); }\n"
+        "}\n"
+    )
+    rel = client.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+
+    assert len(endpoints) == 1
+    assert endpoints[0].framework == "configured-api-client"
+    assert endpoints[0].topic == "ANY <dynamic>"
+    assert endpoints[0].topic_dynamic is True
+    assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
+
+
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
     source = tmp_path / "src" / "main" / "java" / "OrderListener.java"
     source.parent.mkdir(parents=True)

@@ -1451,6 +1451,60 @@ def _infer_resttemplate_exchange_endpoints(
     return inferred
 
 
+def _infer_configured_api_client_endpoints(
+    repo_root: Path, rel_path: str
+) -> list[MessageEndpoint]:
+    """Infère les appels aux interfaces créées par `createInternalClientApi`.
+
+    Ces interfaces générées ne passent pas forcément par les règles Semgrep
+    dédiées à RestTemplate/WebClient. Leur méthode HTTP et leur route sont
+    récupérées plus tard sur le microservice hôte ; l'appel local est donc
+    volontairement `ANY <dynamic>` à ce stade, mais porte le domaine résolu.
+    """
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
+        return []
+    source, root = parsed
+    if not _rest_configuration_client_domains(str(repo_root), rel_path):
+        return []
+
+    endpoints: dict[str, MessageEndpoint] = {}
+    for invocation in java_parser.walk(root):
+        if invocation.type != "method_invocation":
+            continue
+        receiver, method_name, _ = java_parser.invocation_parts(invocation, source)
+        if receiver is None or method_name in {"equals", "getClass", "hashCode", "toString"}:
+            continue
+        snippet = java_parser.node_text(source, invocation)
+        domain = _rest_configuration_domain_hint(repo_root, rel_path, snippet)
+        if domain is None:
+            continue
+        endpoint = _build_endpoint(
+            repo_root,
+            rel_path,
+            invocation.start_point.row + 1,
+            invocation.end_point.row + 1,
+            "call",
+            "rest",
+            "ANY <dynamic>",
+            "configured-api-client",
+            f"{snippet}\ncccr-api-domain:{domain}",
+            topic_dynamic=True,
+        )
+        endpoints[endpoint.id] = endpoint
+        _trace_rest_client(
+            "rest_client.search.call_detected",
+            microservice=_rest_client_microservice_name(
+                _rest_configuration_module_root(repo_root, rel_path)
+            ),
+            path=rel_path,
+            line=invocation.start_point.row + 1,
+            method=method_name,
+            domain=domain,
+        )
+    return list(endpoints.values())
+
+
 def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
     path = repo_root / rel_path
     try:
@@ -2058,6 +2112,7 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_spring_data_rest_endpoints(repo_root, rel_path)
                 + _infer_swagger_endpoint(repo_root, rel_path)
                 + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
+                + _infer_configured_api_client_endpoints(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_routes(repo_root, rel_path)
                 + _infer_spring_webflux_routes(repo_root, rel_path)
             ):
