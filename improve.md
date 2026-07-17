@@ -10,13 +10,9 @@ dépôt `ccc-radar`.
 
 Dépôts cibles :
 
-- `~/examples/spring-petclinic-microservices`
-- `~/examples/sample-spring-kafka-microservices`
+
 - `~/examples/microservices-kafka-mq`
-- `~/examples/booking-microservices-java-spring-boot`
-- `~/examples/fully-completed-microservices-Java-Springboot`
-- `~/examples/spring-petclinic-rest`
-- `~/examples/spring-boot-project-example`
+
 
 Le périmètre principal est Java/Spring, HTTP REST et Kafka. Signaler séparément
 les protocoles hors périmètre (par exemple gRPC, RabbitMQ/AMQP, messagerie

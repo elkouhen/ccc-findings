@@ -258,7 +258,12 @@ def _module_files(module_dir: Path, module_roots: set[Path], pattern: str):
     for path in sorted(module_dir.rglob(pattern)):
         if not path.is_file():
             continue
-        if any(parent in module_roots and parent != module_dir for parent in path.parents):
+        if any(
+            parent in module_roots
+            and parent != module_dir
+            and module_dir in parent.parents
+            for parent in path.parents
+        ):
             continue
         yield path
 

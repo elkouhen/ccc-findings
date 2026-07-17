@@ -94,6 +94,41 @@ def test_discover_modules_limits_nested_build_discovery_to_five_levels(tmp_path:
     assert [module.name for module in modules] == ["at-limit"]
 
 
+def test_discover_modules_enriches_child_module_files_under_an_aggregator(tmp_path: Path) -> None:
+    (tmp_path / "pom.xml").write_text(
+        "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+        "<modelVersion>4.0.0</modelVersion>"
+        "<artifactId>platform</artifactId><version>1.0.0</version><packaging>pom</packaging>"
+        "<modules><module>orders</module></modules>"
+        "</project>"
+    )
+    module = tmp_path / "orders"
+    source = module / "src" / "main" / "java" / "OrdersController.java"
+    source.parent.mkdir(parents=True)
+    _write_pom(module / "pom.xml", "orders-api", "1.0.0")
+    source.write_text(
+        """import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.web.bind.annotation.RestController;
+@RestController
+class OrdersController {
+  KafkaTemplate<String, String> kafkaTemplate;
+  @KafkaListener(topics = "orders.created")
+  void consume(String payload) { kafkaTemplate.send("orders.validated", payload); }
+}
+"""
+    )
+
+    modules = discover_modules(tmp_path)
+    child = next(item for item in modules if item.name == "orders-api")
+
+    assert child.rest_controllers == ("OrdersController (src/main/java/OrdersController.java)",)
+    assert [(item.role, item.mechanism, item.method, item.topic) for item in child.kafka_methods] == [
+        ("receive", "spring-kafka-listener", "consume", "orders.created"),
+        ("send", "spring-kafka-template", "consume", "orders.validated"),
+    ]
+
+
 def test_module_start_attribute_is_detected_from_its_java_entrypoint(tmp_path: Path) -> None:
     module = tmp_path / "orders"
     source = module / "src" / "main" / "java" / "OrdersApplication.java"
