@@ -137,7 +137,9 @@ _SKILL_RULES_ROOT_CANDIDATES = (
 
 def _current_repo_endpoint_warning(store: Store) -> str | None:
     return endpoint_inventory_warning(
-        store.get_meta("endpoint_inventory_signature"), scope="ce projet"
+        store.get_meta("endpoint_inventory_signature"),
+        scope="ce projet",
+        inventory_indexed=store.get_meta("endpoint_inventory_indexed") == "1",
     )
 
 

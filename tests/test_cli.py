@@ -962,6 +962,7 @@ def test_microservices_commands_explore_business_objects_without_source_by_defau
     assert summary_payload["kafka_topics_published"] == ["orders.created"]
     assert summary_payload["kafka_message_types_published"] == {"orders.created": ["OrderCreated"]}
     assert summary_payload["databases"]["mongodb_collections"] == ["orders"]
+    assert summary_payload["openapi_files"] == ["openapi.yml"]
 
     short_summary = runner.invoke(app, ["microservices", "show", "orders", "--json"])
     assert short_summary.exit_code == 0
@@ -1301,6 +1302,7 @@ public class BillingServiceMain {
         starts_application=True,
         configuration_example="",
         mongo_collections=("invoices",),
+        openapi_files=("src/main/resources/invoices.yaml",),
     )
     endpoints = [
         MessageEndpoint(
@@ -1343,6 +1345,7 @@ public class BillingServiceMain {
             "kafka_message_types_published": {"invoices.created": ["InvoiceCreated"]},
             "kafka_message_types_consumed": {"payments.received": ["PaymentReceived"]},
             "mongo_collections": ["invoices"],
+            "openapi_files": ["src/main/resources/invoices.yaml"],
         }
     ]
 
@@ -1352,6 +1355,7 @@ public class BillingServiceMain {
     assert "Kafka publiés: invoices.created" in text_result.output
     assert "Kafka consommés: payments.received" in text_result.output
     assert "Mongo: invoices" in text_result.output
+    assert "OpenAPI: src/main/resources/invoices.yaml" in text_result.output
 
 
 def test_microservices_service_subcommands_render_apis_and_properties(
@@ -1478,3 +1482,39 @@ def test_graph_json_reports_stale_endpoint_inventory_warning(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert "inventaire des intégrations potentiellement obsolète" in payload["note"]
+
+
+def test_export_microservices_without_semgrep_does_not_report_stale_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    (tmp_path / "src" / "main" / "java").mkdir(parents=True)
+    (tmp_path / "src" / "main" / "java" / "BillingServiceMain.java").write_text(
+        """
+import org.springframework.boot.SpringApplication;
+
+public class BillingServiceMain {
+    public static void main(String[] args) {
+        SpringApplication.run(BillingServiceMain.class, args);
+    }
+}
+""".strip()
+    )
+    (tmp_path / "pom.xml").write_text(
+        "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+        "<modelVersion>4.0.0</modelVersion>"
+        "<artifactId>billing-service</artifactId>"
+        "<version>1.0.0</version>"
+        "</project>"
+    )
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules/rules.yml']\n")
+
+    index_result = runner.invoke(app, ["index"])
+    assert index_result.exit_code == 0
+
+    export_result = runner.invoke(app, ["export", "microservices", "--json"])
+    assert export_result.exit_code == 0
+    payload = json.loads(export_result.output)
+    assert "obsolète" not in payload.get("note", "")

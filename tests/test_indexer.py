@@ -104,6 +104,9 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
     assert report.findings_added == 0
     assert any("Semgrep désactivé" in message for message in messages)
     assert any("propriétés et inventaire" in message for message in messages)
+    with Store(repo_copy, readonly=True) as readonly_store:
+        assert readonly_store.get_meta("endpoint_inventory_signature") is None
+        assert readonly_store.get_meta("endpoint_inventory_indexed") is None
 
 
 def test_index_repo_imports_json_kafka_flow_graph_manifest(

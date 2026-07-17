@@ -382,9 +382,10 @@ public class BillingServiceMain {
             "kafka_message_types_published": {},
             "kafka_message_types_consumed": {},
             "mongo_collections": [],
+            "openapi_files": [],
         }
     ]
-    assert any("billing-service" in warning and "obsolète" in warning for warning in result["warnings"])
+    assert result["warnings"] == []
 
 
 @pytest.mark.integration

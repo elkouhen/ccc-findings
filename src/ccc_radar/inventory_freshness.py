@@ -10,8 +10,13 @@ def is_endpoint_inventory_stale(stored_signature: str | None) -> bool:
 
 
 def endpoint_inventory_warning(
-    stored_signature: str | None, *, scope: str = "ce projet"
+    stored_signature: str | None,
+    *,
+    scope: str = "ce projet",
+    inventory_indexed: bool = True,
 ) -> str | None:
+    if stored_signature is None and not inventory_indexed:
+        return None
     if not is_endpoint_inventory_stale(stored_signature):
         return None
     observed = (

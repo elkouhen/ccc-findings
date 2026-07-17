@@ -449,6 +449,7 @@ def index_repo(
 
     if "semgrep" not in disabled:
         store.set_meta("endpoint_inventory_signature", endpoint_signature)
+        store.set_meta("endpoint_inventory_indexed", "1")
         store.set_meta("topic_strategy", topic_strategy)
     store.set_meta("analysis_inputs_signature", analysis_inputs_signature)
 

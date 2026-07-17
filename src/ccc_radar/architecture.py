@@ -106,6 +106,7 @@ def module_summary(catalog: ArchitectureCatalog, name: str) -> dict[str, object]
         "databases": {"mongodb_collections": list(module.mongo_collections)},
         "technologies": technologies,
         "openapi": bool(module.openapi_files),
+        "openapi_files": list(module.openapi_files),
         "scheduled_tasks": [],
         "scheduled_tasks_detection": "not_available",
         "dependencies": {"outgoing_modules": outgoing, "incoming_modules": incoming},

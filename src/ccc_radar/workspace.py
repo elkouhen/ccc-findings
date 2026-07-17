@@ -123,7 +123,9 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
                 if service.kind == "microservice":
                     endpoints_by_service[service.name] = endpoints
                 stale_warning = endpoint_inventory_warning(
-                    store.get_meta("endpoint_inventory_signature"), scope=service.name
+                    store.get_meta("endpoint_inventory_signature"),
+                    scope=service.name,
+                    inventory_indexed=store.get_meta("endpoint_inventory_indexed") == "1",
                 )
                 if stale_warning is not None:
                     warnings.append(stale_warning)

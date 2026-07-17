@@ -2377,6 +2377,7 @@ class WorkspaceServiceInfo(TypedDict):
     kafka_message_types_published: dict[str, list[str]]
     kafka_message_types_consumed: dict[str, list[str]]
     mongo_collections: list[str]
+    openapi_files: list[str]
 
 
 class ModuleSummary(TypedDict):
@@ -2453,6 +2454,7 @@ def _workspace_service_info(
         kafka_message_types_published=kafka_message_types_published,
         kafka_message_types_consumed=kafka_message_types_consumed,
         mongo_collections=list(module.mongo_collections) if module else [],
+        openapi_files=list(module.openapi_files) if module else [],
     )
 
 
@@ -2486,6 +2488,8 @@ def render_workspace_text(result: WorkspaceResult) -> str:
             f"Kafka consommés: {', '.join(info['kafka_topics_consumed']) or '-'} | "
             f"Mongo: {', '.join(info['mongo_collections']) or '-'}"
         )
+        if info["openapi_files"]:
+            lines.append(f"  OpenAPI: {', '.join(info['openapi_files'])}")
         if info["kafka_message_types_published"] or info["kafka_message_types_consumed"]:
             lines.append(
                 f"  Types Kafka publiés: {info['kafka_message_types_published'] or '-'} | "
