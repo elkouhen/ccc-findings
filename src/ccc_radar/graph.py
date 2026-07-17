@@ -1,7 +1,7 @@
 """Graphe d'interactions entre services dérivé à la requête à partir
 d'endpoints déjà indexés — aucune table de graphe en base (ADR-27)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 
 from ccc_radar.models import MessageEndpoint
@@ -94,6 +94,40 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     return None
 
 
+def _is_configured_api_client_call(call: MessageEndpoint) -> bool:
+    """Le site est un client créé par `createInternalClientApi`.
+
+    Son code d'appel ne porte pas nécessairement le chemin HTTP. Le domaine
+    injecté par le scanner permet alors de le résoudre contre les ressources
+    exposées par le microservice hôte pendant la fédération.
+    """
+    return bool(_CONFIGURED_API_DOMAIN_RE.search(call.snippet))
+
+
+def _http_methods_match(call_topic: str, serve_topic: str) -> bool:
+    call_method, _, _ = call_topic.partition(" ")
+    serve_method, _, _ = serve_topic.partition(" ")
+    return call_method == serve_method or call_method == "ANY" or serve_method == "ANY"
+
+
+def _resolved_configured_api_call(
+    call: MessageEndpoint, serve: MessageEndpoint
+) -> MessageEndpoint | None:
+    """Projette un client d'API typé sur une ressource de son hôte.
+
+    Cette résolution est délibérément réservée aux appels portant l'évidence
+    `cccr-api-domain:` : un appel HTTP dynamique ordinaire ne doit jamais être
+    relié aveuglément à toutes les routes d'un service.
+    """
+    if (
+        not call.topic_dynamic
+        or not _is_configured_api_client_call(call)
+        or not _http_methods_match(call.topic, serve.topic)
+    ):
+        return None
+    return replace(call, topic=serve.topic, topic_dynamic=False)
+
+
 def _service_matches_hint(service_name: str, hint: str | None) -> bool:
     if hint is None:
         return True
@@ -176,7 +210,13 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
                 continue
             if not _service_matches_hint(serve_service, target_hint):
                 continue
-            if paths_match(call.topic, serve.topic):
+            effective_call = call
+            if not paths_match(call.topic, serve.topic):
+                resolved_call = _resolved_configured_api_call(call, serve)
+                if resolved_call is None:
+                    continue
+                effective_call = resolved_call
+            if effective_call is not None:
                 proxy_target = (call.id, serve_service)
                 if call.framework == "spring-cloud-gateway" and call.topic.startswith("ANY "):
                     if proxy_target in gateway_proxy_targets:
@@ -186,7 +226,7 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
                 if key in seen:
                     continue
                 seen.add(key)
-                edges.append(GraphEdge("rest", call_service, serve_service, call, serve))
+                edges.append(GraphEdge("rest", call_service, serve_service, effective_call, serve))
 
     for produce_service, produce in produces:
         for consume_service, consume in consumes:

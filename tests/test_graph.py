@@ -245,13 +245,19 @@ def test_build_graph_uses_service_hint_from_call_snippet_to_disambiguate_targets
 
 
 def test_build_graph_uses_domain_from_rest_configuration_to_disambiguate_targets() -> None:
-    call = make_endpoint(
-        "call",
-        "GET /directory/{id}",
-        "gateway/DirectoryClient.java",
-        snippet="directoryClient.getForObject(\"/directory/{id}\", Object.class)\ncccr-api-domain:domain-annuaire",
+    call = replace(
+        make_endpoint(
+            "call",
+            "GET <dynamic>",
+            "gateway/DirectoryClient.java",
+            snippet="directoryClient.getForObject(\"/directory/{id}\", Object.class)\ncccr-api-domain:domain-annuaire",
+        ),
+        topic_dynamic=True,
     )
     directory = make_endpoint("serve", "GET /directory/{id}", "directory/Controller.java")
+    directory_search = make_endpoint(
+        "serve", "GET /directory/search", "directory/Controller.java", 2, 2
+    )
     directory_history = make_endpoint(
         "serve", "GET /directory/{id}", "history/Controller.java"
     )
@@ -259,13 +265,18 @@ def test_build_graph_uses_domain_from_rest_configuration_to_disambiguate_targets
     edges = build_graph(
         {
             "caller-service": [call],
-            "domain-annuaire": [directory],
+            "domain-annuaire": [directory, directory_search],
             "directory-history-service": [directory_history],
         }
     )
 
-    assert len(edges) == 1
-    assert edges[0].to_service == "domain-annuaire"
+    assert len(edges) == 2
+    assert {edge.to_service for edge in edges} == {"domain-annuaire"}
+    assert {edge.from_endpoint.topic for edge in edges} == {
+        "GET /directory/{id}",
+        "GET /directory/search",
+    }
+    assert all(not edge.from_endpoint.topic_dynamic for edge in edges)
 
 
 def test_find_outbound_calls_in_consumers_flags_call_inside_handler_range() -> None:
