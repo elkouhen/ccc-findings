@@ -2452,7 +2452,7 @@ def _api_domain_argument(node, source: bytes) -> str | None:
     return name.lower().replace("_", "-")
 
 
-def _bean_api_domain(method_node, source: bytes) -> str | None:
+def _bean_api_domain(method_node, source: bytes, microservice: str) -> str | None:
     """Domaine du `webClientHelper.createInternalClientApi(...)` d'un bean.
 
     La convention applicative est précise : le premier argument est une
@@ -2469,6 +2469,7 @@ def _bean_api_domain(method_node, source: bytes) -> str | None:
             continue
         _trace_rest_client(
             "rest_client.search.helper",
+            microservice=microservice,
             helper=method_name,
             first_argument=java_parser.node_text(source, args[0]),
             argument_count=len(args),
@@ -2476,17 +2477,34 @@ def _bean_api_domain(method_node, source: bytes) -> str | None:
         domain = _api_domain_argument(args[0], source)
         if domain is not None:
             domains.add(domain)
-            _trace_rest_client("rest_client.search.domain", domain=domain)
+            _trace_rest_client(
+                "rest_client.search.domain", microservice=microservice, domain=domain
+            )
         else:
             _trace_rest_client(
                 "rest_client.search.domain_ignored",
+                microservice=microservice,
                 argument=java_parser.node_text(source, args[0]),
             )
     if len(domains) == 1:
         return next(iter(domains))
     if domains:
-        _trace_rest_client("rest_client.search.domain_ambiguous", domains=sorted(domains))
+        _trace_rest_client(
+            "rest_client.search.domain_ambiguous",
+            microservice=microservice,
+            domains=sorted(domains),
+        )
     return None
+
+
+def _rest_client_microservice_name(module_root: Path) -> str:
+    """Nom du microservice porté par le POM, ou nom du répertoire en repli."""
+    pom_path = module_root / "pom.xml"
+    if pom_path.is_file():
+        artifact_id, _, _ = maven_module.parse_pom(pom_path)
+        if artifact_id:
+            return artifact_id
+    return module_root.name
 
 
 def _rest_configuration_module_root(repo_root: Path, source_path: str) -> Path:
@@ -2500,9 +2518,15 @@ def _rest_configuration_module_root(repo_root: Path, source_path: str) -> Path:
                 "rest_client.search.module",
                 caller=source_path,
                 module=parent.relative_to(repo_root),
+                microservice=_rest_client_microservice_name(parent),
             )
             return parent
-    _trace_rest_client("rest_client.search.module_fallback", caller=source_path, module=".")
+    _trace_rest_client(
+        "rest_client.search.module_fallback",
+        caller=source_path,
+        module=".",
+        microservice=_rest_client_microservice_name(repo_root),
+    )
     return repo_root
 
 
@@ -2518,32 +2542,43 @@ def _rest_configuration_client_domains_in_module(
     """
     repo_root = Path(repo_root_str)
     module_root = repo_root / module_root_rel
-    pom_path = module_root / "pom.xml"
-    service_name = module_root.name
-    if pom_path.is_file():
-        artifact_id, _, _ = maven_module.parse_pom(pom_path)
-        service_name = artifact_id or service_name
+    service_name = _rest_client_microservice_name(module_root)
 
     _trace(
         "rest_client.configuration.scan.begin",
-        service=service_name,
+        microservice=service_name,
+        module=module_root_rel,
+    )
+    _trace_rest_client(
+        "rest_client.search.scan_begin",
+        microservice=service_name,
         module=module_root_rel,
     )
     clients: list[tuple[str, str, str]] = []
     for candidate in module_root.rglob("*.java"):
         candidate_rel = candidate.relative_to(repo_root).as_posix()
-        _trace_rest_client("rest_client.search.source", path=candidate_rel)
+        _trace_rest_client(
+            "rest_client.search.source", microservice=service_name, path=candidate_rel
+        )
         parsed = java_parser.parse_java(
             repo_root_str, candidate_rel
         )
         if parsed is None:
-            _trace_rest_client("rest_client.search.source_unparsed", path=candidate_rel)
+            _trace_rest_client(
+                "rest_client.search.source_unparsed",
+                microservice=service_name,
+                path=candidate_rel,
+            )
             continue
         source, root = parsed
         for type_node in java_parser.type_declarations(root):
             if java_parser.declaration_name(type_node, source) != "RestConfiguration":
                 continue
-            _trace_rest_client("rest_client.search.configuration", path=candidate_rel)
+            _trace_rest_client(
+                "rest_client.search.configuration",
+                microservice=service_name,
+                path=candidate_rel,
+            )
             for method_node in java_parser.walk(type_node):
                 if method_node.type != "method_declaration":
                     continue
@@ -2556,6 +2591,7 @@ def _rest_configuration_client_domains_in_module(
                     continue
                 _trace_rest_client(
                     "rest_client.search.bean",
+                    microservice=service_name,
                     path=candidate_rel,
                     bean=method_name,
                 )
@@ -2563,15 +2599,17 @@ def _rest_configuration_client_domains_in_module(
                 if type_node_return is None or name_node is None:
                     _trace_rest_client(
                         "rest_client.search.bean_ignored",
+                        microservice=service_name,
                         path=candidate_rel,
                         bean=method_name,
                         reason="missing_type_or_name",
                     )
                     continue
-                domain = _bean_api_domain(method_node, source)
+                domain = _bean_api_domain(method_node, source, service_name)
                 if domain is None:
                     _trace_rest_client(
                         "rest_client.search.bean_ignored",
+                        microservice=service_name,
                         path=candidate_rel,
                         bean=method_name,
                         reason="no_unique_createInternalClientApi_domain",
@@ -2591,10 +2629,20 @@ def _rest_configuration_client_domains_in_module(
                     api_type=_simple_java_type(java_parser.node_text(source, type_node_return)),
                     domain=domain,
                 )
+                _trace_rest_client(
+                    "rest_client.search.bean_registered",
+                    microservice=service_name,
+                    bean=java_parser.node_text(source, name_node),
+                    api_type=_simple_java_type(java_parser.node_text(source, type_node_return)),
+                    domain=domain,
+                )
     _trace(
         "rest_client.configuration.scan.end",
-        service=service_name,
+        microservice=service_name,
         clients=len(clients),
+    )
+    _trace_rest_client(
+        "rest_client.search.scan_end", microservice=service_name, clients=len(clients)
     )
     return tuple(clients)
 
@@ -2639,16 +2687,30 @@ def _client_type_for_receiver(source: bytes, root, receiver: str) -> str | None:
 
 def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: str) -> str | None:
     """Domaine du client injecté au point d'appel, si non ambigu."""
+    microservice = _rest_client_microservice_name(
+        _rest_configuration_module_root(repo_root, source_path)
+    )
     receiver_match = _REST_CLIENT_RECEIVER_RE.search(snippet)
     if receiver_match is None:
-        _trace_rest_client("rest_client.search.call_ignored", path=source_path, reason="no_receiver")
+        _trace_rest_client(
+            "rest_client.search.call_ignored",
+            microservice=microservice,
+            path=source_path,
+            reason="no_receiver",
+        )
         return None
     receiver = receiver_match.group(1)
-    _trace_rest_client("rest_client.search.call", path=source_path, receiver=receiver)
+    _trace_rest_client(
+        "rest_client.search.call",
+        microservice=microservice,
+        path=source_path,
+        receiver=receiver,
+    )
     clients = _rest_configuration_client_domains(str(repo_root), source_path)
     if not clients:
         _trace_rest_client(
             "rest_client.search.call_ignored",
+            microservice=microservice,
             path=source_path,
             receiver=receiver,
             reason="no_configured_client",
@@ -2658,6 +2720,7 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
     if parsed is None:
         _trace_rest_client(
             "rest_client.search.call_ignored",
+            microservice=microservice,
             path=source_path,
             receiver=receiver,
             reason="caller_unparsed",
@@ -2673,6 +2736,7 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
     unique_domains = set(candidates)
     _trace_rest_client(
         "rest_client.search.match",
+        microservice=microservice,
         path=source_path,
         receiver=receiver,
         api_type=client_type,
@@ -2681,6 +2745,15 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
     if len(unique_domains) != 1:
         _trace(
             "rest_client.configuration.unresolved",
+            microservice=microservice,
+            path=source_path,
+            receiver=receiver,
+            api_type=client_type,
+            candidates=sorted(unique_domains),
+        )
+        _trace_rest_client(
+            "rest_client.search.unresolved",
+            microservice=microservice,
             path=source_path,
             receiver=receiver,
             api_type=client_type,
@@ -2690,6 +2763,15 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
     domain = next(iter(unique_domains))
     _trace(
         "rest_client.configuration.resolved",
+        microservice=microservice,
+        path=source_path,
+        receiver=receiver,
+        api_type=client_type,
+        domain=domain,
+    )
+    _trace_rest_client(
+        "rest_client.search.resolved",
+        microservice=microservice,
         path=source_path,
         receiver=receiver,
         api_type=client_type,
@@ -2786,6 +2868,18 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             snippet = f"{snippet}\ncccr-api-domain:{configuration_domain}"
             _trace(
                 "rest_client.endpoint.domain_attached",
+                microservice=_rest_client_microservice_name(
+                    _rest_configuration_module_root(repo_root, path)
+                ),
+                path=path,
+                line=start_line,
+                domain=configuration_domain,
+            )
+            _trace_rest_client(
+                "rest_client.search.domain_attached",
+                microservice=_rest_client_microservice_name(
+                    _rest_configuration_module_root(repo_root, path)
+                ),
                 path=path,
                 line=start_line,
                 domain=configuration_domain,

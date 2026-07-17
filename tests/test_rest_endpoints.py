@@ -377,6 +377,7 @@ def test_api_client_uses_domain_from_rest_configuration_bean(
     assert "stage=rest_client.search.bean" in trace
     assert "stage=rest_client.search.helper" in trace
     assert "stage=rest_client.search.match" in trace
+    assert "microservice=" in trace
 
 
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
