@@ -462,6 +462,8 @@ _NON_PATH_MAPPING_ATTRS = {"method", "produces", "consumes", "headers", "params"
 _REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]*)\))?")
 _FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
 _NAMED_STRING_ARG_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
+_REST_CLIENT_RECEIVER_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.")
+_API_DOMAIN_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _ENABLE_SWAGGER2_RE = re.compile(r"@EnableSwagger2\b")
 _OPENAPI_HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _METHOD_DECL_RE = re.compile(
@@ -2390,6 +2392,163 @@ def _resolve_value_annotated_variable(
     return resolve_spring_property(repo_root, property_key, source_path)
 
 
+# Certains microservices ne portent pas l'URL de destination au site d'appel :
+# le client HTTP est injecté et construit dans `RestConfiguration`. Dans cette
+# convention, un `@Bean` délègue à un helper auquel est passé le domaine qui
+# publie l'API. On conserve ce domaine dans l'évidence de l'endpoint pour que
+# le graphe puisse restreindre la cible, sans prétendre résoudre une URL.
+def _simple_java_type(value: str) -> str:
+    """Nom simple d'un type Java, sans génériques ni tableau."""
+    value = value.strip().rsplit(".", 1)[-1]
+    return value.split("<", 1)[0].strip().removesuffix("[]")
+
+
+def _api_domain_argument(node, source: bytes) -> str | None:
+    """Extrait un domaine littéral ou une constante `Domain.NAME`.
+
+    Les URLs et les chemins ne sont volontairement pas acceptés : ils ne
+    décrivent pas le domaine logique employé par le helper de configuration.
+    """
+    literal = java_parser.string_value(node, source)
+    if literal is not None:
+        return literal.lower() if _API_DOMAIN_VALUE_RE.fullmatch(literal) else None
+
+    if node.type not in {"identifier", "field_access", "scoped_identifier"}:
+        return None
+    text = java_parser.node_text(source, node)
+    name = text.rsplit(".", 1)[-1]
+    if not _API_DOMAIN_VALUE_RE.fullmatch(name):
+        return None
+    return name.lower().replace("_", "-")
+
+
+def _bean_api_domain(method_node, source: bytes) -> str | None:
+    """Domaine du `webClientHelper.createInternalClientApi(...)` d'un bean.
+
+    La convention applicative est précise : le premier argument est une
+    constante de domaine (`Domain.DOMAIN_ANNUAIRE`) et le second l'interface
+    d'API. La constante devient `domain-annuaire`, qui correspond au nom du
+    microservice. Plusieurs appels de ce type dans un même bean sont ambigus.
+    """
+    domains: set[str] = set()
+    for invocation in java_parser.walk(method_node):
+        if invocation.type != "method_invocation":
+            continue
+        _, method_name, args = java_parser.invocation_parts(invocation, source)
+        if method_name != "createInternalClientApi" or not args:
+            continue
+        domain = _api_domain_argument(args[0], source)
+        if domain is not None:
+            domains.add(domain)
+    return next(iter(domains)) if len(domains) == 1 else None
+
+
+@lru_cache(maxsize=512)
+def _rest_configuration_client_domains(
+    repo_root_str: str, source_path: str
+) -> tuple[tuple[str, str, str], ...]:
+    """Retourne `(type_client, nom_bean, domaine)` du module source.
+
+    La portée est le module Maven/Gradle contenant le fichier appelant (le
+    parent le plus proche doté d'un fichier de build), afin de ne pas mélanger
+    les `RestConfiguration` de services voisins dans un workspace.
+    """
+    repo_root = Path(repo_root_str)
+    caller_path = repo_root / source_path
+    module_root = repo_root
+    for parent in (caller_path.parent, *caller_path.parents):
+        if parent == repo_root.parent:
+            break
+        if (parent / "pom.xml").is_file() or (parent / "build.gradle").is_file() or (parent / "build.gradle.kts").is_file():
+            module_root = parent
+            break
+
+    clients: list[tuple[str, str, str]] = []
+    for candidate in module_root.rglob("*.java"):
+        parsed = java_parser.parse_java(
+            repo_root_str, candidate.relative_to(repo_root).as_posix()
+        )
+        if parsed is None:
+            continue
+        source, root = parsed
+        for type_node in java_parser.type_declarations(root):
+            if java_parser.declaration_name(type_node, source) != "RestConfiguration":
+                continue
+            for method_node in java_parser.walk(type_node):
+                if method_node.type != "method_declaration":
+                    continue
+                if not any(
+                    java_parser.annotation_name(annotation, source) == "Bean"
+                    for annotation in java_parser.annotations_of(method_node)
+                ):
+                    continue
+                type_node_return = method_node.child_by_field_name("type")
+                name_node = method_node.child_by_field_name("name")
+                if type_node_return is None or name_node is None:
+                    continue
+                domain = _bean_api_domain(method_node, source)
+                if domain is None:
+                    continue
+                clients.append(
+                    (
+                        _simple_java_type(java_parser.node_text(source, type_node_return)),
+                        java_parser.node_text(source, name_node),
+                        domain,
+                    )
+                )
+    return tuple(clients)
+
+
+def _client_type_for_receiver(source: bytes, root, receiver: str) -> str | None:
+    """Type déclaré du champ ou paramètre utilisé comme client injecté."""
+    for node in java_parser.walk(root):
+        if node.type == "formal_parameter":
+            name_node = node.child_by_field_name("name")
+            type_node = node.child_by_field_name("type")
+            if (
+                name_node is not None
+                and type_node is not None
+                and java_parser.node_text(source, name_node) == receiver
+            ):
+                return _simple_java_type(java_parser.node_text(source, type_node))
+            continue
+        if node.type != "field_declaration":
+            continue
+        for declarator in node.children:
+            if declarator.type != "variable_declarator":
+                continue
+            name_node = declarator.child_by_field_name("name")
+            if name_node is None or java_parser.node_text(source, name_node) != receiver:
+                continue
+            type_node = node.child_by_field_name("type")
+            if type_node is not None:
+                return _simple_java_type(java_parser.node_text(source, type_node))
+    return None
+
+
+def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: str) -> str | None:
+    """Domaine du client injecté au point d'appel, si non ambigu."""
+    receiver_match = _REST_CLIENT_RECEIVER_RE.search(snippet)
+    if receiver_match is None:
+        return None
+    receiver = receiver_match.group(1)
+    clients = _rest_configuration_client_domains(str(repo_root), source_path)
+    if not clients:
+        return None
+    parsed = java_parser.parse_java(str(repo_root), source_path)
+    if parsed is None:
+        return None
+    source, root = parsed
+    client_type = _client_type_for_receiver(source, root, receiver)
+    candidates = [
+        domain
+        for declared_type, bean_name, domain in clients
+        if receiver == bean_name or (client_type is not None and client_type == declared_type)
+    ]
+    unique_domains = set(candidates)
+    return next(iter(unique_domains)) if len(unique_domains) == 1 else None
+
+
 def _extract_kafka_topic(
     snippet: str, repo_root: Path, source_path: str | None = None
 ) -> tuple[str, bool]:
@@ -2471,6 +2630,11 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             ) from exc
 
         snippet = _read_snippet(repo_root, path, start_line, end_line)
+        configuration_domain = _rest_configuration_domain_hint(repo_root, path, snippet)
+        if configuration_domain is not None:
+            # Marque d'évidence interne, consommée par `graph._rest_target_service_hint`.
+            # Le code d'appel original reste intact pour les autres extracteurs.
+            snippet = f"{snippet}\ncccr-api-domain:{configuration_domain}"
         framework = metadata.get("framework")
         is_restclient = False
 
@@ -2600,6 +2764,7 @@ def clear_analysis_caches() -> None:
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()
     _class_base_path.cache_clear()
+    _rest_configuration_client_domains.cache_clear()
     _file_uses_resttemplate.cache_clear()
     _file_uses_restclient.cache_clear()
     java_parser.clear_caches()

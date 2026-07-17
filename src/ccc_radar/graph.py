@@ -71,6 +71,7 @@ def _segment_matches(call_segment: str, serve_segment: str) -> bool:
 _SERVICE_URL_GETTER_RE = re.compile(r"\.get([A-Z][A-Za-z0-9]*)ServiceUrl\(")
 _SERVICE_URL_HOST_RE = re.compile(r"https?://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
 _LOAD_BALANCED_URI_RE = re.compile(r"lb://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
+_CONFIGURED_API_DOMAIN_RE = re.compile(r"\bcccr-api-domain:([a-z0-9][a-z0-9-]*)\b", re.IGNORECASE)
 
 
 def _camel_to_kebab(name: str) -> str:
@@ -87,6 +88,9 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     load_balanced_match = _LOAD_BALANCED_URI_RE.search(call.snippet)
     if load_balanced_match is not None:
         return load_balanced_match.group(1).lower()
+    configuration_domain_match = _CONFIGURED_API_DOMAIN_RE.search(call.snippet)
+    if configuration_domain_match is not None:
+        return configuration_domain_match.group(1).lower()
     return None
 
 

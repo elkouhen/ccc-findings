@@ -331,6 +331,47 @@ def test_restclient_concatenation_preserves_path_variable_and_framework(tmp_path
     assert endpoints[0].topic_dynamic is True
 
 
+def test_resttemplate_client_uses_domain_from_rest_configuration_bean(tmp_path: Path) -> None:
+    """Un client injecté hérite de `DOMAIN_*` passé à `createInternalClientApi`."""
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "import org.springframework.web.client.RestTemplate;\n"
+        "class RestConfiguration {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  RestTemplate ordersClient() {\n"
+        "    return webClientHelper.createInternalClientApi(Domain.DOMAIN_ANNUAIRE, RestTemplate.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    client = tmp_path / "src" / "main" / "java" / "OrderClient.java"
+    client.write_text(
+        "import org.springframework.web.client.RestTemplate;\n"
+        "class OrderClient {\n"
+        "  private final RestTemplate ordersClient;\n"
+        "  OrderClient(RestTemplate ordersClient) { this.ordersClient = ordersClient; }\n"
+        "  Object get() { return ordersClient.getForObject(\"/orders\", Object.class); }\n"
+        "}\n"
+    )
+    raw = """
+    {"results": [{
+        "check_id": "rules.cccr.rest.java.call-get",
+        "path": "src/main/java/OrderClient.java",
+        "start": {"line": 5}, "end": {"line": 5},
+        "extra": {"metadata": {"category": "endpoint-inventory",
+                                "role": "call", "http_method": "GET",
+                                "framework": "resttemplate"}}
+    }]}
+    """
+
+    endpoint = parse_semgrep_endpoints(raw, tmp_path)[0]
+
+    assert endpoint.topic == "GET /orders"
+    assert "cccr-api-domain:domain-annuaire" in endpoint.snippet
+
+
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
     source = tmp_path / "src" / "main" / "java" / "OrderListener.java"
     source.parent.mkdir(parents=True)
