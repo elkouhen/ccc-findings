@@ -1,6 +1,5 @@
 """Inventaire de tous les modules Maven et Gradle d'un workspace."""
 
-import hashlib
 import os
 import re
 import sys
@@ -10,9 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from tree_sitter import Language, Parser
-import tree_sitter_java
-
+from ccc_radar import java_parser
 from ccc_radar.gradle import discover_gradle_modules
 from ccc_radar.maven import parse_pom, pom_version
 from ccc_radar.configuration import service_configuration_example
@@ -129,29 +126,6 @@ _MAX_NESTED_MODULE_DEPTH = 5
 _KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*([\"'])(.*?)\1")
 _FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
 _JAVA_STRING_LITERAL_RE = re.compile(r'^\s*"((?:\\.|[^"\\])*)"\s*$')
-_JAVA_LANGUAGE: Language | None = None
-_JAVA_PARSER: Parser | None = None
-
-
-def _java_language() -> Language:
-    global _JAVA_LANGUAGE
-    if _JAVA_LANGUAGE is None:
-        _trace("java_language.begin")
-        _JAVA_LANGUAGE = Language(tree_sitter_java.language())
-        _trace("java_language.end")
-    return _JAVA_LANGUAGE
-
-
-def _java_parser(owner: str) -> Parser:
-    global _JAVA_PARSER
-    _trace("java_parser.begin", owner=owner)
-    if _JAVA_PARSER is None:
-        _trace("java_parser.create.begin", owner=owner)
-        _JAVA_PARSER = Parser()
-        _JAVA_PARSER.language = _java_language()
-        _trace("java_parser.create.end", owner=owner)
-    _trace("java_parser.end", owner=owner)
-    return _JAVA_PARSER
 
 
 def _trace(stage: str, **fields: object) -> None:
@@ -197,34 +171,24 @@ def _starts_application(module_dir: Path) -> SourceEvidence | None:
     return None
 
 
-def _walk(node):
-    yield node
-    for child in node.children:
-        yield from _walk(child)
-
-
-def _node_text(source: bytes, node) -> str:
-    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
-
-
-def _enclosing_method_name(source: bytes, node) -> str | None:
-    current = node.parent
-    while current is not None:
-        if current.type == "method_declaration":
-            name = current.child_by_field_name("name")
-            return _node_text(source, name) if name is not None else None
-        current = current.parent
-    return None
+# Traversée et moteur tree-sitter : factorisés dans `java_parser` (utilisés
+# aussi par `scanner.py`). Les alias conservent les noms privés historiques
+# pour limiter le bruit de renommage dans ce module.
+_walk = java_parser.walk
+_node_text = java_parser.node_text
+_enclosing_method_name = java_parser.enclosing_method_name
+_java_parser = java_parser.java_parser
 
 
 def _source_evidence(source: bytes, node, rel_path: str) -> SourceEvidence:
-    snippet = _node_text(source, node)
-    digest = hashlib.sha256(f"{rel_path}|{node.type}|{snippet}".encode()).hexdigest()
+    start_line, end_line, snippet, source_hash = java_parser.evidence_fields(
+        source, node, rel_path
+    )
     return SourceEvidence(
-        start_line=node.start_point.row + 1,
-        end_line=node.end_point.row + 1,
+        start_line=start_line,
+        end_line=end_line,
         snippet=snippet,
-        source_hash=f"sha256:{digest}",
+        source_hash=source_hash,
     )
 
 

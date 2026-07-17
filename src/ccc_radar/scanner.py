@@ -12,6 +12,7 @@ import yaml
 
 from ccc_radar.config import Config
 from ccc_radar import gradle as gradle_module
+from ccc_radar import java_parser
 from ccc_radar import maven as maven_module
 from ccc_radar.gradle import gradle_service_for_path
 from ccc_radar.maven import module_name_for_path
@@ -89,7 +90,6 @@ def _relative_path(raw_path: str, repo_root: Path) -> str:
 # BACKLOG-13 M1 : module Maven + nom qualifié Java attribués à chaque
 # finding/endpoint indexé, en plus de `path` — permet de grouper par module
 # sans fédération multi-dépôts (voir `graph.group_endpoints_by_module`).
-_JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
 
 
 @lru_cache(maxsize=2048)
@@ -104,16 +104,28 @@ def _java_source(repo_root_str: str, rel_path: str) -> str:
 
 @lru_cache(maxsize=2048)
 def _java_qualified_name(repo_root_str: str, rel_path: str) -> str | None:
+    """Nom Java qualifié (package + stem du fichier) d'un `.java`.
+
+    Le nom de classe suit la convention historique (stem du fichier) ; le
+    package est lu sur la déclaration `package` de l'AST tree-sitter (plus
+    fiable qu'un regex ancré sur le texte source)."""
     if not rel_path.endswith(".java"):
         return None
     class_name = Path(rel_path).stem
-    text = _java_source(repo_root_str, rel_path)
-    if not text:
+    parsed = java_parser.parse_java(repo_root_str, rel_path)
+    if parsed is None:
         return class_name
-    match = _JAVA_PACKAGE_RE.search(text)
-    if match is None:
-        return class_name
-    return f"{match.group(1)}.{class_name}"
+    source, root = parsed
+    for node in java_parser.walk(root):
+        if node.type == "package_declaration":
+            package = (
+                java_parser.node_text(source, node)[len("package") :]
+                .strip()
+                .rstrip(";")
+                .strip()
+            )
+            return f"{package}.{class_name}" if package else class_name
+    return class_name
 
 
 def _split_java_type_arguments(value: str) -> list[str]:
@@ -380,12 +392,6 @@ _BARE_TOPIC_VAR_RE = re.compile(
 # le topic suit directement `.to(`, contrairement au premier littéral
 # quelconque du snippet (qui peut appartenir à un `.peek(...)` chaîné avant).
 _KAFKA_STREAMS_TO_RE = re.compile(r'\.to\(\s*"([^"]*)"\s*(\+)?')
-_VALUE_FIELD_RE = re.compile(
-    r'@Value\(\s*"\$\{([^}]+)\}"\s*\)\s*'
-    r"(?:private\s+|protected\s+|public\s+|final\s+|static\s+)*"
-    r"[\w.<>\[\],\s]+?\s+"
-    r"(\w+)\s*[;=]"
-)
 
 _SPRING_BASE_FILENAMES = (
     "application.yml",
@@ -1893,14 +1899,43 @@ def infer_json_kafka_flow_graph_endpoints(
 def _load_value_annotated_fields(path_str: str) -> dict[str, str]:
     """Champs `@Value("${clé}")` d'un fichier source Java — variable ->
     clé de propriété (avec éventuel `:défaut`, laissé tel quel pour
-    `resolve_spring_property`). Best-effort par regex sur le texte source,
-    même esprit que le reste de l'extraction (ADR-26) : pas d'AST Java."""
+    `resolve_spring_property`). Extrait via l'AST tree-sitter : pour chaque
+    `field_declaration` annotée `@Value("${...}")`, on associe le nom du
+    champ à la clé de propriété (sans les `${ }`)."""
     path = Path(path_str)
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        source = path.read_bytes()
     except OSError:
         return {}
-    return {match.group(2): match.group(1) for match in _VALUE_FIELD_RE.finditer(text)}
+    root = java_parser.java_parser("value_fields").parse(source).root_node
+    if root.has_error:
+        return {}
+    fields: dict[str, str] = {}
+    for node in java_parser.walk(root):
+        if node.type != "field_declaration":
+            continue
+        value_ann = next(
+            (
+                ann
+                for ann in java_parser.annotations_of(node)
+                if java_parser.annotation_name(ann, source) == "Value"
+            ),
+            None,
+        )
+        if value_ann is None:
+            continue
+        raw = java_parser.first_string_argument(value_ann, source)
+        if raw is None or not (raw.startswith("${") and raw.endswith("}")):
+            continue
+        property_key = raw[2:-1]
+        for declarator in node.children:
+            if declarator.type != "variable_declarator":
+                continue
+            name_node = declarator.child_by_field_name("name")
+            if name_node is None:
+                continue
+            fields[java_parser.node_text(source, name_node)] = property_key
+    return fields
 
 
 def _resolve_value_annotated_variable(
@@ -2121,5 +2156,6 @@ def clear_analysis_caches() -> None:
     _class_base_path.cache_clear()
     _file_uses_resttemplate.cache_clear()
     _file_uses_restclient.cache_clear()
+    java_parser.clear_caches()
     maven_module.clear_caches()
     gradle_module.clear_caches()
