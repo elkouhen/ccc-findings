@@ -334,18 +334,14 @@ def index_repo(
                 )
         else:
             _report_progress(progress, "  • aucun module Maven/Gradle détecté ; scan de la racine.")
-    # Les signatures d'inventaire d'endpoints (version du code d'inférence,
-    # stratégie de topic) ne sont lues/écrites que quand Semgrep tourne : ce
-    # sont des états du scan d'endpoints, pas de l'inventaire de fichiers.
-    # Les consulter avec Semgrep désactivé forcerait un `full=True` à chaque
-    # exécution (la meta n'est jamais écrite — voir plus bas), cassant
-    # l'incrémentalité de `cccr index` lancé sans `--semgrep`.
-    if "semgrep" not in disabled:
-        endpoint_signature = current_endpoint_inventory_signature()
-        if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
-            full = True
-        if store.get_meta("topic_strategy") != topic_strategy:
-            full = True
+    # Les signatures d'inventaire d'endpoints pilotent aussi l'analyse locale
+    # (REST/Kafka/manifests) : même sans Semgrep, une évolution du code
+    # d'inférence ou de stratégie Kafka doit forcer un rescan complet.
+    endpoint_signature = current_endpoint_inventory_signature()
+    if store.get_meta("endpoint_inventory_signature") != endpoint_signature:
+        full = True
+    if store.get_meta("topic_strategy") != topic_strategy:
+        full = True
     analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
     if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
         full = True
@@ -398,25 +394,31 @@ def index_repo(
     endpoints_added = 0
     findings: list[Finding] = []
     endpoints: list[MessageEndpoint] = []
-    if changed and "semgrep" not in disabled:
-        _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
-        _trace("semgrep.begin", files=len(changed))
-        findings_removed += store.count_findings_for_paths(changed)
+    if changed:
         endpoints_removed += store.count_endpoints_for_paths(changed)
+        if "semgrep" not in disabled:
+            _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
+            _trace("semgrep.begin", files=len(changed))
+            findings_removed += store.count_findings_for_paths(changed)
 
-        # Un seul scan Semgrep pour findings (K8/`default`) et règles
-        # d'inventaire d'endpoints (K2/K11) mélangées dans config.rules ;
-        # chaque parseur filtre ce qui le concerne sur la même sortie
-        # (BACKLOG-11 A1) — pas de min_severity pour les endpoints (K8 CA2).
-        raw = invoke_semgrep_raw(repo_root, config, files=changed)
-        _trace("semgrep.end", bytes=len(raw))
-        min_index = SEVERITY_ORDER.index(config.min_severity)
-        findings = [
-            f
-            for f in parse_semgrep_json(raw, repo_root)
-            if SEVERITY_ORDER.index(f.severity) >= min_index
-        ]
-        endpoints = parse_semgrep_endpoints(raw, repo_root)
+            # Un seul scan Semgrep pour findings (K8/`default`) et règles
+            # d'inventaire d'endpoints (K2/K11) mélangées dans config.rules ;
+            # chaque parseur filtre ce qui le concerne sur la même sortie
+            # (BACKLOG-11 A1) — pas de min_severity pour les endpoints (K8 CA2).
+            raw = invoke_semgrep_raw(repo_root, config, files=changed)
+            _trace("semgrep.end", bytes=len(raw))
+            min_index = SEVERITY_ORDER.index(config.min_severity)
+            findings = [
+                f
+                for f in parse_semgrep_json(raw, repo_root)
+                if SEVERITY_ORDER.index(f.severity) >= min_index
+            ]
+            endpoints = parse_semgrep_endpoints(raw, repo_root)
+        else:
+            _report_progress(
+                progress,
+                "→ Indexation : Semgrep désactivé, findings conservés ; endpoints recalculés localement.",
+            )
         _trace("endpoint_inference.begin")
         endpoints.extend(infer_framework_endpoints(repo_root, changed))
         endpoints.extend(infer_kafka_endpoints(repo_root, changed))
@@ -433,13 +435,12 @@ def index_repo(
             "→ Indexation : écriture des résultats "
             f"({len(findings)} finding(s), {len(endpoints)} endpoint(s)).",
         )
-        store.replace_findings_for_files(changed, findings)
+        if "semgrep" not in disabled:
+            store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
         _trace("store.endpoints_written", findings=len(findings), endpoints=len(endpoints))
         findings_added = len(findings)
         endpoints_added = len(endpoints)
-    elif changed:
-        _report_progress(progress, "→ Indexation : Semgrep désactivé, findings et endpoints conservés.")
 
     # Les empreintes de fichiers sont l'état de l'inventaire, indépendant du
     # scan Semgrep : on les persiste toujours pour que la prochaine exécution
@@ -447,10 +448,9 @@ def index_repo(
     for path in changed:
         store.set_file_hash(path, current_hashes[path])
 
-    if "semgrep" not in disabled:
-        store.set_meta("endpoint_inventory_signature", endpoint_signature)
-        store.set_meta("endpoint_inventory_indexed", "1")
-        store.set_meta("topic_strategy", topic_strategy)
+    store.set_meta("endpoint_inventory_signature", endpoint_signature)
+    store.set_meta("endpoint_inventory_indexed", "1")
+    store.set_meta("topic_strategy", topic_strategy)
     store.set_meta("analysis_inputs_signature", analysis_inputs_signature)
 
     # Persist only after the scan path has completed.  The inventory remains

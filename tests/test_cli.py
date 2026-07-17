@@ -1231,6 +1231,80 @@ def test_graph_reflects_a_real_cccr_index_run(
     assert sum(json.loads(summary_result.output)["by_severity"].values()) == 1
 
 
+def test_graph_reflects_kafka_edges_after_a_real_cccr_index_run_without_semgrep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    for service_name, extra_source in (
+        (
+            "order-service",
+            """
+import org.springframework.kafka.core.KafkaTemplate;
+
+class OrderPublisher {
+    private KafkaTemplate<String, String> kafkaTemplate;
+    void publish(String payload) {
+        kafkaTemplate.send("orders.created", payload);
+    }
+}
+""".strip(),
+        ),
+        (
+            "payment-service",
+            """
+import org.springframework.kafka.annotation.KafkaListener;
+
+class PaymentConsumer {
+    @KafkaListener(topics = "orders.created")
+    void onOrderCreated(String payload) {}
+}
+""".strip(),
+        ),
+    ):
+        service_dir = tmp_path / service_name
+        (service_dir / "src" / "main" / "java").mkdir(parents=True)
+        (service_dir / "pom.xml").write_text(
+            f"<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+            f"<modelVersion>4.0.0</modelVersion>"
+            f"<artifactId>{service_name}</artifactId>"
+            "<version>1.0.0</version>"
+            "</project>"
+        )
+        (service_dir / "src" / "main" / "java" / "Application.java").write_text(
+            """
+import org.springframework.boot.SpringApplication;
+
+class Application {
+    static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+""".strip()
+        )
+        (service_dir / "src" / "main" / "java" / ("Publisher.java" if "order" in service_name else "Consumer.java")).write_text(extra_source)
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules/rules.yml']\n")
+
+    index_result = runner.invoke(app, ["index"])
+    assert index_result.exit_code == 0
+
+    graph_result = runner.invoke(app, ["export", "microservices", "--json"])
+    assert graph_result.exit_code == 0
+    data = json.loads(graph_result.output)
+    assert data["services"] == ["order-service", "payment-service"]
+    assert {node["name"] for node in data["nodes"]} == {
+        "order-service",
+        "payment-service",
+        "orders.created",
+    }
+    assert {(edge["kind"], edge["from_node"], edge["to_node"], edge["label"]) for edge in data["edges"]} == {
+        ("kafka_produce", "order-service", "orders.created", "orders.created"),
+        ("kafka_consume", "orders.created", "payment-service", "orders.created"),
+    }
+    assert data["outbound_calls_in_consumers"] == []
+
+
 def test_microservices_lists_only_runtime_services(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -99,14 +99,36 @@ def test_index_repo_can_disable_semgrep_and_properties(repo_copy: Path, monkeypa
             disabled=frozenset({"semgrep", "properties"}), progress=messages.append,
         )
         assert store.all_findings() == []
+        assert store.all_endpoints() == []
         assert store.all_modules() == []
 
     assert report.findings_added == 0
     assert any("Semgrep désactivé" in message for message in messages)
     assert any("propriétés et inventaire" in message for message in messages)
     with Store(repo_copy, readonly=True) as readonly_store:
-        assert readonly_store.get_meta("endpoint_inventory_signature") is None
-        assert readonly_store.get_meta("endpoint_inventory_indexed") is None
+        assert readonly_store.get_meta("endpoint_inventory_signature") == current_endpoint_inventory_signature()
+        assert readonly_store.get_meta("endpoint_inventory_indexed") == "1"
+
+
+@pytest.mark.integration
+def test_index_repo_without_semgrep_still_indexes_local_kafka_endpoints(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        report = index_repo(
+            endpoint_repo_copy,
+            config,
+            store,
+            FakeEmbedder(),
+            disabled=frozenset({"semgrep"}),
+        )
+        endpoints = store.all_endpoints()
+    assert report.findings_added == 0
+    assert {(endpoint.role, endpoint.system, endpoint.topic) for endpoint in endpoints} == {
+        ("consume", "kafka", "orders.created"),
+    }
 
 
 def test_index_repo_imports_json_kafka_flow_graph_manifest(
