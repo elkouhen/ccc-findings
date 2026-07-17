@@ -2658,6 +2658,31 @@ def _rest_configuration_client_domains(
     )
 
 
+def discover_rest_api_client_configurations(repo_root: Path) -> None:
+    """Parcourt proactivement les configurations clients de chaque module.
+
+    Cette phase précède l'analyse des appels : les interfaces d'API générées
+    ne donnent pas toujours un résultat Semgrep REST exploitable, mais leur
+    `RestConfiguration` doit tout de même être cherchée dans chaque
+    microservice Maven du workspace.
+    """
+    module_roots = sorted({pom_path.parent for pom_path in repo_root.rglob("pom.xml")})
+    if not module_roots:
+        module_roots = [repo_root]
+    _trace_rest_client(
+        "rest_client.search.workspace_begin", modules=len(module_roots), root=repo_root
+    )
+    for module_root in module_roots:
+        module_root_rel = module_root.relative_to(repo_root).as_posix()
+        _trace_rest_client(
+            "rest_client.search.workspace_module",
+            microservice=_rest_client_microservice_name(module_root),
+            module=module_root_rel,
+        )
+        _rest_configuration_client_domains_in_module(str(repo_root), module_root_rel)
+    _trace_rest_client("rest_client.search.workspace_end", modules=len(module_roots))
+
+
 def _client_type_for_receiver(source: bytes, root, receiver: str) -> str | None:
     """Type déclaré du champ ou paramètre utilisé comme client injecté."""
     for node in java_parser.walk(root):
@@ -2990,6 +3015,7 @@ def run_semgrep_endpoints(
     """Comme `run_semgrep`, mais pour les règles d'inventaire d'endpoints
     (BACKLOG-10 K11) — pas de filtre `min_severity` : ce ne sont pas des
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
+    discover_rest_api_client_configurations(repo_root)
     raw = invoke_semgrep_raw(repo_root, config, files)
     endpoints = parse_semgrep_endpoints(raw, repo_root)
     endpoints.extend(infer_framework_endpoints(repo_root, files))

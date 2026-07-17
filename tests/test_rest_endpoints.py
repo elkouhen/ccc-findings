@@ -5,6 +5,7 @@ import pytest
 from ccc_radar.config import Config
 from ccc_radar.scanner import (
     SemgrepError,
+    discover_rest_api_client_configurations,
     infer_framework_endpoints,
     parse_semgrep_endpoints,
     run_semgrep_endpoints,
@@ -368,6 +369,7 @@ def test_api_client_uses_domain_from_rest_configuration_bean(
     """
 
     monkeypatch.setenv("CCCR_TRACE_REST_CLIENTS", "1")
+    discover_rest_api_client_configurations(tmp_path)
     endpoint = parse_semgrep_endpoints(raw, tmp_path)[0]
     trace = capsys.readouterr().err
 
@@ -378,6 +380,7 @@ def test_api_client_uses_domain_from_rest_configuration_bean(
     assert "stage=rest_client.search.helper" in trace
     assert "stage=rest_client.search.match" in trace
     assert "microservice=" in trace
+    assert "stage=rest_client.search.workspace_module" in trace
 
 
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
