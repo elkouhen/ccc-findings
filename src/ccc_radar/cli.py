@@ -1752,18 +1752,14 @@ def _render_microservice_openapi(service: str, root: Path, json_output: bool) ->
 
 def _render_openapi_contracts(name: str, root: Path, json_output: bool) -> None:
     """Rend les contrats OpenAPI/Swagger d'un module ou microservice."""
-    names = {"openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json"}
     contracts = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name.casefold() not in names:
+    module = next((item for item in discover_modules(root) if item.path == root), None)
+    contract_paths = module.openapi_files if module is not None else ()
+    for contract_path in contract_paths:
+        path = root / contract_path
+        if not path.is_file():
             continue
-        relative = path.relative_to(root)
-        if any(part in {".git", ".cccr", "target", "build", "test"} for part in relative.parts):
-            continue
-        contracts.append({
-            "path": relative.as_posix(),
-            "content": path.read_text(encoding="utf-8", errors="replace"),
-        })
+        contracts.append({"path": contract_path, "content": path.read_text(encoding="utf-8", errors="replace")})
     result = {"name": name, "contracts": contracts}
     if json_output:
         typer.echo(json.dumps(result))

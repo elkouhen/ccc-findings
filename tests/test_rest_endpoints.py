@@ -162,6 +162,41 @@ def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_pat
     }
 
 
+def test_openapi_generator_pom_points_to_authoritative_contract_for_rest_controller(tmp_path: Path) -> None:
+    controller = tmp_path / "src" / "main" / "java" / "OrdersApiController.java"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        "import org.springframework.web.bind.annotation.RestController;\n"
+        "@RestController\n"
+        "class OrdersApiController implements OrdersApi {}\n"
+    )
+    contract = tmp_path / "src" / "main" / "openapi" / "published-api.yaml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(
+        "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+        "  /orders/{id}:\n    patch:\n      responses: {}\n"
+    )
+    (tmp_path / "pom.xml").write_text(
+        "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+        "<modelVersion>4.0.0</modelVersion>"
+        "<artifactId>orders-api</artifactId>"
+        "<build><plugins><plugin>"
+        "<groupId>org.openapitools</groupId>"
+        "<artifactId>openapi-generator-maven-plugin</artifactId>"
+        "<executions><execution><goals><goal>generate</goal></goals>"
+        "<configuration><inputSpec>${project.basedir}/src/main/openapi/published-api.yaml</inputSpec></configuration>"
+        "</execution></executions>"
+        "</plugin></plugins></build></project>"
+    )
+
+    endpoints = infer_framework_endpoints(tmp_path, files=["pom.xml"])
+
+    assert {(endpoint.topic, endpoint.framework, endpoint.path) for endpoint in endpoints} == {
+        ("GET /orders", "openapi", "src/main/openapi/published-api.yaml"),
+        ("PATCH /orders/{id}", "openapi", "src/main/openapi/published-api.yaml"),
+    }
+
+
 def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic() -> None:
     # getForObject(base + "/orders/" + id, ...) : premier littéral trouvé
     # au milieu de l'expression, toujours marqué dynamique (concaténation).

@@ -10,6 +10,7 @@ import re
 _MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
 _MAIN_METHOD_RE = re.compile(r"\bstatic\s+void\s+main\s*\(")
 _SPRING_APPLICATION_RUN_RE = re.compile(r"SpringApplication\.run\(")
+_MAVEN_PROPERTY_RE = re.compile(r"\$\{([^}]+)\}")
 
 
 def _pom_child_text(root: ET.Element, tag: str) -> str | None:
@@ -17,6 +18,123 @@ def _pom_child_text(root: ET.Element, tag: str) -> str | None:
     if element is None:
         element = root.find(tag)  # pom sans espace de noms déclaré (rare)
     return element.text.strip() if element is not None and element.text else None
+
+
+def _pom_findall(root: ET.Element, path: str) -> list[ET.Element]:
+    namespaced = root.findall(path)
+    plain = root.findall(path.replace(_MAVEN_NS, ""))
+    seen: set[int] = set()
+    merged: list[ET.Element] = []
+    for element in [*namespaced, *plain]:
+        marker = id(element)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        merged.append(element)
+    return merged
+
+
+def _parse_pom_root(pom_path: Path) -> ET.Element | None:
+    try:
+        return ET.fromstring(pom_path.read_text(encoding="utf-8", errors="replace"))
+    except (ET.ParseError, OSError):
+        return None
+
+
+def _resolve_maven_value(value: str, properties: dict[str, str]) -> str:
+    resolved = value.strip()
+    for _ in range(8):
+        updated = _MAVEN_PROPERTY_RE.sub(
+            lambda match: properties.get(match.group(1), match.group(0)),
+            resolved,
+        )
+        if updated == resolved:
+            break
+        resolved = updated
+    return resolved
+
+
+def _pom_properties(root: ET.Element, pom_path: Path) -> dict[str, str]:
+    module_dir = pom_path.parent.resolve()
+    properties = {
+        "basedir": str(module_dir),
+        "pom.basedir": str(module_dir),
+        "project.basedir": str(module_dir),
+        "project.parent.basedir": str(module_dir.parent),
+        "project.build.directory": str(module_dir / "target"),
+    }
+    artifact_id = _pom_child_text(root, "artifactId")
+    version = _pom_child_text(root, "version")
+    if artifact_id:
+        properties.update({
+            "artifactId": artifact_id,
+            "project.artifactId": artifact_id,
+            "pom.artifactId": artifact_id,
+        })
+    if version:
+        properties.update({
+            "version": version,
+            "project.version": version,
+            "pom.version": version,
+        })
+    for props in _pom_findall(root, f"{_MAVEN_NS}properties"):
+        for child in list(props):
+            tag = child.tag.split("}", 1)[-1]
+            if child.text and tag:
+                properties[tag] = child.text.strip()
+    return properties
+
+
+def _plugin_config_value(plugin: ET.Element, tag: str) -> str | None:
+    config = plugin.find(f"{_MAVEN_NS}configuration")
+    if config is None:
+        config = plugin.find("configuration")
+    return _pom_child_text(config, tag) if config is not None else None
+
+
+def _execution_configurations(plugin: ET.Element) -> list[ET.Element]:
+    executions = plugin.find(f"{_MAVEN_NS}executions")
+    if executions is None:
+        executions = plugin.find("executions")
+    if executions is None:
+        return []
+    configurations: list[ET.Element] = []
+    for execution in list(executions):
+        config = execution.find(f"{_MAVEN_NS}configuration")
+        if config is None:
+            config = execution.find("configuration")
+        if config is not None:
+            configurations.append(config)
+    return configurations
+
+
+def _iter_openapi_generator_plugins(root: ET.Element) -> list[ET.Element]:
+    plugins: list[ET.Element] = []
+    for plugin in _pom_findall(root, f".//{_MAVEN_NS}plugin"):
+        artifact_id = _pom_child_text(plugin, "artifactId")
+        if artifact_id and artifact_id.strip().casefold() == "openapi-generator-maven-plugin":
+            plugins.append(plugin)
+    return plugins
+
+
+def _resolve_openapi_spec_path(
+    pom_path: Path, raw_value: str, properties: dict[str, str]
+) -> str | None:
+    resolved = _resolve_maven_value(raw_value, properties)
+    if "${" in resolved or "://" in resolved and not resolved.startswith("file://"):
+        return None
+    if resolved.startswith("file://"):
+        resolved = resolved[7:]
+    candidate = Path(resolved)
+    if not candidate.is_absolute():
+        candidate = pom_path.parent / candidate
+    try:
+        module_relative = candidate.resolve(strict=False).relative_to(pom_path.parent.resolve())
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return module_relative.as_posix()
 
 
 def _is_spring_boot_main_class(text: str) -> bool:
@@ -66,7 +184,9 @@ def pom_version(pom_path: Path) -> str | None:
     version = _pom_child_text(root, "version")
     if version is not None:
         return version
-    parent = root.find(f"{_MAVEN_NS}parent") or root.find("parent")
+    parent = root.find(f"{_MAVEN_NS}parent")
+    if parent is None:
+        parent = root.find("parent")
     return _pom_child_text(parent, "version") if parent is not None else None
 
 
@@ -78,18 +198,37 @@ def is_runtime_service(packaging: str | None, is_spring_boot_app: bool) -> bool:
 
 def _has_openapi_generator_plugin(pom_path: Path) -> bool:
     """Détecte la présence du plugin openapi-generator-maven-plugin dans le pom.xml."""
-    try:
-        text = pom_path.read_text(encoding="utf-8", errors="replace")
-        root = ET.fromstring(text)
-    except (ET.ParseError, OSError):
+    root = _parse_pom_root(pom_path)
+    if root is None:
         return False
+    return bool(_iter_openapi_generator_plugins(root))
 
-    # Chercher dans les plugins
-    for artifact_id in root.findall(f".//{_MAVEN_NS}artifactId"):
-        if artifact_id.text and "openapi-generator" in artifact_id.text.lower():
-            return True
 
-    return False
+def detect_openapi_generator_input_specs(pom_path: Path) -> tuple[str, ...]:
+    """Liste les contrats OpenAPI/Swagger locaux référencés par le plugin Maven.
+
+    Les implémentations serveur générées par ``openapi-generator-maven-plugin``
+    publient l'API décrite par ``inputSpec`` même quand les classes
+    ``@RestController`` n'exposent aucune annotation de méthode locale.
+    """
+    root = _parse_pom_root(pom_path)
+    if root is None:
+        return ()
+    properties = _pom_properties(root, pom_path)
+    specs: set[str] = set()
+    for plugin in _iter_openapi_generator_plugins(root):
+        plugin_level = _plugin_config_value(plugin, "inputSpec")
+        if plugin_level:
+            resolved = _resolve_openapi_spec_path(pom_path, plugin_level, properties)
+            if resolved is not None:
+                specs.add(resolved)
+        for configuration in _execution_configurations(plugin):
+            execution_level = _pom_child_text(configuration, "inputSpec")
+            if execution_level:
+                resolved = _resolve_openapi_spec_path(pom_path, execution_level, properties)
+                if resolved is not None:
+                    specs.add(resolved)
+    return tuple(sorted(specs))
 
 
 def detect_openapi_generated_clients(pom_path: Path) -> tuple[str, ...]:

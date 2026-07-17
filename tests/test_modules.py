@@ -402,6 +402,42 @@ def test_modules_cli_subcommands_render_endpoints_properties_and_openapi(tmp_pat
     assert json.loads(openapi.output)["contracts"][0]["path"] == "src/main/resources/openapi.yml"
 
 
+def test_modules_openapi_renders_plugin_referenced_contract_for_generated_rest_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "orders"
+    (module / "src" / "main" / "java").mkdir(parents=True)
+    (module / "src" / "main" / "openapi").mkdir(parents=True)
+    (module / "src" / "main" / "java" / "OrdersApiController.java").write_text(
+        "import org.springframework.web.bind.annotation.RestController;\n"
+        "@RestController\n"
+        "class OrdersApiController implements OrdersApi {}\n"
+    )
+    (module / "src" / "main" / "openapi" / "published-api.yaml").write_text("openapi: 3.0.0\npaths: {}\n")
+    (module / "pom.xml").write_text(
+        "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+        "<modelVersion>4.0.0</modelVersion>"
+        "<artifactId>orders-api</artifactId><version>3.1.0</version>"
+        "<build><plugins><plugin>"
+        "<groupId>org.openapitools</groupId>"
+        "<artifactId>openapi-generator-maven-plugin</artifactId>"
+        "<executions><execution><configuration>"
+        "<inputSpec>${project.basedir}/src/main/openapi/published-api.yaml</inputSpec>"
+        "</configuration></execution></executions>"
+        "</plugin></plugins></build></project>"
+    )
+    with Store(tmp_path) as store:
+        store.replace_modules(discover_modules(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    openapi = runner.invoke(app, ["modules", "openapi", "orders-api", "--json"])
+
+    assert openapi.exit_code == 0
+    assert json.loads(openapi.output)["contracts"] == [
+        {"path": "src/main/openapi/published-api.yaml", "content": "openapi: 3.0.0\npaths: {}\n"}
+    ]
+
+
 def test_modules_graph_reads_indexed_build_dependencies_and_exports_html(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

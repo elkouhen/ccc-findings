@@ -518,12 +518,24 @@ def _extract_java_architecture(
     return sorted_collections, sorted_methods, kafka_methods, sorted_blocking_points
 
 
-def _discover_openapi_files(module_dir: Path, module_roots: set[Path]) -> tuple[str, ...]:
-    return tuple(
+def _discover_openapi_files(
+    module_dir: Path,
+    module_roots: set[Path],
+    *,
+    rest_controllers: tuple[str, ...] = (),
+    build_system: str | None = None,
+) -> tuple[str, ...]:
+    contracts = {
         _module_relative(module_dir, path)
         for path in _module_files(module_dir, module_roots, "*")
         if path.name.casefold() in _OPENAPI_FILENAMES
-    )
+    }
+    pom_path = module_dir / "pom.xml"
+    if build_system == "maven" and rest_controllers and pom_path.is_file():
+        from ccc_radar.maven import detect_openapi_generator_input_specs
+
+        contracts.update(detect_openapi_generator_input_specs(pom_path))
+    return tuple(sorted(contracts))
 
 
 def _has_rest_controllers(module_dir: Path, module_roots: set[Path]) -> tuple[str, ...]:
@@ -577,6 +589,13 @@ def _enrich_module(
     # Détecter les contrôleurs REST
     rest_controllers = _has_rest_controllers(module.path, module_roots)
 
+    openapi_files = _discover_openapi_files(
+        module.path,
+        module_roots,
+        rest_controllers=rest_controllers,
+        build_system=module.build_system,
+    )
+
     # Détecter les clients OpenAPI générés (Maven uniquement)
     openapi_generated_clients = ()
     if module.build_system == "maven":
@@ -587,7 +606,7 @@ def _enrich_module(
 
     enriched = DiscoveredModule(
         **{**module.__dict__, "mongo_collections": collections, "mongo_methods": methods,
-           "openapi_files": _discover_openapi_files(module.path, module_roots),
+           "openapi_files": openapi_files,
            "kafka_methods": kafka_methods, "blocking_points": blocking_points,
            "rest_controllers": rest_controllers, "openapi_generated_clients": openapi_generated_clients}
     )

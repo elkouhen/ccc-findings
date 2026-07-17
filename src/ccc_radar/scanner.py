@@ -16,6 +16,7 @@ from ccc_radar import java_parser
 from ccc_radar import maven as maven_module
 from ccc_radar.gradle import gradle_service_for_path
 from ccc_radar.maven import module_name_for_path
+from ccc_radar.modules import _has_rest_controllers
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 from ccc_radar.topic_expressions import spring_topic_reference
 
@@ -1088,6 +1089,46 @@ def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpo
     return []
 
 
+@lru_cache(maxsize=64)
+def _openapi_generator_contract_paths(repo_root_str: str) -> tuple[str, ...]:
+    repo_root = Path(repo_root_str)
+    contracts: set[str] = set()
+    for pom_path in sorted(repo_root.rglob("pom.xml")):
+        try:
+            module_dir = pom_path.parent
+            if not _has_rest_controllers(module_dir, set()):
+                continue
+            for module_relative in maven_module.detect_openapi_generator_input_specs(pom_path):
+                contracts.add((module_dir / module_relative).relative_to(repo_root).as_posix())
+        except ValueError:
+            continue
+    return tuple(sorted(contracts))
+
+
+def _is_openapi_contract_path(repo_root: Path, rel_path: str) -> bool:
+    path = repo_root / rel_path
+    return path.name in {
+        "openapi.yaml", "openapi.yml", "openapi.json",
+        "swagger.yaml", "swagger.yml", "swagger.json",
+    } or rel_path in _openapi_generator_contract_paths(str(repo_root))
+
+
+def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    path = repo_root / rel_path
+    if path.name != "pom.xml":
+        return []
+    if not _has_rest_controllers(path.parent, set()):
+        return []
+    endpoints: list[MessageEndpoint] = []
+    for module_relative in maven_module.detect_openapi_generator_input_specs(path):
+        try:
+            contract_rel_path = (path.parent / module_relative).relative_to(repo_root).as_posix()
+        except ValueError:
+            continue
+        endpoints.extend(_infer_openapi_endpoints(repo_root, contract_rel_path))
+    return endpoints
+
+
 def _infer_openapi_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
     """Inventory literal operations declared by a production OpenAPI contract.
 
@@ -1099,7 +1140,7 @@ def _infer_openapi_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndp
     the route to an implementation method that does not declare it.
     """
     path = repo_root / rel_path
-    if path.name not in {"openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json"}:
+    if not _is_openapi_contract_path(repo_root, rel_path):
         return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1901,6 +1942,9 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_spring_webflux_routes(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint
+        elif rel_path.endswith("pom.xml"):
+            for endpoint in _infer_openapi_generator_endpoints(repo_root, rel_path):
+                inferred[endpoint.id] = endpoint
         elif rel_path.endswith((".properties", ".yml", ".yaml")):
             for endpoint in (
                 _infer_actuator_endpoint(repo_root, rel_path)
@@ -2463,6 +2507,7 @@ def clear_analysis_caches() -> None:
     valeurs résolues avant la modification des fichiers qui a motivé la
     réindexation."""
     _java_qualified_name.cache_clear()
+    _openapi_generator_contract_paths.cache_clear()
     _java_source.cache_clear()
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()

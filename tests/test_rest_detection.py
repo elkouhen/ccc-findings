@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 
 from ccc_radar.modules import _has_rest_controllers, discover_modules
-from ccc_radar.maven import _has_openapi_generator_plugin, detect_openapi_generated_clients
+from ccc_radar.maven import (
+    _has_openapi_generator_plugin,
+    detect_openapi_generated_clients,
+    detect_openapi_generator_input_specs,
+)
 
 
 def _write_rest_controller(path: Path, class_name: str) -> None:
@@ -54,6 +58,46 @@ def _write_pom_with_openapi_plugin(path: Path, artifact: str = "test-service") -
                         <goals>
                             <goal>generate</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+"""
+    )
+
+
+def _write_pom_with_openapi_spec(
+    path: Path,
+    *,
+    artifact: str = "test-service",
+    input_spec: str = "${project.basedir}/src/main/openapi/orders.yaml",
+) -> None:
+    path.write_text(
+        f"""
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>{artifact}</artifactId>
+    <version>1.0.0</version>
+    <properties>
+        <publishedSpec>{input_spec}</publishedSpec>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.openapitools</groupId>
+                <artifactId>openapi-generator-maven-plugin</artifactId>
+                <version>7.0.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${{publishedSpec}}</inputSpec>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -173,6 +217,16 @@ def test_detect_openapi_generated_clients_with_plugin(tmp_path: Path) -> None:
     assert any("ProductApi.java" in client for client in clients)
 
 
+def test_detect_openapi_generator_input_specs_resolves_maven_properties(tmp_path: Path) -> None:
+    pom_file = tmp_path / "pom.xml"
+    spec = tmp_path / "src" / "main" / "openapi" / "orders.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("openapi: 3.0.0\npaths: {}\n")
+    _write_pom_with_openapi_spec(pom_file)
+
+    assert detect_openapi_generator_input_specs(pom_file) == ("src/main/openapi/orders.yaml",)
+
+
 def test_detect_openapi_generated_clients_without_plugin(tmp_path: Path) -> None:
     """Teste qu'aucun client n'est détecté sans le plugin."""
     pom_file = tmp_path / "pom.xml"
@@ -232,6 +286,22 @@ def test_module_enrichment_includes_rest_controllers_and_generated_clients(
     # Vérifier que les clients générés sont détectés
     assert len(module.openapi_generated_clients) == 1
     assert any("ExternalApi.java" in client for client in module.openapi_generated_clients)
+
+
+def test_module_enrichment_includes_plugin_referenced_openapi_spec_for_rest_controller(
+    tmp_path: Path,
+) -> None:
+    java_dir = tmp_path / "src" / "main" / "java" / "com" / "example" / "controller"
+    java_dir.mkdir(parents=True)
+    _write_rest_controller(java_dir / "UserController.java", "UserController")
+    spec = tmp_path / "src" / "main" / "openapi" / "orders.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("openapi: 3.0.0\npaths: {}\n")
+    _write_pom_with_openapi_spec(tmp_path / "pom.xml")
+
+    module = discover_modules(tmp_path)[0]
+
+    assert module.openapi_files == ("src/main/openapi/orders.yaml",)
 
 
 def test_rest_controller_case_insensitive(tmp_path: Path) -> None:
