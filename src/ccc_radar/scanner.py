@@ -2457,30 +2457,39 @@ def _bean_api_domain(method_node, source: bytes) -> str | None:
     return next(iter(domains)) if len(domains) == 1 else None
 
 
-@lru_cache(maxsize=512)
-def _rest_configuration_client_domains(
-    repo_root_str: str, source_path: str
-) -> tuple[tuple[str, str, str], ...]:
-    """Retourne `(type_client, nom_bean, domaine)` du module source.
-
-    La portée est le module Maven/Gradle contenant le fichier appelant (le
-    parent le plus proche doté d'un fichier de build), afin de ne pas mélanger
-    les `RestConfiguration` de services voisins dans un workspace.
-    """
-    repo_root = Path(repo_root_str)
+def _rest_configuration_module_root(repo_root: Path, source_path: str) -> Path:
+    """Racine du microservice contenant `source_path`."""
     caller_path = repo_root / source_path
-    module_root = repo_root
     for parent in (caller_path.parent, *caller_path.parents):
         if parent == repo_root.parent:
             break
         if (parent / "pom.xml").is_file() or (parent / "build.gradle").is_file() or (parent / "build.gradle.kts").is_file():
-            module_root = parent
-            break
+            return parent
+    return repo_root
+
+
+@lru_cache(maxsize=512)
+def _rest_configuration_client_domains_in_module(
+    repo_root_str: str, module_root_rel: str
+) -> tuple[tuple[str, str, str], ...]:
+    """Retourne `(type_client, nom_bean, domaine)` d'un microservice.
+
+    Le `pom.xml` détermine la frontière et le nom (`artifactId`) du
+    microservice Maven. Ainsi, `RestConfiguration` n'est parcourue qu'une fois
+    pour ce microservice, sans mélanger les services voisins d'un workspace.
+    """
+    repo_root = Path(repo_root_str)
+    module_root = repo_root / module_root_rel
+    pom_path = module_root / "pom.xml"
+    service_name = module_root.name
+    if pom_path.is_file():
+        artifact_id, _, _ = maven_module.parse_pom(pom_path)
+        service_name = artifact_id or service_name
 
     _trace(
         "rest_client.configuration.scan.begin",
-        caller=source_path,
-        module=module_root.relative_to(repo_root),
+        service=service_name,
+        module=module_root_rel,
     )
     clients: list[tuple[str, str, str]] = []
     for candidate in module_root.rglob("*.java"):
@@ -2524,10 +2533,21 @@ def _rest_configuration_client_domains(
                 )
     _trace(
         "rest_client.configuration.scan.end",
-        caller=source_path,
+        service=service_name,
         clients=len(clients),
     )
     return tuple(clients)
+
+
+def _rest_configuration_client_domains(
+    repo_root_str: str, source_path: str
+) -> tuple[tuple[str, str, str], ...]:
+    """Clients configurés du microservice qui contient `source_path`."""
+    repo_root = Path(repo_root_str)
+    module_root = _rest_configuration_module_root(repo_root, source_path)
+    return _rest_configuration_client_domains_in_module(
+        repo_root_str, module_root.relative_to(repo_root).as_posix()
+    )
 
 
 def _client_type_for_receiver(source: bytes, root, receiver: str) -> str | None:
@@ -2818,7 +2838,7 @@ def clear_analysis_caches() -> None:
     _load_flat_spring_properties.cache_clear()
     _load_value_annotated_fields.cache_clear()
     _class_base_path.cache_clear()
-    _rest_configuration_client_domains.cache_clear()
+    _rest_configuration_client_domains_in_module.cache_clear()
     _file_uses_resttemplate.cache_clear()
     _file_uses_restclient.cache_clear()
     java_parser.clear_caches()
