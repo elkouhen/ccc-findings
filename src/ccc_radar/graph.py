@@ -2,7 +2,10 @@
 d'endpoints déjà indexés — aucune table de graphe en base (ADR-27)."""
 
 from dataclasses import dataclass, replace
+import os
 import re
+import sys
+import time
 
 from ccc_radar.models import MessageEndpoint
 
@@ -20,6 +23,17 @@ class GraphEdge:
 class OutboundCallInConsumer:
     consumer: MessageEndpoint
     call: MessageEndpoint
+
+
+def _trace(stage: str, **fields: object) -> None:
+    if os.environ.get("CCCR_TRACE") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(
+        f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def group_endpoints_by_module(
@@ -216,6 +230,13 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
                 if resolved_call is None:
                     continue
                 effective_call = resolved_call
+                _trace(
+                    "rest_client.graph.resource_resolved",
+                    caller=call_service,
+                    host=serve_service,
+                    source_topic=call.topic,
+                    resource=serve.topic,
+                )
             if effective_call is not None:
                 proxy_target = (call.id, serve_service)
                 if call.framework == "spring-cloud-gateway" and call.topic.startswith("ANY "):

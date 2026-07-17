@@ -2,7 +2,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,18 @@ _SEVERITY_MAP = {
 
 class SemgrepError(Exception):
     pass
+
+
+def _trace(stage: str, **fields: object) -> None:
+    """Émet des traces opt-in de l'inventaire REST (`CCCR_TRACE=1`)."""
+    if os.environ.get("CCCR_TRACE") != "1":
+        return
+    details = " ".join(f"{name}={value}" for name, value in fields.items())
+    print(
+        f"CCCR_TRACE ts={time.monotonic():.6f} stage={stage} {details}".rstrip(),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _semgrep_env() -> dict[str, str]:
@@ -2463,6 +2477,11 @@ def _rest_configuration_client_domains(
             module_root = parent
             break
 
+    _trace(
+        "rest_client.configuration.scan.begin",
+        caller=source_path,
+        module=module_root.relative_to(repo_root),
+    )
     clients: list[tuple[str, str, str]] = []
     for candidate in module_root.rglob("*.java"):
         parsed = java_parser.parse_java(
@@ -2496,6 +2515,18 @@ def _rest_configuration_client_domains(
                         domain,
                     )
                 )
+                _trace(
+                    "rest_client.configuration.bean",
+                    configuration=candidate.relative_to(repo_root),
+                    bean=java_parser.node_text(source, name_node),
+                    api_type=_simple_java_type(java_parser.node_text(source, type_node_return)),
+                    domain=domain,
+                )
+    _trace(
+        "rest_client.configuration.scan.end",
+        caller=source_path,
+        clients=len(clients),
+    )
     return tuple(clients)
 
 
@@ -2546,7 +2577,24 @@ def _rest_configuration_domain_hint(repo_root: Path, source_path: str, snippet: 
         if receiver == bean_name or (client_type is not None and client_type == declared_type)
     ]
     unique_domains = set(candidates)
-    return next(iter(unique_domains)) if len(unique_domains) == 1 else None
+    if len(unique_domains) != 1:
+        _trace(
+            "rest_client.configuration.unresolved",
+            path=source_path,
+            receiver=receiver,
+            api_type=client_type,
+            candidates=sorted(unique_domains),
+        )
+        return None
+    domain = next(iter(unique_domains))
+    _trace(
+        "rest_client.configuration.resolved",
+        path=source_path,
+        receiver=receiver,
+        api_type=client_type,
+        domain=domain,
+    )
+    return domain
 
 
 def _extract_kafka_topic(
@@ -2635,6 +2683,12 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             # Marque d'évidence interne, consommée par `graph._rest_target_service_hint`.
             # Le code d'appel original reste intact pour les autres extracteurs.
             snippet = f"{snippet}\ncccr-api-domain:{configuration_domain}"
+            _trace(
+                "rest_client.endpoint.domain_attached",
+                path=path,
+                line=start_line,
+                domain=configuration_domain,
+            )
         framework = metadata.get("framework")
         is_restclient = False
 
