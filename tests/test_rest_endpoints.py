@@ -342,7 +342,7 @@ def test_resttemplate_client_uses_domain_from_rest_configuration_bean(tmp_path: 
         "  WebClientHelper webClientHelper;\n"
         "  @Bean\n"
         "  RestTemplate ordersClient() {\n"
-        "    return webClientHelper.createInternalClientApi(Domain.DOMAIN_ANNUAIRE, RestTemplate.class);\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, RestTemplate.class);\n"
         "  }\n"
         "}\n"
     )

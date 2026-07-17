@@ -2404,7 +2404,7 @@ def _simple_java_type(value: str) -> str:
 
 
 def _api_domain_argument(node, source: bytes) -> str | None:
-    """Extrait un domaine littéral ou une constante `Domain.NAME`.
+    """Extrait un domaine littéral ou la constante terminale de `XXX.NAME`.
 
     Les URLs et les chemins ne sont volontairement pas acceptés : ils ne
     décrivent pas le domaine logique employé par le helper de configuration.
@@ -2426,7 +2426,7 @@ def _bean_api_domain(method_node, source: bytes) -> str | None:
     """Domaine du `webClientHelper.createInternalClientApi(...)` d'un bean.
 
     La convention applicative est précise : le premier argument est une
-    constante de domaine (`Domain.DOMAIN_ANNUAIRE`) et le second l'interface
+    constante de domaine (`YYY.DOMAIN_ANNUAIRE`) et le second l'interface
     d'API. La constante devient `domain-annuaire`, qui correspond au nom du
     microservice. Plusieurs appels de ce type dans un même bean sont ambigus.
     """
