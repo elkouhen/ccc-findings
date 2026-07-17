@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 from ccc_radar.audit import assess_architecture, render_audit_json
-from ccc_radar.graph import build_graph, find_outbound_calls_in_consumers
+from ccc_radar.graph import build_graph, configured_api_client_domain, find_outbound_calls_in_consumers
 from ccc_radar.models import MessageEndpoint
 from ccc_radar.modules import DiscoveredModule
 
@@ -81,6 +81,7 @@ def build_dependency_graph(
     """Build an evidenced service/topic/data-store topology for agent use."""
     nodes: dict[str, DependencyNode] = {}
     edges: dict[tuple[str, str, str, str], DependencyEdge] = {}
+    result_warnings = list(warnings or [])
 
     def add_node(kind: str, name: str, service: str | None = None) -> str:
         identifier = _node_id(kind, name, service)
@@ -98,7 +99,19 @@ def build_dependency_graph(
 
     internal_edges = build_graph(endpoints_by_service)
     matched_calls = {edge.from_endpoint.id for edge in internal_edges if edge.kind == "rest"}
+
+    # Clients d'API configurés (createInternalClientApi) : la route HTTP n'est
+    # pas prouvée au site d'appel. On ignore donc le fan-out par route fabriqué
+    # par build_graph ; une relation service→service unique est émise plus bas,
+    # résolue contre le registre des microservices (prérequis : POM analysé).
+    configured_call_ids = {
+        edge.from_endpoint.id
+        for edge in internal_edges
+        if edge.kind == "rest" and configured_api_client_domain(edge.from_endpoint) is not None
+    }
     for edge in internal_edges:
+        if edge.kind == "rest" and edge.from_endpoint.id in configured_call_ids:
+            continue
         source = add_node("microservice", edge.from_service)
         target = add_node("microservice", edge.to_service)
         if edge.kind == "rest":
@@ -115,13 +128,38 @@ def build_dependency_graph(
             label = f"consumes {endpoint.message_type}" if endpoint.message_type else "consumes"
             add_edge(topic_id, service_id, "consumes", label, confidence)
 
+    # Paires (appelant, domaine) tirées du tampon cccr-api-domain: présent sur
+    # les sites d'appel — y compris ceux non matchés à un serve (pour diagnostic).
+    configured_clients: dict[str, set[str]] = {}
+    known_services = set(endpoints_by_service) | set(modules_by_service)
+
     for service, endpoints in endpoints_by_service.items():
         service_id = add_node("microservice", service)
         for endpoint in endpoints:
-            if endpoint.system != "rest" or endpoint.role != "call" or endpoint.id in matched_calls:
+            if endpoint.system != "rest" or endpoint.role != "call":
+                continue
+            configured_domain = configured_api_client_domain(endpoint)
+            if configured_domain is not None:
+                configured_clients.setdefault(service, set()).add(configured_domain)
+                continue
+            if endpoint.id in matched_calls:
                 continue
             external_id = add_node("external_api", endpoint.topic)
             add_edge(service_id, external_id, "calls_external", endpoint.topic, "medium" if endpoint.topic_dynamic else "high")
+
+    # Relation service→service unique par client configuré, résolue contre le
+    # registre des microservices (convention : domaine == artifactId de l'hôte).
+    for caller, domains in configured_clients.items():
+        caller_id = add_node("microservice", caller)
+        for domain in sorted(domains):
+            if domain in known_services:
+                host_id = add_node("microservice", domain)
+                add_edge(caller_id, host_id, "http", "client API")
+            else:
+                result_warnings.append(
+                    f"{caller} : client configuré du domaine « {domain} » — "
+                    "aucun microservice hôte indexé (POM cible à analyser)."
+                )
 
     for service, module in modules_by_service.items():
         if service not in endpoints_by_service:
@@ -149,8 +187,11 @@ def build_dependency_graph(
             "mongodb_collections": sum(node["kind"] == "mongodb_collection" for node in ordered_nodes),
             "external_apis": sum(node["kind"] == "external_api" for node in ordered_nodes),
             "relations": len(ordered_edges),
+            "configured_client_relations": sum(
+                1 for edge in ordered_edges if edge["kind"] == "http" and edge["label"] == "client API"
+            ),
         },
-        "warnings": list(warnings or []),
+        "warnings": result_warnings,
     }
 
 

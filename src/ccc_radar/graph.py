@@ -92,6 +92,19 @@ def _camel_to_kebab(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
 
 
+def configured_api_client_domain(endpoint: MessageEndpoint) -> str | None:
+    """Domaine ``cccr-api-domain:`` tamponné sur un endpoint, normalisé en minuscules.
+
+    Preuve injectée par le scanner pour les clients créés via
+    ``createInternalClientApi`` : la route HTTP n'est pas au site d'appel, mais
+    le domaine logique y figure et correspond, par convention, au nom du
+    microservice hôte. Consommé par la fédération et par le graphe de
+    dépendances pour relier l'appelant au microservice hôte.
+    """
+    match = _CONFIGURED_API_DOMAIN_RE.search(endpoint.snippet)
+    return match.group(1).lower() if match is not None else None
+
+
 def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     getter_match = _SERVICE_URL_GETTER_RE.search(call.snippet)
     if getter_match is not None:
@@ -102,10 +115,7 @@ def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
     load_balanced_match = _LOAD_BALANCED_URI_RE.search(call.snippet)
     if load_balanced_match is not None:
         return load_balanced_match.group(1).lower()
-    configuration_domain_match = _CONFIGURED_API_DOMAIN_RE.search(call.snippet)
-    if configuration_domain_match is not None:
-        return configuration_domain_match.group(1).lower()
-    return None
+    return configured_api_client_domain(call)
 
 
 def _is_configured_api_client_call(call: MessageEndpoint) -> bool:
@@ -115,7 +125,7 @@ def _is_configured_api_client_call(call: MessageEndpoint) -> bool:
     injecté par le scanner permet alors de le résoudre contre les ressources
     exposées par le microservice hôte pendant la fédération.
     """
-    return bool(_CONFIGURED_API_DOMAIN_RE.search(call.snippet))
+    return configured_api_client_domain(call) is not None
 
 
 def _http_methods_match(call_topic: str, serve_topic: str) -> bool:
