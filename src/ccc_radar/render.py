@@ -611,14 +611,20 @@ def render_graph_html(
     for source, target in complexity_relations:
         relation_counts[source] += 1
         relation_counts[target] += 1
-    complexity_levels = _complexity_levels(relation_counts)
+    microservice_counts = {
+        node["id"]: relation_counts[node["id"]]
+        for node in nodes
+        if node["kind"] == "microservice"
+    }
+    complexity_levels = _complexity_levels(microservice_counts)
     severities = ("ERROR", "WARNING", "INFO")
     for node in nodes:
-        findings = (
-            findings_by_service.get(node["name"], [])
-            if node["kind"] == "microservice" and findings_by_service
-            else []
-        )
+        base_size = 17 if node["kind"] == "microservice" else 14 if node["kind"] == "mongodb_collection" else 13
+        if node["kind"] != "microservice":
+            node["color"] = "#64748b"
+            node["size"] = base_size
+            continue
+        findings = findings_by_service.get(node["name"], []) if findings_by_service else []
         severity_counts = {
             severity: sum(1 for finding in findings if finding.severity == severity)
             for severity in severities
@@ -633,7 +639,6 @@ def render_graph_html(
             "severity_counts": severity_counts,
         }
         node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
-        base_size = 17 if node["kind"] == "microservice" else 14 if node["kind"] == "mongodb_collection" else 13
         node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
     graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
     return _SIGMA_GRAPH_HTML_TEMPLATE.replace("__GRAPH_DATA__", graph_data)
@@ -669,7 +674,7 @@ _MONGO_WRITE_OPERATIONS = frozenset({
 
 
 def _complexity_levels(relation_counts: dict[str, int]) -> dict[str, str]:
-    """Répartit les nœuds en trois tiers de complexité de tailles équilibrées.
+    """Répartit les microservices en trois tiers de complexité équilibrés.
 
     Le score est le degré du nœud dans le graphe de dépendances : HTTP,
     Kafka et MongoDB sont donc tous pris en compte. Les égalités de score sont
@@ -678,10 +683,10 @@ def _complexity_levels(relation_counts: dict[str, int]) -> dict[str, str]:
     ranked_nodes = sorted(relation_counts, key=lambda node_id: (relation_counts[node_id], node_id))
     size, remainder = divmod(len(ranked_nodes), 3)
     group_sizes = [size, size, size]
-    # Les éventuels nœuds restants vont aux groupes les plus complexes, pour
-    # conserver des tiers dont les tailles ne diffèrent jamais de plus d'un.
+    # Les éventuels services restants complètent d'abord les groupes les moins
+    # complexes ; les tailles des tiers ne diffèrent jamais de plus d'un.
     for index in range(remainder):
-        group_sizes[2 - index] += 1
+        group_sizes[index] += 1
 
     levels: dict[str, str] = {}
     offset = 0
@@ -699,8 +704,8 @@ def _likec4_complexity(
     external_api_ids: dict[str, str],
     relations: set[tuple[str, str, str, str]],
     findings_by_service: dict[str, list[Finding]],
-) -> dict[str, tuple[str, str]]:
-    """Build a topology-only visual complexity signal while retaining finding details."""
+) -> dict[str, tuple[str | None, str]]:
+    """Build a microservice-only complexity signal while retaining finding details."""
     relation_counts = {
         node_id: 0
         for node_id in (*service_ids.values(), *topic_ids.values(), *collection_ids.values(), *external_api_ids.values())
@@ -708,10 +713,12 @@ def _likec4_complexity(
     for _, source, target, _ in relations:
         relation_counts[source] += 1
         relation_counts[target] += 1
-    complexity_levels = _complexity_levels(relation_counts)
+    complexity_levels = _complexity_levels(
+        {service_id: relation_counts[service_id] for service_id in service_ids.values()}
+    )
 
     severities = ("ERROR", "WARNING", "INFO")
-    details: dict[str, tuple[str, str]] = {}
+    details: dict[str, tuple[str | None, str]] = {}
     for service, service_id in service_ids.items():
         findings = findings_by_service.get(service, [])
         severity_counts = {
@@ -730,8 +737,7 @@ def _likec4_complexity(
         )
     for node_id in (*topic_ids.values(), *collection_ids.values(), *external_api_ids.values()):
         score = relation_counts[node_id]
-        color = f"complexity_{complexity_levels[node_id]}"
-        details[node_id] = (color, f"Complexity score {score}: {score} relations")
+        details[node_id] = (None, f"{score} direct relations")
     return details
 
 
@@ -746,8 +752,8 @@ def render_graph_likec4(
 
     Services, Kafka topics, MongoDB collections and external HTTP APIs are peers in one generated
     system boundary. The source inventory is static, so relations carry the
-    protocol semantics but never claim to be runtime traces. Node complexity
-    is derived only from graph degree; findings remain informational details.
+    protocol semantics but never claim to be runtime traces. Only microservice
+    complexity is derived from graph degree; findings remain informational details.
     """
     services = sorted(endpoints_by_service)
     topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
@@ -903,15 +909,13 @@ def render_graph_likec4(
         )
     for topic in topics:
         color, description = complexities[topic_ids[topic]]
-        lines.extend(
-            [
-                f"    {topic_ids[topic]} = kafka_topic '{_likec4_string(topic)}' {{",
-                "      technology 'Kafka'",
-                f"      description '{_likec4_string(description)}'",
-                f"      style {{ color {color} }}",
-                "    }",
-            ]
-        )
+        lines.extend([
+            f"    {topic_ids[topic]} = kafka_topic '{_likec4_string(topic)}' {{",
+            "      technology 'Kafka'",
+            f"      description '{_likec4_string(description)}'",
+            *([f"      style {{ color {color} }}"] if color else []),
+            "    }",
+        ])
     for identity in sorted(collection_names):
         color, description = complexities[collection_ids[identity]]
         collection = collection_names[identity]
@@ -921,7 +925,7 @@ def render_graph_likec4(
                 f"    {collection_ids[identity]} = mongodb_collection '{_likec4_string(collection)} ({_likec4_string(service)})' {{",
                 "      technology 'MongoDB'",
                 f"      description '{_likec4_string(description)}'",
-                f"      style {{ color {color} }}",
+                *([f"      style {{ color {color} }}"] if color else []),
                 "    }",
             ]
         )
@@ -932,7 +936,7 @@ def render_graph_likec4(
                 f"    {external_api_ids[external_api]} = external_api '{_likec4_string(external_api)}' {{",
                 "      technology 'HTTP'",
                 f"      description '{_likec4_string(description)}'",
-                f"      style {{ color {color} }}",
+                *([f"      style {{ color {color} }}"] if color else []),
                 "    }",
             ]
         )
@@ -1456,13 +1460,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       title.textContent = node.name;
       const kindLabel = node.kind === "kafka_topic" ? "Topic Kafka" : node.kind === "mongodb_collection" ? "Collection MongoDB" : "Microservice";
       const complexity = node.complexity;
-      details.append(title, document.createTextNode(`${kindLabel} - score ${complexity.score} (${complexity.level}) - ${edges.length} relation${edges.length > 1 ? "s" : ""}`));
+      const relationText = `${edges.length} relation${edges.length > 1 ? "s" : ""}`;
+      const complexityText = complexity ? ` - score ${complexity.score} (${complexity.level})` : "";
+      details.append(title, document.createTextNode(`${kindLabel}${complexityText} - ${relationText}`));
       if (node.kind === "microservice") appendList("APIs exposees", node.resources);
       if (node.kind === "kafka_topic") {
         appendList("Types publies", node.published_message_types);
         appendList("Types consommes", node.consumed_message_types);
       }
-      if (node.kind === "microservice" && complexity.findings) {
+      if (node.kind === "microservice" && complexity && complexity.findings) {
         appendList("Findings", Object.entries(complexity.severity_counts)
           .filter(([, count]) => count)
           .map(([severity, count]) => `${severity}: ${count}`));

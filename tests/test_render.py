@@ -371,15 +371,18 @@ def test_render_graph_html_ranks_complexity_independently_from_findings() -> Non
         re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
     )
     service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:service-a")
+    topic = next(node for node in graph_data["nodes"] if node["id"] == "kafka_topic:orders.created")
 
     assert service["complexity"] == {
         "score": 2,
-        "level": "medium",
+        "level": "low",
         "relations": 2,
         "findings": 2,
         "severity_counts": {"ERROR": 2, "WARNING": 0, "INFO": 0},
     }
-    assert service["color"] == "#d97706"
+    assert service["color"] == "#2563eb"
+    assert "complexity" not in topic
+    assert topic["color"] == "#64748b"
     assert "Complexite elevee" in document
     assert 'type: "arrow"' in document
     assert 'type: node.kind,' in document
@@ -404,9 +407,9 @@ def test_complexity_levels_split_all_nodes_into_balanced_terciles() -> None:
     )
 
     assert {level: list(levels.values()).count(level) for level in ("low", "medium", "high")} == {
-        "low": 2,
+        "low": 3,
         "medium": 3,
-        "high": 3,
+        "high": 2,
     }
     assert levels["mongodb_collection:payments:payments"] == "low"
     assert levels["microservice:orders"] == "high"
