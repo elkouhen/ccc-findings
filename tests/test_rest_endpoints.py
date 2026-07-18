@@ -245,6 +245,34 @@ def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_pat
     }
 
 
+def test_strategy1_openapi_rest_contract_in_microservice_resources_publishes_api(
+    tmp_path: Path,
+) -> None:
+    """Strategy 1 attributes a service's ``openapi/*.rest`` contract to it.
+
+    The generated interfaces may live in a separate ``model-*`` module, so the
+    contract in the service itself is the authoritative publication evidence.
+    """
+    contract = tmp_path / "src" / "main" / "resources" / "openapi" / "orders.rest"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(
+        "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+        "    post:\n      responses: {}\n"
+    )
+    rel_path = contract.relative_to(tmp_path).as_posix()
+
+    assert infer_framework_endpoints(tmp_path, files=[rel_path]) == []
+
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel_path], configured_api_client_strategy1=True
+    )
+
+    assert {(endpoint.role, endpoint.topic, endpoint.framework, endpoint.path) for endpoint in endpoints} == {
+        ("serve", "GET /orders", "openapi", rel_path),
+        ("serve", "POST /orders", "openapi", rel_path),
+    }
+
+
 def test_openapi_generator_pom_points_to_authoritative_contract_for_rest_controller(tmp_path: Path) -> None:
     controller = tmp_path / "src" / "main" / "java" / "OrdersApiController.java"
     controller.parent.mkdir(parents=True)

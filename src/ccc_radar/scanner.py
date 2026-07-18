@@ -1225,12 +1225,26 @@ def _openapi_generator_contract_paths(repo_root_str: str) -> tuple[str, ...]:
     return tuple(sorted(contracts))
 
 
-def _is_openapi_contract_path(repo_root: Path, rel_path: str) -> bool:
+def _is_strategy1_openapi_rest_path(rel_path: str) -> bool:
+    """Recognize the ``src/main/resources/openapi/*.rest`` convention."""
+    path = Path(rel_path)
+    parts = path.parts
+    return path.suffix.casefold() == ".rest" and any(
+        parts[index:index + 4] == ("src", "main", "resources", "openapi")
+        for index in range(max(0, len(parts) - 3))
+    )
+
+
+def _is_openapi_contract_path(
+    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
+) -> bool:
     path = repo_root / rel_path
     return path.name in {
         "openapi.yaml", "openapi.yml", "openapi.json",
         "swagger.yaml", "swagger.yml", "swagger.json",
-    } or rel_path in _openapi_generator_contract_paths(str(repo_root))
+    } or rel_path in _openapi_generator_contract_paths(str(repo_root)) or (
+        configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)
+    )
 
 
 def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
@@ -1249,7 +1263,9 @@ def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[M
     return endpoints
 
 
-def _infer_openapi_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+def _infer_openapi_endpoints(
+    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
+) -> list[MessageEndpoint]:
     """Inventory literal operations declared by a production OpenAPI contract.
 
     Some Spring projects generate their controller interfaces from OpenAPI and
@@ -1260,7 +1276,9 @@ def _infer_openapi_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndp
     the route to an implementation method that does not declare it.
     """
     path = repo_root / rel_path
-    if not _is_openapi_contract_path(repo_root, rel_path):
+    if not _is_openapi_contract_path(
+        repo_root, rel_path, configured_api_client_strategy1=configured_api_client_strategy1
+    ):
         return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -2123,11 +2141,17 @@ def infer_framework_endpoints(
         elif rel_path.endswith("pom.xml"):
             for endpoint in _infer_openapi_generator_endpoints(repo_root, rel_path):
                 inferred[endpoint.id] = endpoint
-        elif rel_path.endswith((".properties", ".yml", ".yaml")):
+        elif rel_path.endswith((".properties", ".yml", ".yaml")) or (
+            configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)
+        ):
             for endpoint in (
                 _infer_actuator_endpoint(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_yaml_routes(repo_root, rel_path)
-                + _infer_openapi_endpoints(repo_root, rel_path)
+                + _infer_openapi_endpoints(
+                    repo_root,
+                    rel_path,
+                    configured_api_client_strategy1=configured_api_client_strategy1,
+                )
             ):
                 inferred[endpoint.id] = endpoint
     return list(inferred.values())

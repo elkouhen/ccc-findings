@@ -224,6 +224,28 @@ def test_index_repo_strategy1_enables_rest_configuration_domain_dependencies(
     ]
 
 
+def test_index_repo_strategy1_indexes_rest_contract_as_service_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = tmp_path / "orders-service"
+    (service / "src" / "main" / "resources" / "openapi").mkdir(parents=True)
+    (service / "pom.xml").write_text(
+        "<project><artifactId>orders-service</artifactId><version>1</version></project>"
+    )
+    (service / "src" / "main" / "resources" / "openapi" / "orders.rest").write_text(
+        "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+    )
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
+
+    with Store(tmp_path) as store:
+        index_repo(tmp_path, make_config(), store, FakeEmbedder(), topic_strategy="strategy1")
+        endpoints = store.all_endpoints()
+
+    assert {(endpoint.module, endpoint.role, endpoint.system, endpoint.topic, endpoint.framework) for endpoint in endpoints} == {
+        ("orders-service", "serve", "rest", "GET /orders", "openapi")
+    }
+
+
 def test_index_repo_can_disable_only_module_architecture_enrichment(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
