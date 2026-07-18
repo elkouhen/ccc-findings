@@ -1385,9 +1385,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
       <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Interactions</button>
-      <button id="references-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="references-panel" title="Contrats OpenAPI et DTO Kafka">Contrats &amp; DTO</button>
       <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Parcours</button>
-      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Build</button>
+      <button id="references-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="references-panel" title="Contrats OpenAPI et DTO Kafka">Contrats &amp; DTO</button>
+      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Dependency Tree</button>
       <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Qualité</button>
     </div>
     <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">

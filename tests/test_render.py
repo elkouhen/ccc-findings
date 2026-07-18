@@ -387,6 +387,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "function appendRelationList(title, links, currentId, labelForLink, container = details)" in document
     assert "Interactions" in document
     assert "Qualité" in document
+    assert document.index(">Interactions</button>") < document.index(">Parcours</button>")
+    assert document.index(">Parcours</button>") < document.index(">Contrats &amp; DTO</button>")
+    assert document.index(">Contrats &amp; DTO</button>") < document.index(">Dependency Tree</button>")
+    assert document.index(">Dependency Tree</button>") < document.index(">Qualité</button>")
     assert 'data-preset="selection"' in document
     assert "function createDetailsGroup(title, open = true)" in document
     assert "function activeRenderer()" in document
