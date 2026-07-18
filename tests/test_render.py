@@ -579,6 +579,48 @@ def test_render_graph_html_embeds_openapi_and_kafka_dto_inspectors(tmp_path: Pat
     assert "function renderReferences()" in document
 
 
+def test_render_graph_html_recursively_links_project_dtos(tmp_path: Path) -> None:
+    module_path = tmp_path / "orders"
+    source_root = module_path / "src/main/java/com/example"
+    source_root.mkdir(parents=True)
+    (source_root / "OrderCreated.java").write_text(
+        "package com.example; public record OrderCreated(OrderPayload payload) {}\n",
+        encoding="utf-8",
+    )
+    (source_root / "OrderPayload.java").write_text(
+        "package com.example; class OrderPayload { java.util.List<LineItem> items; }\n",
+        encoding="utf-8",
+    )
+    (source_root / "LineItem.java").write_text(
+        "package com.example; record LineItem(Money amount) {}\n",
+        encoding="utf-8",
+    )
+    (source_root / "Money.java").write_text(
+        "package com.example; record Money(String currency) {}\n",
+        encoding="utf-8",
+    )
+    module = DiscoveredModule("orders-service", module_path, "maven", None, "library", True, "")
+    endpoints_by_service = {
+        "orders-service": [
+            make_endpoint("produce", "orders.created", "Publisher.java", system="kafka", message_type="OrderCreated"),
+        ]
+    }
+
+    document = render_graph_html(endpoints_by_service, build_graph(endpoints_by_service), build_modules=[module])
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+
+    root_dto = graph_data["kafka_dtos"][0]
+    assert root_dto["fields"][0]["dto_references"] == ["OrderPayload"]
+    definitions = {definition["name"]: definition for definition in graph_data["project_dto_definitions"]}
+    assert definitions["OrderPayload"]["fields"][0]["dto_references"] == ["LineItem"]
+    assert definitions["LineItem"]["fields"][0]["dto_references"] == ["Money"]
+    assert definitions["Money"]["fields"] == [{"type": "String", "name": "currency"}]
+    assert "function dtoDefinition(dtoName)" in document
+    assert "Ouvrir le type projet ${references[0]}" in document
+
+
 def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
     endpoints_by_service = {
         "annuaire": [

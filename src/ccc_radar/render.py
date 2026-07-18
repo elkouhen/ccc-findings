@@ -620,7 +620,7 @@ def _openapi_contract_spec(
     return None
 
 
-def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
+def _java_dto_fields(source: str, dto_name: str) -> tuple[list[dict[str, object]], list[list[str]]]:
     """Extract the readable fields of a Java class or record DTO.
 
     This intentionally stays conservative: it exposes declared data members,
@@ -629,7 +629,7 @@ def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
     source_bytes = source.encode("utf-8")
     root = java_parser.java_parser("dto_fields").parse(source_bytes).root_node
     if root.has_error:
-        return []
+        return [], []
     declaration = next(
         (
             node
@@ -639,30 +639,40 @@ def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
         None,
     )
     if declaration is None:
-        return []
+        return [], []
 
-    def field(node) -> dict[str, str] | None:
+    def field(node) -> tuple[dict[str, object], list[str]] | None:
         type_node = node.child_by_field_name("type")
         name_node = node.child_by_field_name("name")
         if type_node is None or name_node is None:
             return None
-        return {
-            "type": java_parser.node_text(source_bytes, type_node).strip(),
-            "name": java_parser.node_text(source_bytes, name_node),
-        }
+        references = [
+            java_parser.node_text(source_bytes, child).rsplit(".", 1)[-1]
+            for child in java_parser.walk(type_node)
+            if child.type in {"type_identifier", "scoped_type_identifier"}
+        ]
+        return (
+            {
+                "type": java_parser.node_text(source_bytes, type_node).strip(),
+                "name": java_parser.node_text(source_bytes, name_node),
+            },
+            references,
+        )
 
     if declaration.type == "record_declaration":
         parameters = java_parser.child_by_type(declaration, "formal_parameters")
         if parameters is None:
-            return []
-        return [
+            return [], []
+        values = [
             value
             for parameter in parameters.named_children
             if parameter.type == "formal_parameter"
             if (value := field(parameter)) is not None
         ]
+        return [field for field, _references in values], [references for _field, references in values]
 
-    fields = []
+    fields: list[dict[str, object]] = []
+    references_by_field: list[list[str]] = []
     for node in java_parser.walk(declaration):
         if node.type != "field_declaration" or java_parser.enclosing(
             node, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration"
@@ -678,52 +688,92 @@ def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
             name_node = declarator.child_by_field_name("name")
             if name_node is not None:
                 fields.append({"type": field_type, "name": java_parser.node_text(source_bytes, name_node)})
-    return fields
+                references_by_field.append([
+                    java_parser.node_text(source_bytes, child).rsplit(".", 1)[-1]
+                    for child in java_parser.walk(type_node)
+                    if child.type in {"type_identifier", "scoped_type_identifier"}
+                ])
+    return fields, references_by_field
 
 
-def _kafka_dto_view(
+def _java_project_dto_names(source: str) -> set[str]:
+    source_bytes = source.encode("utf-8")
+    root = java_parser.java_parser("dto_names").parse(source_bytes).root_node
+    if root.has_error:
+        return set()
+    return {
+        name
+        for declaration in java_parser.type_declarations(root)
+        if declaration.type in {"class_declaration", "record_declaration"}
+        if (name := java_parser.declaration_name(declaration, source_bytes)) is not None
+    }
+
+
+def _kafka_dto_views(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     modules: list[DiscoveredModule],
-) -> list[dict[str, object]]:
-    """Build DTO inspector data from Kafka endpoint signatures and Java files."""
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Build Kafka DTOs and recursively reachable project DTO definitions."""
     endpoint_types = {
         endpoint.message_type
         for endpoints in endpoints_by_service.values()
         for endpoint in endpoints
         if endpoint.system == "kafka" and endpoint.message_type
     }
-    dto_names = {value.rsplit(".", 1)[-1] for value in endpoint_types}
-    definitions: dict[str, dict[str, object]] = {
-        name: {"name": name, "fields": [], "source": None} for name in sorted(dto_names)
-    }
+    root_names = {value.rsplit(".", 1)[-1] for value in endpoint_types}
+    candidates: dict[str, list[tuple[str, str]]] = {}
     for module in modules:
         source_root = module.path / "src" / "main" / "java"
         if not source_root.is_dir():
             continue
         for java_path in source_root.glob("**/*.java"):
-            dto_name = java_path.stem
-            if dto_name not in definitions or definitions[dto_name]["source"] is not None:
-                continue
             try:
                 source = java_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            definitions[dto_name]["fields"] = _java_dto_fields(source, dto_name)
-            definitions[dto_name]["source"] = str(java_path.relative_to(module.path))
+            relative_path = str(java_path.relative_to(module.path))
+            for dto_name in _java_project_dto_names(source):
+                candidates.setdefault(dto_name, []).append((relative_path, source))
 
-    result = []
-    for dto_name, definition in definitions.items():
+    unique_candidates = {
+        name: candidate[0]
+        for name, candidate in candidates.items()
+        if len(candidate) == 1
+    }
+    definitions: dict[str, dict[str, object]] = {}
+    pending = list(sorted(root_names))
+    while pending:
+        dto_name = pending.pop(0)
+        if dto_name in definitions:
+            continue
+        definition: dict[str, object] = {"name": dto_name, "fields": [], "source": None}
+        if candidate := unique_candidates.get(dto_name):
+            source_path, source = candidate
+            fields, references_by_field = _java_dto_fields(source, dto_name)
+            for field, references in zip(fields, references_by_field, strict=True):
+                nested = sorted({reference for reference in references if reference in unique_candidates})
+                if nested:
+                    field["dto_references"] = nested
+                    pending.extend(reference for reference in nested if reference != dto_name)
+            definition["fields"] = fields
+            definition["source"] = source_path
+        definitions[dto_name] = definition
+
+    root_definitions = []
+    nested_definitions = []
+    for dto_name, definition in sorted(definitions.items()):
         matches = [
             (service, endpoint)
             for service, endpoints in endpoints_by_service.items()
             for endpoint in endpoints
-            if endpoint.system == "kafka" and endpoint.message_type and endpoint.message_type.rsplit(".", 1)[-1] == dto_name
+            if endpoint.system == "kafka" and endpoint.message_type
+            and endpoint.message_type.rsplit(".", 1)[-1] == dto_name
         ]
         definition["producers"] = sorted({service for service, endpoint in matches if endpoint.role == "produce"})
         definition["consumers"] = sorted({service for service, endpoint in matches if endpoint.role == "consume"})
         definition["topics"] = sorted({endpoint.topic for _service, endpoint in matches})
-        result.append(definition)
-    return result
+        (root_definitions if dto_name in root_names else nested_definitions).append(definition)
+    return root_definitions, nested_definitions
 
 
 def render_graph_html(
@@ -912,12 +962,14 @@ def render_graph_html(
         }
         node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
         node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
+    kafka_dtos, project_dto_definitions = _kafka_dto_views(endpoints_by_service, all_modules)
     graph_data = json.dumps(
         {
             "nodes": nodes,
             "links": links,
             "build_dependencies": _module_dependency_view(build_modules, module_dependencies),
-            "kafka_dtos": _kafka_dto_view(endpoints_by_service, all_modules),
+            "kafka_dtos": kafka_dtos,
+            "project_dto_definitions": project_dto_definitions,
             "indexing_issues": _indexing_issues(endpoints_by_service, edges, indexing_warnings),
         },
         ensure_ascii=False,
@@ -1398,6 +1450,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .dto-fields, .dto-tags { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
     .dto-field { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.4fr); gap: 12px; padding: 8px 10px; border-radius: 6px; background: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     .dto-field-type { color: #1d4f91; overflow-wrap: anywhere; }
+    button.dto-field-type { border: 0; padding: 0; background: transparent; color: #1d4f91; text-align: left; text-decoration: underline; cursor: pointer; font: inherit; }
     .dto-field-name { color: #334155; font-weight: 700; overflow-wrap: anywhere; }
     .dto-tag { display: inline-flex; width: fit-content; padding: 4px 7px; border-radius: 999px; color: #315f9b; background: #dbeafe; font-size: 12px; }
   </style>
@@ -2346,8 +2399,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       section.append(heading, list);
       inspectorBody.append(section);
     }
+    function dtoDefinition(dtoName) {
+      return [...(graphData.kafka_dtos || []), ...(graphData.project_dto_definitions || [])]
+        .find(item => item.name === dtoName);
+    }
     function openDtoInspector(dtoName) {
-      const dto = (graphData.kafka_dtos || []).find(item => item.name === dtoName);
+      const dto = dtoDefinition(dtoName);
       if (!dto) return;
       openInspector(`DTO Kafka · ${dto.name}`);
       inspectorBody.classList.add("dto-inspector");
@@ -2368,9 +2425,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         fields.forEach(field => {
           const item = document.createElement("li");
           item.className = "dto-field";
-          const type = document.createElement("span");
+          const references = field.dto_references || [];
+          const type = document.createElement(references.length ? "button" : "span");
           type.className = "dto-field-type";
           type.textContent = field.type;
+          if (references.length) {
+            type.type = "button";
+            type.title = `Ouvrir le type projet ${references[0]}`;
+            type.addEventListener("click", () => openDtoInspector(references[0]));
+          }
           const name = document.createElement("span");
           name.className = "dto-field-name";
           name.textContent = field.name;
