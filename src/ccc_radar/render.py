@@ -447,7 +447,7 @@ def render_graph_drawio(
             )
             width, height = node_dimensions[(node_kind, name)]
             style = (
-                "shape=cylinder3;boundedLbl=1;whiteSpace=wrap;html=1;"
+                "rounded=1;arcSize=18;boundedLbl=1;whiteSpace=wrap;html=1;"
                 "fillColor=#e6ffed;strokeColor=#2f855a;strokeWidth=2;"
                 "fontColor=#276749;fontSize=13;"
             )
@@ -1080,13 +1080,15 @@ def render_graph_likec4(
     collections_by_service: dict[str, list[str]] | None = None,
     findings_by_service: dict[str, list[Finding]] | None = None,
     modules_by_service: dict[str, DiscoveredModule] | None = None,
+    indexing_warnings: list[str] | None = None,
+    build_modules: list[DiscoveredModule] | None = None,
+    module_dependencies: list[ModuleDependency] | None = None,
 ) -> str:
-    """Render the inferred runtime graph as a standalone LikeC4 model.
+    """Render the inferred architecture as a standalone LikeC4 model.
 
-    Services, Kafka topics, MongoDB collections and external HTTP APIs are peers in one generated
-    system boundary. The source inventory is static, so relations carry the
-    protocol semantics but never claim to be runtime traces. Only microservice
-    complexity is derived from graph degree; findings remain informational details.
+    The project exposes dedicated runtime, contracts, build and quality views.
+    The source inventory is static, so relations carry protocol semantics but
+    never claim to be runtime traces.
     """
     services = sorted(endpoints_by_service)
     topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
@@ -1111,6 +1113,25 @@ def render_graph_likec4(
     topic_ids = _likec4_identifier_map("topic", topics)
     collection_ids = _likec4_identifier_map("collection", sorted(collection_names))
     external_api_ids = _likec4_identifier_map("external_api", external_apis)
+    build_module_details = {module.name: module for module in build_modules or []}
+    build_module_names = sorted(
+        set(build_module_details)
+        | {name for dependency in module_dependencies or [] for name in (dependency.source, dependency.target)}
+    )
+    build_module_ids = _likec4_identifier_map("build_module", build_module_names)
+    quality_warnings = list(dict.fromkeys(indexing_warnings or []))
+    warning_ids = _likec4_identifier_map(
+        "indexing_warning", [f"warning-{index}" for index in range(len(quality_warnings))]
+    )
+    topic_types: dict[str, dict[str, set[str]]] = {
+        topic: {"published": set(), "consumed": set()} for topic in topics
+    }
+    for endpoints in endpoints_by_service.values():
+        for endpoint in endpoints:
+            if endpoint.system != "kafka" or endpoint.topic not in topic_types or not endpoint.message_type:
+                continue
+            direction = "published" if endpoint.role == "produce" else "consumed"
+            topic_types[endpoint.topic][direction].add(endpoint.message_type)
 
     relations: set[tuple[str, str, str, str]] = set()
     for edge in edges:
@@ -1173,11 +1194,19 @@ def render_graph_likec4(
         "  }",
         "  element mongodb_collection {",
         "    notation 'MongoDB collection'",
-        "    style { shape cylinder }",
+        "    style { shape rectangle }",
         "  }",
         "  element external_api {",
         "    notation 'External HTTP API'",
         "    style { shape browser }",
+        "  }",
+        "  element build_module {",
+        "    notation 'Build module'",
+        "    style { shape component }",
+        "  }",
+        "  element indexing_warning {",
+        "    notation 'Indexing warning'",
+        "    style { shape rectangle }",
         "  }",
         "  relationship http {",
         "    color outgoing",
@@ -1221,6 +1250,12 @@ def render_graph_likec4(
         "    head vee",
         "    multiple true",
         "  }",
+        "  relationship build_dependency {",
+        "    color incoming",
+        "    line solid",
+        "    head vee",
+        "    multiple true",
+        "  }",
         "}",
         "",
         "model {",
@@ -1228,9 +1263,27 @@ def render_graph_likec4(
     ]
     for service in services:
         color, description = complexities[service_ids[service]]
+        service_endpoints = endpoints_by_service.get(service, [])
         openapi_files = module_details.get(service).openapi_files if service in module_details else ()
+        published_resources = _rest_resources_served(service_endpoints)
+        produced_messages = sorted({
+            f"{endpoint.topic}{f' <{endpoint.message_type}>' if endpoint.message_type else ''}"
+            for endpoint in service_endpoints
+            if endpoint.system == "kafka" and endpoint.role == "produce"
+        })
+        consumed_messages = sorted({
+            f"{endpoint.topic}{f' <{endpoint.message_type}>' if endpoint.message_type else ''}"
+            for endpoint in service_endpoints
+            if endpoint.system == "kafka" and endpoint.role == "consume"
+        })
         if openapi_files:
             description = f"{description}; OpenAPI contracts: {', '.join(openapi_files)}"
+        if published_resources:
+            description = f"{description}; HTTP published: {', '.join(published_resources)}"
+        if produced_messages:
+            description = f"{description}; Kafka published: {', '.join(produced_messages)}"
+        if consumed_messages:
+            description = f"{description}; Kafka consumed: {', '.join(consumed_messages)}"
         lines.extend(
             [
                 f"    {service_ids[service]} = microservice '{_likec4_string(service)}' {{",
@@ -1242,6 +1295,12 @@ def render_graph_likec4(
         )
     for topic in topics:
         color, description = complexities[topic_ids[topic]]
+        published_types = sorted(topic_types[topic]["published"])
+        consumed_types = sorted(topic_types[topic]["consumed"])
+        if published_types:
+            description = f"{description}; Published Java types: {', '.join(published_types)}"
+        if consumed_types:
+            description = f"{description}; Consumed Java types: {', '.join(consumed_types)}"
         lines.extend([
             f"    {topic_ids[topic]} = kafka_topic '{_likec4_string(topic)}' {{",
             "      technology 'Kafka'",
@@ -1278,12 +1337,72 @@ def render_graph_likec4(
     lines.extend(
         [
             "  }",
+            "  build = system 'Maven and Gradle dependencies' {",
+        ]
+    )
+    for name in build_module_names:
+        module = build_module_details.get(name)
+        technology = module.build_system if module else "unknown"
+        description = "Starts an application" if module and module.starts_application else "Shared build module"
+        lines.extend(
+            [
+                f"    {build_module_ids[name]} = build_module '{_likec4_string(name)}' {{",
+                f"      technology '{_likec4_string(technology)}'",
+                f"      description '{_likec4_string(description)}'",
+                "    }",
+            ]
+        )
+    for dependency in sorted(module_dependencies or []):
+        lines.append(
+            f"    {build_module_ids[dependency.source]} -[build_dependency]-> "
+            f"{build_module_ids[dependency.target]} 'depends on'"
+        )
+    lines.extend(
+        [
+            "  }",
+            "  quality = system 'Indexing quality' {",
+        ]
+    )
+    for index, warning in enumerate(quality_warnings):
+        warning_name = f"warning-{index}"
+        lines.extend(
+            [
+                f"    {warning_ids[warning_name]} = indexing_warning 'Warning {index + 1}' {{",
+                f"      description '{_likec4_string(warning)}'",
+                "    }",
+            ]
+        )
+    lines.extend(
+        [
+            "  }",
             "}",
             "",
             "views {",
-            "  view dependencies {",
-            "    title 'Microservice, Kafka and MongoDB dependencies and complexity'",
+            "  view runtime {",
+            "    title 'Runtime interactions: HTTP, Kafka and MongoDB'",
             "    include radar.**",
+            "  }",
+            "  view contracts {",
+            "    title 'Published HTTP contracts and Kafka message types'",
+            "    include radar.**",
+            "  }",
+        ]
+    )
+    if build_module_names:
+        lines.extend(
+            [
+                "  view build {",
+                "    title 'Maven and Gradle module dependencies'",
+                "    include build.**",
+                "  }",
+            ]
+        )
+    lines.extend(
+        [
+            "  view quality {",
+            "    title 'Connectivity complexity, findings and indexing warnings'",
+            "    include radar.**",
+            *(["    include quality.**"] if quality_warnings else []),
             "  }",
             "}",
             "",
@@ -1552,7 +1671,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee (tiers superieur)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
-      <div class="legend-row"><span class="legend-mark" style="width:14px;border-radius:50% / 26%;background:#64748b"></span>Collection MongoDB</div>
+      <div class="legend-row"><span class="legend-mark" style="border-radius:4px;background:#64748b"></span>Collection MongoDB</div>
       <div class="legend-row"><span class="legend-line" style="background:#D55E00"></span>Appel HTTP</div>
       <div class="legend-row"><span class="legend-line" style="background:#009E73"></span>Publication Kafka</div>
       <div class="legend-row"><span class="legend-line" style="background:#0072B2"></span>Consommation Kafka</div>
@@ -1778,19 +1897,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        vec2 bounds = vec2(.40, .31);
-        float radius = .11;
+        vec2 bounds = vec2(.38);
+        float radius = .09;
         vec2 corner = abs(point) - (bounds - radius);
         float distance = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - radius;
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
         float border = smoothstep(-.065, -.016, distance);
-        float topRim = 1.0 - smoothstep(.016, .032, abs(length(vec2(point.x / .36, (point.y + .19) / .075)) - 1.0));
-        float bottomRim = 1.0 - smoothstep(.016, .032, abs(length(vec2(point.x / .36, (point.y - .19) / .075)) - 1.0));
-        float rim = max(topRim, bottomRim);
         vec3 fill = vec3(.98, .99, 1.0);
-        vec3 body = mix(fill, v_color.rgb, border);
-        gl_FragColor = vec4(mix(body, v_color.rgb, rim), v_color.a * alpha);
+        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
     `;
     const packedColorBuffer = new ArrayBuffer(4);
@@ -3427,9 +3542,10 @@ def render_graph_d2(
             [
                 f"{node_id}: {{",
                 f'  label: "{_d2_escape(collection)}"',
-                "  shape: cylinder",
+                "  shape: rectangle",
                 '  style.fill: "#e6ffed"',
                 '  style.stroke: "#2f855a"',
+                "  style.border-radius: 8",
                 "}",
                 "",
             ]

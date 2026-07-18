@@ -301,6 +301,12 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
                 mongo_methods=(MongoMethod("find", "mongoTemplate", "b/Repository.java", 12, "payments"),),
             ),
         },
+        ["payment-service: non indexé, ignoré"],
+        [
+            DiscoveredModule("service-a", Path("service-a"), "maven", None, "library", True, ""),
+            DiscoveredModule("shared-kernel", Path("shared-kernel"), "gradle", None, "library", False, ""),
+        ],
+        [ModuleDependency("service-a", "shared-kernel")],
     )
 
     assert "specification {" in document
@@ -316,7 +322,7 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "relationship writes_data" in document
     assert "shape component" in document
     assert "shape queue" in document
-    assert "shape cylinder" in document
+    assert "shape rectangle" in document
     assert "color outgoing" in document
     assert "color incoming" in document
     assert "style { color complexity_low }" in document
@@ -328,7 +334,14 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "service_service-a -[calls_external]-> external_api_POST_external-orders 'POST /external-orders'" in document
     assert "service_service-a -[reads_data]-> collection_service-a_orders 'reads'" in document
     assert "service_service-a -[writes_data]-> collection_service-a_orders 'writes'" in document
-    assert "view dependencies" in document
+    assert "view runtime" in document
+    assert "view contracts" in document
+    assert "view build" in document
+    assert "view quality" in document
+    assert "HTTP published: GET /orders" in document
+    assert "Published Java types: OrderCreated" in document
+    assert "Maven and Gradle module dependencies" in document
+    assert "payment-service: non indexé, ignoré" in document
 
 
 def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
@@ -754,7 +767,7 @@ def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
     endpoints_by_service = _fixture()
     edges = build_graph(endpoints_by_service)
 
-    root = ET.fromstring(render_graph_drawio(endpoints_by_service, edges))
+    root = ET.fromstring(render_graph_drawio(endpoints_by_service, edges, {"service-a": ["orders"]}))
     model = next(root.iter("mxGraphModel"))
     edge_styles = {
         cell.get("value"): cell.get("style", "")
@@ -768,6 +781,11 @@ def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
         cell.get("style", "")
         for cell in root.iter("mxCell")
         if cell.get("value") == "<b>orders.created</b>"
+    )
+    assert "rounded=1" in next(
+        cell.get("style", "")
+        for cell in root.iter("mxCell")
+        if "MongoDB" in cell.get("value", "")
     )
     assert "strokeColor=#4f79b5" in edge_styles["service-b: GET /orders"]
     assert "dashed=1" in edge_styles["orders.created"]

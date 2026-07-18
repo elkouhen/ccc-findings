@@ -1326,7 +1326,8 @@ The generated site is written to `dist/`.
 
 ## Read the graph
 
-- Shapes: component for a microservice, queue for a Kafka topic, cylinder for a MongoDB collection, and browser for an external HTTP API.
+- Views: `runtime` maps HTTP, Kafka and MongoDB interactions; `contracts` exposes REST/OpenAPI and Kafka payload information; `build` maps Maven/Gradle dependencies; `quality` reports connectivity complexity, findings and indexing warnings.
+- Shapes: component for a microservice and build module, queue for a Kafka topic, rectangle for a MongoDB collection, and browser for an external HTTP API.
 - Microservice colors split them into three equally sized complexity groups: blue for the lowest third, amber for the middle third and red for the highest third.
 - A microservice score is its number of direct HTTP, Kafka and MongoDB relations. Findings remain visible in details but do not affect the color.
 - Outbound calls and publications are green; Kafka consumptions are orange; MongoDB reads and writes are blue and teal.
@@ -1395,6 +1396,9 @@ def export_microservices_cmd(
                 graph_data.collections_by_service,
                 graph_data.findings_by_service,
                 graph_data.modules_by_service,
+                graph_data.warnings,
+                graph_data.build_modules,
+                graph_data.module_dependencies,
             ),
         )
     output = outputs[0]
