@@ -327,6 +327,7 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="relation-kafka"' in document
     assert "function isVisibleRelation(kind)" in document
     assert 'hidden: true' in document
+    assert document.index("const relationHttp") < document.index("const renderer")
     assert 'renderer.on("clickNode"' in document
     assert "nodeReducer:" in document
     assert "<\\/script>" in document

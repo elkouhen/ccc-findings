@@ -1049,6 +1049,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     let selectedId = null;
     let relatedNodes = null;
     let relatedEdges = null;
+    // Sigma invokes reducers while it is constructed, so these controls must
+    // exist before creating the renderer.
+    const relationHttp = document.getElementById("relation-http");
+    const relationKafka = document.getElementById("relation-kafka");
+    function isVisibleRelation(kind) {
+      return (kind !== "rest" || relationHttp.checked) && (kind !== "kafka" || relationKafka.checked);
+    }
     const NODE_VERTEX_SHADER = `
       attribute vec2 a_position;
       attribute float a_size;
@@ -1205,17 +1212,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     const details = document.getElementById("details");
     const search = document.getElementById("search");
-    const relationHttp = document.getElementById("relation-http");
-    const relationKafka = document.getElementById("relation-kafka");
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
     const pathStops = [];
     const nodesByNormalizedName = new Map();
     function normalizeNodeName(name) {
       return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
-    }
-    function isVisibleRelation(kind) {
-      return (kind !== "rest" || relationHttp.checked) && (kind !== "kafka" || relationKafka.checked);
     }
     graphData.nodes.forEach(node => {
       const key = normalizeNodeName(node.name);
