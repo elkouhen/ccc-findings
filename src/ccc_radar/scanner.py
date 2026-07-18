@@ -1454,16 +1454,16 @@ def _infer_resttemplate_exchange_endpoints(
 def _infer_configured_api_client_endpoints(
     repo_root: Path, rel_path: str
 ) -> list[MessageEndpoint]:
-    """Infère les appels aux interfaces créées par `createInternalClientApi`.
+    """Infère les appels aux interfaces créées par `create*ClientApi`.
 
     Ces interfaces générées ne passent pas forcément par les règles Semgrep
     dédiées à RestTemplate/WebClient. Leur méthode HTTP et leur route sont
     récupérées plus tard sur le microservice hôte ; l'appel local est donc
     volontairement `ANY <dynamic>` à ce stade, mais porte le domaine résolu.
 
-    Émet aussi un endpoint par déclaration `@Bean` de `RestConfiguration` : la
-    bean déclare seule, et de façon non ambiguë, le microservice cible (domaine
-    passé à `createInternalClientApi`). Cela garantit la dépendance A→B même
+    Émet aussi un endpoint par déclaration `@Bean` d'une configuration
+    `Rest*Config*` : la bean déclare seule, et de façon non ambiguë, le
+    microservice cible (domaine passé à `create*ClientApi`). Cela garantit la dépendance A→B même
     quand aucun site d'appel ne permet de résoudre le type de l'API — voir
     `_configured_api_client_bean_endpoints`.
     """
@@ -1516,9 +1516,9 @@ def _infer_configured_api_client_endpoints(
 def _configured_api_client_bean_endpoints(
     repo_root: Path, rel_path: str, source: bytes, root
 ) -> list[MessageEndpoint]:
-    """Une déclaration `@Bean` de `RestConfiguration` vaut preuve de dépendance.
+    """Une déclaration `@Bean` de configuration `Rest*Config*` vaut preuve de dépendance.
 
-    Chaque bean `createInternalClientApi(DOMAINE, Api.class)` déclare, sans
+    Chaque bean `create*ClientApi(DOMAINE, Api.class)` déclare, sans
     ambiguïté, le microservice cible (le domaine). On émet donc un endpoint
     d'appel `ANY <dynamic>` marqué du domaine pour chaque bean non ambigu :
     la dépendance A→B sera émise par le graphe de dépendances même si aucun
@@ -1533,7 +1533,9 @@ def _configured_api_client_bean_endpoints(
         _rest_configuration_module_root(repo_root, rel_path)
     )
     for type_node in java_parser.type_declarations(root):
-        if java_parser.declaration_name(type_node, source) != "RestConfiguration":
+        if not _is_rest_client_configuration(
+            java_parser.declaration_name(type_node, source)
+        ):
             continue
         for method_node in java_parser.walk(type_node):
             if method_node.type != "method_declaration":
@@ -2585,10 +2587,25 @@ def _resolve_value_annotated_variable(
 
 
 # Certains microservices ne portent pas l'URL de destination au site d'appel :
-# le client HTTP est injecté et construit dans `RestConfiguration`. Dans cette
+# le client HTTP est injecté et construit dans une configuration `Rest*Config*`.
+# Dans cette
 # convention, un `@Bean` délègue à un helper auquel est passé le domaine qui
 # publie l'API. On conserve ce domaine dans l'évidence de l'endpoint pour que
 # le graphe puisse restreindre la cible, sans prétendre résoudre une URL.
+_REST_CLIENT_CONFIGURATION_RE = re.compile(r"^Rest.*Config.*$")
+_CONFIGURED_API_CLIENT_FACTORY_RE = re.compile(r"^create.*ClientApi$")
+
+
+def _is_rest_client_configuration(class_name: str) -> bool:
+    """Whether a Java configuration name follows the ``Rest*Config*`` convention."""
+    return bool(_REST_CLIENT_CONFIGURATION_RE.fullmatch(class_name))
+
+
+def _is_configured_api_client_factory(method_name: str) -> bool:
+    """Whether a helper name follows the ``create*ClientApi`` convention."""
+    return bool(_CONFIGURED_API_CLIENT_FACTORY_RE.fullmatch(method_name))
+
+
 def _simple_java_type(value: str) -> str:
     """Nom simple d'un type Java, sans génériques ni tableau."""
     value = value.strip().rsplit(".", 1)[-1]
@@ -2615,7 +2632,7 @@ def _api_domain_argument(node, source: bytes) -> str | None:
 
 
 def _bean_api_domain(method_node, source: bytes, microservice: str) -> str | None:
-    """Domaine du `webClientHelper.createInternalClientApi(...)` d'un bean.
+    """Domaine d'un appel `create*ClientApi(...)` dans un bean.
 
     La convention applicative est précise : le premier argument est une
     constante de domaine (`YYY.DOMAIN_ANNUAIRE`) et le second l'interface
@@ -2627,7 +2644,7 @@ def _bean_api_domain(method_node, source: bytes, microservice: str) -> str | Non
         if invocation.type != "method_invocation":
             continue
         _, method_name, args = java_parser.invocation_parts(invocation, source)
-        if method_name != "createInternalClientApi" or not args:
+        if not _is_configured_api_client_factory(method_name) or not args:
             continue
         _trace_rest_client(
             "rest_client.search.helper",
@@ -2699,7 +2716,7 @@ def _rest_configuration_client_domains_in_module(
     """Retourne `(type_client, nom_bean, domaine)` d'un microservice.
 
     Le `pom.xml` détermine la frontière et le nom (`artifactId`) du
-    microservice Maven. Ainsi, `RestConfiguration` n'est parcourue qu'une fois
+    microservice Maven. Ainsi, chaque configuration `Rest*Config*` n'est parcourue qu'une fois
     pour ce microservice, sans mélanger les services voisins d'un workspace.
     """
     repo_root = Path(repo_root_str)
@@ -2734,7 +2751,9 @@ def _rest_configuration_client_domains_in_module(
             continue
         source, root = parsed
         for type_node in java_parser.type_declarations(root):
-            if java_parser.declaration_name(type_node, source) != "RestConfiguration":
+            if not _is_rest_client_configuration(
+                java_parser.declaration_name(type_node, source)
+            ):
                 continue
             _trace_rest_client(
                 "rest_client.search.configuration",
@@ -2774,7 +2793,7 @@ def _rest_configuration_client_domains_in_module(
                         microservice=service_name,
                         path=candidate_rel,
                         bean=method_name,
-                        reason="no_unique_createInternalClientApi_domain",
+                        reason="no_unique_create_client_api_domain",
                     )
                     continue
                 clients.append(
@@ -2825,7 +2844,7 @@ def discover_rest_api_client_configurations(repo_root: Path) -> None:
 
     Cette phase précède l'analyse des appels : les interfaces d'API générées
     ne donnent pas toujours un résultat Semgrep REST exploitable, mais leur
-    `RestConfiguration` doit tout de même être cherchée dans chaque
+    toute configuration `Rest*Config*` doit tout de même être cherchée dans chaque
     microservice Maven du workspace.
     """
     module_roots = sorted({pom_path.parent for pom_path in repo_root.rglob("pom.xml")})

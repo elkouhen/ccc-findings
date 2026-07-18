@@ -479,6 +479,11 @@ concerned files. Covered cases:
   targets constrain the graph edge to the intended service;
 - WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)`:
   infer exposed `serve/rest` routes;
+- Configured generated API clients: each `@Bean` in a class named
+  `Rest*Config*` that calls a factory named `create*ClientApi` produces a
+  `configured-api-client-bean` call fact carrying its logical service domain.
+  This fact preserves the A→B dependency even if no invocation of the
+  generated interface can be statically resolved;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/
   `.yaml`: endpoint `GET /actuator/**`.
 These endpoints reuse the same `MessageEndpoint` model as Semgrep matches, but

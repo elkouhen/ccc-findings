@@ -449,6 +449,63 @@ def test_configured_api_client_bean_declares_dependency_without_resolved_call(
     assert "cccr-api-domain:domain-annuaire" in bean.snippet
 
 
+def test_configured_api_client_supports_rest_config_and_create_client_api_conventions(
+    tmp_path: Path,
+) -> None:
+    """Les conventions `Rest*Config*` et `create*ClientApi` restent liées.
+
+    Le nom peut varier des deux côtés sans perdre le domaine du service cible.
+    Une classe qui ne suit pas la convention de configuration reste ignorée.
+    """
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestPartnerConfigProperties.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestPartnerConfigProperties {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createExternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "  }\n"
+        "  @Bean\n"
+        "  AnnuaireApi ignoredFactory() {\n"
+        "    return webClientHelper.createExternalApi(ApiDomains.DOMAIN_IGNORED, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+        "class RestUtility {\n"
+        "  @Bean\n"
+        "  AnnuaireApi ignored() {\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_IGNORED, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    rel = config.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+
+    assert len(endpoints) == 1
+    assert endpoints[0].framework == "configured-api-client-bean"
+    assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
+
+    client = tmp_path / "src" / "main" / "java" / "Caller.java"
+    client.write_text(
+        "class Caller {\n"
+        "  private final AnnuaireApi annuaireApi;\n"
+        "  Caller(AnnuaireApi annuaireApi) { this.annuaireApi = annuaireApi; }\n"
+        "  Object call() { return annuaireApi.directory(); }\n"
+        "}\n"
+    )
+
+    calls = infer_framework_endpoints(tmp_path, files=[client.relative_to(tmp_path).as_posix()])
+
+    assert len(calls) == 1
+    assert calls[0].framework == "configured-api-client"
+    assert "cccr-api-domain:domain-annuaire" in calls[0].snippet
+
+
 def test_configured_api_client_bean_dropped_when_invocation_resolves(tmp_path: Path) -> None:
     """Quand un appel résolu couvre déjà le domaine, l'endpoint « bean » est
     retiré pour éviter des arêtes A→B redondantes dans le graphe d'interactions."""
