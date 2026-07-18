@@ -356,13 +356,19 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert ".path-history-header" in document
     assert ".path-details-header" in document
     assert ".path-overview-item" in document
-    assert ".path-step.is-kafka" in document
+    assert ".path-step.is-kafka-publish" in document
+    assert ".path-step.is-kafka-consume" in document
     assert '<details class="legend"' in document
     assert '.toolbar input:not([type="checkbox"])' in document
     assert "Appel HTTP" in document
     assert "Publication Kafka" in document
     assert "Consommation Kafka" in document
-    assert 'link.kind === "rest" ? "#7c3aed"' in document
+    assert "const RELATION_COLORS = Object.freeze" in document
+    assert "function relationColor(link)" in document
+    assert 'http: "#D55E00"' in document
+    assert 'kafkaPublish: "#009E73"' in document
+    assert 'kafkaConsume: "#0072B2"' in document
+    assert 'mongodb: "#CC79A7"' in document
     assert "function isVisibleRelation(kind)" in document
     assert 'kind !== "mongodb" || relationMongodb.checked' in document
     assert 'hidden: true' in document

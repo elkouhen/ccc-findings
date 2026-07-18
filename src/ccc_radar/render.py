@@ -1035,11 +1035,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-overview-item:last-child::before { color: #16a34a; content: "●"; font-size: 9px; }
     .path-overview-item.is-topic { border-style: dashed; color: #475569; background: #f8fafc !important; }
     .path-step { border-left: 3px solid #94a3b8; }
-    .path-step.is-rest { border-left-color: #7c3aed; }
-    .path-step.is-kafka { border-left-color: #0f766e; }
-    .path-step.is-mongodb { border-left-color: #2563eb; }
-    .path-step-label { margin: 0 0 4px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .path-step-text { margin: 0; color: #334155; font-size: 13px; line-height: 1.45; }
+    .path-step.is-rest { border-left-color: #D55E00; }
+    .path-step.is-kafka-publish { border-left-color: #009E73; }
+    .path-step.is-kafka-consume { border-left-color: #0072B2; }
+    .path-step.is-mongodb { border-left-color: #CC79A7; }
+    .path-step-label { margin: 0; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
     .legend-content { display: grid; gap: 5px; }
@@ -1099,10 +1099,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
       <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
-      <div class="legend-row"><span class="legend-line" style="background:#7c3aed"></span>Appel HTTP</div>
-      <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Publication Kafka</div>
-      <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Consommation Kafka</div>
-      <div class="legend-row"><span class="legend-line" style="background:#2563eb"></span>Acces MongoDB</div>
+      <div class="legend-row"><span class="legend-line" style="background:#D55E00"></span>Appel HTTP</div>
+      <div class="legend-row"><span class="legend-line" style="background:#009E73"></span>Publication Kafka</div>
+      <div class="legend-row"><span class="legend-line" style="background:#0072B2"></span>Consommation Kafka</div>
+      <div class="legend-row"><span class="legend-line" style="background:#CC79A7"></span>Acces MongoDB</div>
     </div>
   </details>
   <div id="details"><div class="details-empty">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div></div>
@@ -1150,6 +1150,18 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
     }
 
+    const RELATION_COLORS = Object.freeze({
+      http: "#D55E00",
+      kafkaPublish: "#009E73",
+      kafkaConsume: "#0072B2",
+      mongodb: "#CC79A7",
+    });
+    function relationColor(link) {
+      if (link.kind === "rest") return RELATION_COLORS.http;
+      if (link.direction === "incoming") return RELATION_COLORS.kafkaConsume;
+      if (link.direction === "data_access") return RELATION_COLORS.mongodb;
+      return RELATION_COLORS.kafkaPublish;
+    }
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
       label: node.name,
@@ -1162,7 +1174,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
       size: 1.2,
-      color: link.kind === "rest" ? "#7c3aed" : link.direction === "incoming" ? "#d97706" : link.direction === "data_access" ? "#2563eb" : "#0f766e",
+      color: relationColor(link),
       kind: link.kind,
       type: "arrow",
     }));
@@ -1653,24 +1665,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
       overview.append(overviewTitle, overviewList);
       details.append(overview);
-      const pathRelationText = link => {
-        const source = nodeDataById.get(link.source);
-        const target = nodeDataById.get(link.target);
-        const sourceName = pathNodeLabel(link.source, path.nodes.indexOf(link.source));
-        const targetName = pathNodeLabel(link.target, path.nodes.indexOf(link.target));
-        if (link.kind === "rest") {
-          const resource = restResourceLabel(link, target);
-          return resource
-            ? `HTTP · ${sourceName} appelle ${targetName} (${resource})`
-            : `HTTP · ${sourceName} appelle ${targetName} (contrat non indexe)`;
-        }
-        if (link.kind === "mongodb") return `MongoDB · ${sourceName} stocke dans ${targetName}`;
-        if (source.kind === "microservice") {
-          const types = link.published_message_types || [];
-          return `Kafka · ${sourceName} publie${types.length ? ` <${types.join(", ")}>` : ""} sur ${targetName}`;
-        }
-        return `Kafka · ${targetName} consomme ${sourceName}`;
-      };
       const pathStepTitle = link => {
         if (link.kind === "rest") return "Appel HTTP";
         if (link.kind === "mongodb") return "Acces MongoDB";
@@ -1679,14 +1673,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       };
       path.edges.forEach((step, index) => {
         const section = document.createElement("section");
-        section.className = `details-section path-step is-${step.link.kind}`;
+        const pathStepClass = step.link.kind === "kafka"
+          ? (nodeDataById.get(step.link.source).kind === "microservice" ? "is-kafka-publish" : "is-kafka-consume")
+          : `is-${step.link.kind}`;
+        section.className = `details-section path-step ${pathStepClass}`;
         const label = document.createElement("p");
         label.className = "path-step-label";
         label.textContent = `Etape ${index + 1} · ${pathStepTitle(step.link)}`;
-        const text = document.createElement("p");
-        text.className = "path-step-text";
-        text.textContent = pathRelationText(step.link);
-        section.append(label, text);
+        section.append(label);
         details.append(section);
       });
     }
