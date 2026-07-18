@@ -358,16 +358,25 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'applyLayout("forceatlas2-noverlap")' in document
     assert 'id="layout-flow"' not in document
     assert 'id="layout-force"' not in document
-    assert "function sugiyamaPositions(nodes, links)" not in document
+    assert 'id="dependencies-tab"' in document
+    assert 'id="dependencies-panel"' in document
+    assert 'id="dependency-graph"' in document
+    assert "function dependencyGraphData(nodes, links)" in document
+    assert "function sugiyamaPositions(nodes, links)" in document
+    assert "const dependencyRenderer = new Sigma(dependencyNetwork" in document
     assert "function applyLayout(layout, persist = true)" not in document
     assert "APIs publiees" in document
     assert "APIs consommees" in document
     assert "Consommateurs REST detectes" in document
+    assert "function appendActionList(title, entries)" in document
+    assert "function focusPublishedRestResource(id, resource)" in document
+    assert "function focusOpenApiContract(id, contract)" in document
     assert "REST · ${resource}" in document
     assert "Kafka · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
     assert "function appendRelationList(title, links, currentId, labelForLink)" in document
-    assert "renderer.getCamera().animatedZoom" in document
+    assert "function activeRenderer()" in document
+    assert "activeRenderer().getCamera().animatedZoom" in document
     assert 'id="fit-view"' in document
     assert 'id="relation-http"' in document
     assert 'id="relation-kafka"' in document
@@ -438,6 +447,32 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
     assert graph_data["links"][2]["consumed_message_types"] == ["OrderCreated"]
 
 
+def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
+    endpoints_by_service = {
+        "annuaire": [
+            make_endpoint(
+                "serve",
+                "GET /directory",
+                "src/main/resources/openapi/annuaire.rest",
+                framework="openapi",
+            )
+        ]
+    }
+    document = render_graph_html(endpoints_by_service, build_graph(endpoints_by_service))
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+    service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:annuaire")
+
+    assert service["openapi_files"] == ["src/main/resources/openapi/annuaire.rest"]
+    assert service["openapi_contracts"] == [
+        {
+            "path": "src/main/resources/openapi/annuaire.rest",
+            "resources": ["GET /directory"],
+        }
+    ]
+
+
 def test_render_graph_html_keeps_complexity_architecture_only() -> None:
     endpoints_by_service = _fixture()
     document = render_graph_html(
@@ -462,6 +497,9 @@ def test_render_graph_html_keeps_complexity_architecture_only() -> None:
         "relations": 2,
     }
     assert service["openapi_files"] == ["src/main/resources/openapi.yaml"]
+    assert service["openapi_contracts"] == [
+        {"path": "src/main/resources/openapi.yaml", "resources": []}
+    ]
     assert '"findings"' not in document
     assert "severity_counts" not in document
     assert service["color"] == "#2563eb"

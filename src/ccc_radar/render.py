@@ -590,6 +590,14 @@ def render_graph_html(
     for name in ordered_services:
         endpoints = endpoints_by_service.get(name, [])
         resources = _rest_resources_served(endpoints)
+        contract_resources: dict[str, set[str]] = {}
+        for endpoint in endpoints:
+            if (
+                endpoint.system == "rest"
+                and endpoint.role == "serve"
+                and endpoint.framework == "openapi"
+            ):
+                contract_resources.setdefault(endpoint.path, set()).add(endpoint.topic)
         event_apis = sorted(
             {
                 f"Kafka · {endpoint.topic}{f' <{endpoint.message_type}>' if endpoint.message_type else ''}"
@@ -598,6 +606,9 @@ def render_graph_html(
             }
         )
         module = module_details.get(name)
+        openapi_files = sorted(
+            set(module.openapi_files if module else ()) | set(contract_resources)
+        )
         shown_apis = [*resources, *event_apis][:4]
         api_count = len(resources) + len(event_apis)
         if api_count > len(shown_apis):
@@ -608,7 +619,11 @@ def render_graph_html(
                 "kind": "microservice",
                 "name": name,
                 "resources": resources,
-                "openapi_files": list(module.openapi_files) if module else [],
+                "openapi_files": openapi_files,
+                "openapi_contracts": [
+                    {"path": path, "resources": sorted(contract_resources.get(path, set()))}
+                    for path in openapi_files
+                ],
                 "label": "\n".join([name, *shown_apis])
                 if shown_apis
                 else f"{name}\nAucune API publiee",
@@ -1043,7 +1058,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     :root { color: #172033; background: #f5f7fb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
-    #graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
+    #graph, #dependency-graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
+    #dependency-graph[hidden] { display: none; }
     .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: grid; gap: 10px; width: min(390px, calc(100vw - 32px)); padding: 12px; border: 1px solid #d7dee9; border-radius: 10px; background: rgba(255, 255, 255, .96); box-shadow: 0 4px 20px rgba(15, 23, 42, .12); }
     .toolbar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .toolbar strong { color: #172033; font-size: 15px; white-space: nowrap; }
@@ -1140,6 +1156,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-overview-item:first-child::before { color: #2563eb; content: "●"; font-size: 9px; }
     .path-overview-item:last-child::before { color: #16a34a; content: "●"; font-size: 9px; }
     .path-overview-item.is-topic { border-style: dashed; color: #475569; background: #f8fafc !important; }
+    .dependency-view { display: grid; gap: 8px; padding: 2px 0; }
+    .dependency-view-kicker { margin: 0; color: #1d4f91; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .dependency-view h2 { margin: 0; color: #172033; font-size: 16px; }
+    .dependency-view p:last-child { margin: 0; color: #52616b; font-size: 12px; line-height: 1.45; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
     .legend-content { display: grid; gap: 5px; }
@@ -1161,6 +1181,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
       <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Graphe</button>
+      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Vue en couches des dependances entre microservices">Dépendances</button>
       <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Indexation</button>
       <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Chemins analyses</button>
     </div>
@@ -1192,6 +1213,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           </div>
         </div>
       </details>
+    </div>
+    <div id="dependencies-panel" class="toolbar-panel dependency-view" role="tabpanel" aria-labelledby="dependencies-tab" hidden>
+      <p class="dependency-view-kicker">Architecture applicative</p>
+      <h2>Arbre des dépendances</h2>
+      <p>Disposition Sugiyama en couches. Un lien va du service consommateur vers son fournisseur HTTP ou vers le service qui publie l’événement Kafka. Les collections MongoDB et les microservices isolés restent dans la vue Graphe.</p>
     </div>
     <div id="issues-panel" class="toolbar-panel indexing-issues" role="tabpanel" aria-labelledby="issues-tab" hidden>
       <div class="indexing-issues-header">
@@ -1229,6 +1255,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   </details>
   <div id="details"><div class="details-empty">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div></div>
   <div id="graph" aria-label="Graphe des interactions"></div>
+  <div id="dependency-graph" aria-label="Arbre des dependances entre microservices" hidden></div>
   <script id="graph-data" type="application/json">__GRAPH_DATA__</script>
   <script type="module">
     const graphData = JSON.parse(document.getElementById("graph-data").textContent);
@@ -1283,6 +1310,111 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       if (link.direction === "data_access") return RELATION_COLORS.mongodb;
       return RELATION_COLORS.kafkaPublish;
     }
+    function dependencyGraphData(nodes, links) {
+      const microservices = new Map(
+        nodes.filter(node => node.kind === "microservice").map(node => [node.id, node])
+      );
+      const grouped = new Map();
+      function add(source, target, kind, label) {
+        if (source === target || !microservices.has(source) || !microservices.has(target)) return;
+        const key = `${source}|${target}|${kind}`;
+        const entry = grouped.get(key) || { source, target, kind, labels: new Set() };
+        entry.labels.add(label);
+        grouped.set(key, entry);
+      }
+      links.filter(link => link.kind === "rest").forEach(link => {
+        add(link.source, link.target, "rest", "HTTP");
+      });
+      const producersByTopic = new Map();
+      const consumersByTopic = new Map();
+      links.filter(link => link.kind === "kafka").forEach(link => {
+        if (microservices.has(link.source)) {
+          producersByTopic.set(link.target, [...(producersByTopic.get(link.target) || []), link.source]);
+        }
+        if (microservices.has(link.target)) {
+          consumersByTopic.set(link.source, [...(consumersByTopic.get(link.source) || []), link.target]);
+        }
+      });
+      consumersByTopic.forEach((consumers, topicId) => {
+        const topic = nodeDataById.get(topicId);
+        (producersByTopic.get(topicId) || []).forEach(producer => {
+          consumers.forEach(consumer => add(consumer, producer, "kafka", `Kafka · ${topic.name}`));
+        });
+      });
+      const dependencyLinks = [...grouped.values()].map(entry => ({
+        source: entry.source,
+        target: entry.target,
+        kind: entry.kind,
+        direction: entry.kind === "kafka" ? "incoming" : "outgoing",
+        label: [...entry.labels].sort().join("\\n"),
+      }));
+      const connectedIds = new Set(dependencyLinks.flatMap(link => [link.source, link.target]));
+      return {
+        nodes: [...connectedIds].sort().map(id => microservices.get(id)),
+        links: dependencyLinks,
+      };
+    }
+    function sugiyamaPositions(nodes, links) {
+      const adjacency = new Map(nodes.map(node => [node.id, []]));
+      links.forEach(link => adjacency.get(link.source)?.push(link.target));
+      // Condense cycles first: each strongly connected component is then a
+      // single vertex in the acyclic graph used for layer assignment.
+      const indexes = new Map(), lowlinks = new Map(), stack = [], onStack = new Set(), components = [];
+      let nextIndex = 0;
+      function visit(nodeId) {
+        indexes.set(nodeId, nextIndex); lowlinks.set(nodeId, nextIndex); nextIndex += 1;
+        stack.push(nodeId); onStack.add(nodeId);
+        for (const targetId of adjacency.get(nodeId) || []) {
+          if (!indexes.has(targetId)) {
+            visit(targetId);
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), lowlinks.get(targetId)));
+          } else if (onStack.has(targetId)) {
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), indexes.get(targetId)));
+          }
+        }
+        if (lowlinks.get(nodeId) !== indexes.get(nodeId)) return;
+        const component = [];
+        for (;;) {
+          const member = stack.pop(); onStack.delete(member); component.push(member);
+          if (member === nodeId) break;
+        }
+        components.push(component.sort());
+      }
+      nodes.map(node => node.id).sort().forEach(nodeId => { if (!indexes.has(nodeId)) visit(nodeId); });
+      const componentByNode = new Map();
+      components.forEach((component, index) => component.forEach(nodeId => componentByNode.set(nodeId, index)));
+      const successors = components.map(() => new Set());
+      const indegrees = components.map(() => 0);
+      links.forEach(link => {
+        const source = componentByNode.get(link.source), target = componentByNode.get(link.target);
+        if (source === target || successors[source].has(target)) return;
+        successors[source].add(target); indegrees[target] += 1;
+      });
+      const levels = components.map(() => 0);
+      const queue = components.map((_component, index) => index).filter(index => indegrees[index] === 0).sort((a, b) => a - b);
+      for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const component = queue[cursor];
+        [...successors[component]].sort((a, b) => a - b).forEach(target => {
+          levels[target] = Math.max(levels[target], levels[component] + 1);
+          indegrees[target] -= 1;
+          if (indegrees[target] === 0) queue.push(target);
+        });
+      }
+      const layers = new Map();
+      components.forEach((component, index) => {
+        const level = levels[index];
+        layers.set(level, [...(layers.get(level) || []), ...component]);
+      });
+      const positions = new Map();
+      [...layers.entries()].sort(([left], [right]) => left - right).forEach(([level, nodeIds]) => {
+        nodeIds.sort();
+        const center = (nodeIds.length - 1) / 2;
+        nodeIds.forEach((nodeId, row) => positions.set(nodeId, { x: level * 2.8, y: row - center }));
+      });
+      return positions;
+    }
+    const dependencyData = dependencyGraphData(graphData.nodes, graphData.links);
+    const dependencyPositions = sugiyamaPositions(dependencyData.nodes, dependencyData.links);
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
       label: node.name,
@@ -1299,6 +1431,27 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       kind: link.kind,
       type: "arrow",
     }));
+    const dependencyNetwork = new graphology.MultiDirectedGraph();
+    dependencyData.nodes.forEach(node => {
+      const position = dependencyPositions.get(node.id) || { x: 0, y: 0 };
+      dependencyNetwork.addNode(node.id, {
+        label: node.name,
+        x: position.x,
+        y: position.y,
+        size: node.size,
+        color: node.color,
+        type: "microservice",
+      });
+    });
+    dependencyData.links.forEach((link, index) => dependencyNetwork.addEdgeWithKey(
+      `dependency-edge-${index}`, link.source, link.target, {
+        label: link.label,
+        size: 1.5,
+        color: relationColor(link),
+        kind: link.kind,
+        type: "arrow",
+      }
+    ));
     const initialNodePositions = new Map();
     network.forEachNode((node, attributes) => {
       initialNodePositions.set(node, { x: attributes.x, y: attributes.y });
@@ -1484,16 +1637,32 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         return { ...data, color: "#e5eaf0", size: .35 };
       },
     });
+    const dependencyRenderer = new Sigma(dependencyNetwork, document.getElementById("dependency-graph"), {
+      nodeProgramClasses: {
+        microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
+      },
+      renderEdgeLabels: false,
+      labelDensity: .12,
+      labelGridCellSize: 110,
+      labelRenderedSizeThreshold: 8,
+      edgeReducer: (_edge, data) => (
+        isVisibleRelation(data.kind) ? data : { ...data, hidden: true }
+      ),
+    });
     const details = document.getElementById("details");
     const search = document.getElementById("search");
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
     const graphTab = document.getElementById("graph-tab");
+    const dependenciesTab = document.getElementById("dependencies-tab");
     const issuesTab = document.getElementById("issues-tab");
     const pathsTab = document.getElementById("paths-tab");
     const graphPanel = document.getElementById("graph-panel");
+    const dependenciesPanel = document.getElementById("dependencies-panel");
     const issuesPanel = document.getElementById("issues-panel");
     const pathsPanel = document.getElementById("paths-panel");
+    const graphCanvas = document.getElementById("graph");
+    const dependencyCanvas = document.getElementById("dependency-graph");
     const indexingIssuesList = document.getElementById("indexing-issues");
     const indexingIssuesEmpty = document.getElementById("indexing-issues-empty");
     const indexingIssues = graphData.indexing_issues || [];
@@ -1621,17 +1790,29 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function setToolbarTab(tab) {
       const showingGraph = tab === "graph";
+      const showingDependencies = tab === "dependencies";
       const showingIssues = tab === "issues";
       const showingPaths = tab === "paths";
       graphTab.classList.toggle("is-active", showingGraph);
       graphTab.setAttribute("aria-selected", String(showingGraph));
+      dependenciesTab.classList.toggle("is-active", showingDependencies);
+      dependenciesTab.setAttribute("aria-selected", String(showingDependencies));
       issuesTab.classList.toggle("is-active", showingIssues);
       issuesTab.setAttribute("aria-selected", String(showingIssues));
       pathsTab.classList.toggle("is-active", showingPaths);
       pathsTab.setAttribute("aria-selected", String(showingPaths));
       graphPanel.hidden = !showingGraph;
+      dependenciesPanel.hidden = !showingDependencies;
       issuesPanel.hidden = !showingIssues;
       pathsPanel.hidden = !showingPaths;
+      graphCanvas.hidden = showingDependencies;
+      dependencyCanvas.hidden = !showingDependencies;
+      if (showingDependencies) {
+        requestAnimationFrame(() => {
+          dependencyRenderer.refresh();
+          dependencyRenderer.getCamera().animatedReset({ duration: 220 });
+        });
+      }
     }
     function renderIndexingIssues() {
       indexingIssuesList.replaceChildren();
@@ -1713,6 +1894,28 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       heading.textContent = title;
       const list = document.createElement("ul");
       values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
+      section.append(heading, list);
+      details.append(section);
+    }
+    function appendActionList(title, entries) {
+      if (!entries.length) return;
+      const section = document.createElement("section");
+      section.className = "details-section";
+      const heading = document.createElement("h2");
+      heading.textContent = title;
+      const list = document.createElement("ul");
+      entries.forEach(({ label, title: actionTitle, action }) => {
+        const item = document.createElement("li");
+        item.className = "relation-item";
+        const button = document.createElement("button");
+        button.className = "relation-link";
+        button.type = "button";
+        button.textContent = label;
+        button.title = actionTitle || "Explorer cet element dans le graphe";
+        button.addEventListener("click", action);
+        item.append(button);
+        list.append(item);
+      });
       section.append(heading, list);
       details.append(section);
     }
@@ -2079,15 +2282,27 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const kafkaConsumptions = edges.filter(link => link.kind === "kafka" && link.target === id);
         const mongoCollections = edges.filter(link => link.kind === "mongodb" && link.source === id);
         const publishedApis = [
-          ...node.resources.map(resource => `REST · ${resource}`),
+          ...node.resources.map(resource => ({
+            label: `REST · ${resource}`,
+            title: "Mettre en evidence les consommateurs de cette API REST",
+            action: () => focusPublishedRestResource(id, resource),
+          })),
           ...kafkaPublications.map(link => {
             const topic = nodeDataById.get(link.target);
             const types = link.published_message_types || [];
-            return types.length ? `Kafka · ${topic.name} <${types.join(", ")}>` : `Kafka · ${topic.name}`;
+            return {
+              label: types.length ? `Kafka · ${topic.name} <${types.join(", ")}>` : `Kafka · ${topic.name}`,
+              title: "Naviguer vers le topic Kafka",
+              action: () => selectNode(link.target),
+            };
           }),
         ];
-        appendList("APIs publiees", publishedApis);
-        appendList("Contrats OpenAPI detectes", node.openapi_files || []);
+        appendActionList("APIs publiees", publishedApis);
+        appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).map(contract => ({
+          label: contract.path,
+          title: "Mettre en evidence les consommateurs de ce contrat OpenAPI",
+          action: () => focusOpenApiContract(id, contract),
+        })));
         appendRelationList("APIs consommees", [...httpCalls, ...kafkaConsumptions], id, link => {
           if (link.kind === "rest") {
             const target = nodeDataById.get(link.target);
@@ -2122,6 +2337,39 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         appendRelationList("Services utilisant cette collection", edges.filter(link => link.kind === "mongodb" && link.target === id), id,
           link => nodeDataById.get(link.source).name);
       }
+    }
+    function focusNodeRelations(id, matches) {
+      if (!pathLock.checked) clearPathControls();
+      pathMicroserviceOrder = new Map();
+      selectedId = id;
+      relatedNodes = new Set([id]);
+      relatedEdges = new Set();
+      network.forEachEdge((edge, attributes, source, target) => {
+        if (!isVisibleRelation(attributes.kind) || !matches(attributes, source, target)) return;
+        relatedEdges.add(edge); relatedNodes.add(source); relatedNodes.add(target);
+      });
+      renderer.refresh();
+      renderDetails(id);
+      const position = renderer.getNodeDisplayData(id);
+      if (position) renderer.getCamera().animate({ x: position.x, y: position.y, ratio: .55 }, { duration: 260 });
+      persistState();
+    }
+    function focusPublishedRestResource(id, resource) {
+      const target = nodeDataById.get(id);
+      focusNodeRelations(id, (link, _source, targetId) => (
+        link.kind === "rest" && targetId === id && restResourceLabel(link, target) === resource
+      ));
+    }
+    function focusOpenApiContract(id, contract) {
+      const resources = new Set(contract.resources || []);
+      if (!resources.size) {
+        selectNode(id);
+        return;
+      }
+      const target = nodeDataById.get(id);
+      focusNodeRelations(id, (link, _source, targetId) => (
+        link.kind === "rest" && targetId === id && resources.has(restResourceLabel(link, target))
+      ));
     }
     function selectNode(id) {
       if (!pathLock.checked) clearPathControls();
@@ -2172,17 +2420,26 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     renderer.on("clickNode", ({ node }) => selectNode(node));
     renderer.on("clickStage", reset);
-    document.getElementById("zoom-in").addEventListener("click", () => renderer.getCamera().animatedZoom({ duration: 180 }));
-    document.getElementById("zoom-out").addEventListener("click", () => renderer.getCamera().animatedUnzoom({ duration: 180 }));
-    document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
+    dependencyRenderer.on("clickNode", ({ node }) => selectNode(node));
+    dependencyRenderer.on("clickStage", reset);
+    function activeRenderer() {
+      return dependencyCanvas.hidden ? renderer : dependencyRenderer;
+    }
+    document.getElementById("zoom-in").addEventListener("click", () => activeRenderer().getCamera().animatedZoom({ duration: 180 }));
+    document.getElementById("zoom-out").addEventListener("click", () => activeRenderer().getCamera().animatedUnzoom({ duration: 180 }));
+    document.getElementById("fit-view").addEventListener("click", () => activeRenderer().getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
     document.getElementById("show-simple-paths").addEventListener("click", showSimplePaths);
     layoutButtons.forEach((button, layout) => button.addEventListener("click", () => applyLayout(layout)));
     graphTab.addEventListener("click", () => setToolbarTab("graph"));
+    dependenciesTab.addEventListener("click", () => setToolbarTab("dependencies"));
     issuesTab.addEventListener("click", () => setToolbarTab("issues"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
-    [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
+    [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", () => {
+      reset();
+      dependencyRenderer.refresh();
+    }));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
       if (event.key === "Enter") showShortestPath();
@@ -2198,7 +2455,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       );
       if (node) selectNode(node.id); else if (!query) reset();
     });
-    window.addEventListener("resize", () => renderer.refresh());
+    window.addEventListener("resize", () => {
+      renderer.refresh();
+      dependencyRenderer.refresh();
+    });
   </script>
 </body>
 </html>
