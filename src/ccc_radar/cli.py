@@ -1198,8 +1198,7 @@ def _load_microservice_graph(
         findings_by_service = federation.findings_by_service
         if dependency_warning := dependency_federation_warning(services, federation):
             warnings.append(dependency_warning)
-        else:
-            edges = build_graph(services_by_name)
+        edges = build_graph(services_by_name)
         if include_mongodb:
             modules_by_service = {
                 service: module

@@ -90,7 +90,6 @@ def _dependency_inventory(
         warnings.extend(federation.warnings)
         if dependency_warning := dependency_federation_warning(services, federation):
             warnings.append(dependency_warning)
-            return {}, {}, warnings
         return (
             dict(federation.endpoints_by_service),
             {
@@ -258,9 +257,7 @@ def graph(workspace_root: str | None = None) -> GraphResult:
     warnings = ([repo_warning] if repo_warning else []) + federation.warnings
     if dependency_warning := dependency_federation_warning(services, federation):
         warnings.append(dependency_warning)
-        edges = []
-    else:
-        edges = build_graph(federation.endpoints_by_service)
+    edges = build_graph(federation.endpoints_by_service)
     return render_graph_json(
         list(federation.endpoints_by_service),
         edges,

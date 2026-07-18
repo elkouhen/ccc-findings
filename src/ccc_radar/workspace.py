@@ -55,13 +55,14 @@ def missing_indexed_microservices(
 def dependency_federation_warning(
     services: list[DiscoveredService], federation: FederationResult
 ) -> str | None:
-    """Explain why inter-service dependencies have not been derived yet."""
+    """Explain that inter-service dependencies come from a partial inventory."""
     missing = missing_indexed_microservices(services, federation)
     if not missing:
         return None
     return (
-        "Dépendances inter-microservices différées : indexez d'abord tous les "
-        f"services du workspace (manquants : {', '.join(missing)})."
+        "Dépendances inter-microservices partielles : seules les informations "
+        "des services déjà indexés sont prises en compte "
+        f"(manquants : {', '.join(missing)})."
     )
 
 

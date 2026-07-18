@@ -686,11 +686,11 @@ view qualifies a published REST resource with its provider —
 `<microservice>: METHOD /path` — so identical routes exposed by distinct
 services remain distinguishable.
 
-For a federated workspace, runtime dependencies (both REST and Kafka) are only
-derived after every discovered runtime microservice has an index. If one is
-missing or unreadable, the graph intentionally contains no inter-service edge
-and reports the missing services; this prevents topology from depending on the
-order in which repositories were indexed.
+For a federated workspace, runtime dependencies (both REST and Kafka) are
+derived from every indexed runtime microservice. If one is missing or
+unreadable, the graph remains partial rather than discarding the available
+relations, and explicitly reports the missing services; topology never hides
+facts that were actually indexed.
 
 `endpoints_by_service`: two ways to produce that multi-key dict, consumed by
 `build_graph` — topology depends only on the *shape* of the dict, never on

@@ -294,14 +294,14 @@ def test_load_federation_reads_microservices_and_flags_unindexed(workspace_copy:
     assert any("payment-service" in w and "non indexé" in w for w in result.warnings)
 
 
-def test_dependency_federation_warning_defers_rest_and_kafka_dependencies_until_complete(
+def test_dependency_federation_warning_reports_a_partial_rest_and_kafka_inventory(
     workspace_copy: Path,
 ) -> None:
     """Une topologie runtime ne doit jamais dépendre de l'ordre d'indexation.
 
     Ici order-service est prêt, mais payment-service ne l'est pas encore :
-    une relation REST ou Kafka entre eux doit être différée par les appelants
-    de graphe.
+    les appelants de graphe doivent conserver ses faits tout en signalant que
+    la topologie est partielle.
     """
     endpoint = make_endpoint("produce", "kafka", "orders.created", "app/Producer.java")
     with Store(workspace_copy / "service-a") as store:
@@ -314,6 +314,7 @@ def test_dependency_federation_warning_defers_rest_and_kafka_dependencies_until_
 
     assert warning is not None
     assert "payment-service" in warning
+    assert "partielles" in warning
 
 
 def test_load_federation_includes_shared_module_findings_but_not_endpoints(

@@ -420,33 +420,37 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_topology(
 
 
 @pytest.mark.integration
-def test_graph_tool_defers_rest_and_kafka_dependencies_until_workspace_is_fully_indexed(
+def test_graph_tool_keeps_available_rest_dependencies_when_workspace_is_partial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Le graphe ne doit pas dépendre de l'ordre d'indexation des services."""
+    """Les relations indexées restent visibles avec un avertissement explicite."""
     from ccc_radar.cli import app as cli_app
 
     rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
     dest = tmp_path / "rest_cycle_workspace"
     shutil.copytree(rest_cycle_workspace, dest)
     monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    for service in ("service-x", "service-y"):
+        monkeypatch.chdir(dest / service)
+        assert runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
+        assert runner.invoke(cli_app, ["index", "--semgrep"]).exit_code == 0
+
     monkeypatch.chdir(dest / "service-x")
-    assert runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
-    assert runner.invoke(cli_app, ["index", "--semgrep"]).exit_code == 0
 
     result = graph(workspace_root=str(dest))
 
-    assert result["edges"] == []
-    assert "Dépendances inter-microservices différées" in result["note"]
-    assert "service-y" in result["note"]
+    assert [(edge["from_node"], edge["to_node"], edge["label"]) for edge in result["edges"]] == [
+        ("service-x", "service-y", "service-y: GET /y-status")
+    ]
+    assert "Dépendances inter-microservices partielles" in result["note"]
     assert "service-z" in result["note"]
 
 
 @pytest.mark.integration
-def test_dependency_graph_defers_kafka_relations_until_every_service_is_indexed(
+def test_dependency_graph_keeps_available_kafka_facts_when_workspace_is_partial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Un producteur seul ne crée pas une topologie Kafka partielle."""
+    """Un producteur indexé reste visible, même si le consommateur manque."""
     from ccc_radar.cli import app as cli_app
 
     kafka_workspace = FIXTURES_DIR / "kafka_workspace"
@@ -459,10 +463,15 @@ def test_dependency_graph_defers_kafka_relations_until_every_service_is_indexed(
 
     result = dependency_graph(workspace_root=str(dest))
 
-    assert result["edges"] == []
-    assert result["nodes"] == []
+    assert [(edge["kind"], edge["label"]) for edge in result["edges"]] == [
+        ("publishes", "publishes String")
+    ]
+    assert {node["id"] for node in result["nodes"]} == {
+        "microservice:order-service",
+        "topic:orders.created",
+    }
     assert any("payment-service" in warning for warning in result["warnings"])
-    assert any("Dépendances inter-microservices différées" in warning for warning in result["warnings"])
+    assert any("Dépendances inter-microservices partielles" in warning for warning in result["warnings"])
 
 
 def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(
