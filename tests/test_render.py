@@ -356,8 +356,7 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert ".path-history-header" in document
     assert ".path-details-header" in document
     assert ".path-overview-item" in document
-    assert ".path-step.is-kafka-publish" in document
-    assert ".path-step.is-kafka-consume" in document
+    assert ".path-step" not in document
     assert '<details class="legend"' in document
     assert '.toolbar input:not([type="checkbox"])' in document
     assert "Appel HTTP" in document

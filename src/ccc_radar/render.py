@@ -1034,12 +1034,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-overview-item:first-child::before { color: #2563eb; content: "●"; font-size: 9px; }
     .path-overview-item:last-child::before { color: #16a34a; content: "●"; font-size: 9px; }
     .path-overview-item.is-topic { border-style: dashed; color: #475569; background: #f8fafc !important; }
-    .path-step { border-left: 3px solid #94a3b8; }
-    .path-step.is-rest { border-left-color: #D55E00; }
-    .path-step.is-kafka-publish { border-left-color: #009E73; }
-    .path-step.is-kafka-consume { border-left-color: #0072B2; }
-    .path-step.is-mongodb { border-left-color: #CC79A7; }
-    .path-step-label { margin: 0; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
     .legend-content { display: grid; gap: 5px; }
@@ -1647,7 +1641,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const summary = document.createElement("p");
       summary.className = "path-details-summary";
       const serviceCount = path.nodes.filter(id => nodeDataById.get(id).kind === "microservice").length;
-      summary.textContent = `${serviceCount} microservice${serviceCount > 1 ? "s" : ""} · ${path.edges.length} etape${path.edges.length > 1 ? "s" : ""}`;
+      summary.textContent = `${serviceCount} microservice${serviceCount > 1 ? "s" : ""}`;
       header.append(kicker, title, summary);
       details.append(header);
       const overview = document.createElement("section");
@@ -1665,24 +1659,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
       overview.append(overviewTitle, overviewList);
       details.append(overview);
-      const pathStepTitle = link => {
-        if (link.kind === "rest") return "Appel HTTP";
-        if (link.kind === "mongodb") return "Acces MongoDB";
-        return nodeDataById.get(link.source).kind === "microservice"
-          ? "Publication Kafka" : "Consommation Kafka";
-      };
-      path.edges.forEach((step, index) => {
-        const section = document.createElement("section");
-        const pathStepClass = step.link.kind === "kafka"
-          ? (nodeDataById.get(step.link.source).kind === "microservice" ? "is-kafka-publish" : "is-kafka-consume")
-          : `is-${step.link.kind}`;
-        section.className = `details-section path-step ${pathStepClass}`;
-        const label = document.createElement("p");
-        label.className = "path-step-label";
-        label.textContent = `Etape ${index + 1} · ${pathStepTitle(step.link)}`;
-        section.append(label);
-        details.append(section);
-      });
     }
     function showShortestPath() {
       const parsed = parsePathQuery();
