@@ -503,6 +503,61 @@ def test_render_graph_html_embeds_maven_gradle_dependency_tree() -> None:
     }
 
 
+def test_render_graph_html_embeds_openapi_and_kafka_dto_inspectors(tmp_path: Path) -> None:
+    module_path = tmp_path / "orders"
+    java_path = module_path / "src/main/java/com/example/OrderCreated.java"
+    openapi_path = module_path / "src/main/openapi.yaml"
+    java_path.parent.mkdir(parents=True)
+    openapi_path.parent.mkdir(parents=True, exist_ok=True)
+    java_path.write_text(
+        "package com.example;\n"
+        "public record OrderCreated(String id, java.math.BigDecimal amount) {}\n",
+        encoding="utf-8",
+    )
+    openapi_path.write_text(
+        "openapi: 3.0.3\ninfo: {title: Orders, version: v1}\npaths: {}\n",
+        encoding="utf-8",
+    )
+    module = DiscoveredModule(
+        "orders-service", module_path, "maven", None, "library", True, "",
+        openapi_files=("src/main/openapi.yaml",),
+    )
+    endpoints_by_service = {
+        "orders-service": [
+            make_endpoint("produce", "orders.created", "Publisher.java", system="kafka", message_type="OrderCreated"),
+        ]
+    }
+
+    document = render_graph_html(
+        endpoints_by_service,
+        build_graph(endpoints_by_service),
+        modules_by_service={"orders-service": module},
+        build_modules=[module],
+    )
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+    service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:orders-service")
+
+    assert service["openapi_contracts"][0]["spec"]["openapi"] == "3.0.3"
+    assert graph_data["kafka_dtos"] == [
+        {
+            "name": "OrderCreated",
+            "fields": [
+                {"type": "String", "name": "id"},
+                {"type": "java.math.BigDecimal", "name": "amount"},
+            ],
+            "source": "src/main/java/com/example/OrderCreated.java",
+            "producers": ["orders-service"],
+            "consumers": [],
+            "topics": ["orders.created"],
+        }
+    ]
+    assert "swagger-ui-bundle.js" in document
+    assert "function openOpenApiContract(contract)" in document
+    assert "function openDtoInspector(dtoName)" in document
+
+
 def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
     endpoints_by_service = {
         "annuaire": [

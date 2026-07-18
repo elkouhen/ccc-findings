@@ -1,10 +1,13 @@
 import math
 import json
+import os
 import re
 import subprocess
 from html import escape as html_escape
 from pathlib import Path
 from typing import TypedDict
+
+import yaml
 from xml.sax.saxutils import quoteattr
 
 from ccc_radar.ccc_bridge import CodeHitWithFindings
@@ -582,6 +585,111 @@ def _module_dependency_view(
     }
 
 
+def _openapi_contract_spec(
+    contract_path: str,
+    modules: list[DiscoveredModule],
+) -> dict[str, object] | None:
+    """Read a local OpenAPI document so Swagger UI can render it offline.
+
+    Strategy1 contracts may live in a sibling ``model-*`` module while the
+    publishing service only carries a declaration marker.  Try the module,
+    then the common workspace root; absence is normal for federated indexes.
+    """
+    source_path = Path(contract_path)
+    candidates = [source_path] if source_path.is_absolute() else []
+    module_paths = [module.path.resolve() for module in modules]
+    candidates.extend(path / source_path for path in module_paths)
+    if module_paths:
+        common_root = Path(os.path.commonpath(module_paths))
+        candidates.append(common_root / source_path)
+    for candidate in dict.fromkeys(candidates):
+        try:
+            content = candidate.read_text(encoding="utf-8", errors="replace")
+            parsed = yaml.safe_load(content)
+        except (OSError, yaml.YAMLError):
+            continue
+        if isinstance(parsed, dict) and ("openapi" in parsed or "swagger" in parsed):
+            return parsed
+    return None
+
+
+_JAVA_RECORD_RE = re.compile(r"\brecord\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<fields>.*?)\)", re.DOTALL)
+_JAVA_FIELD_RE = re.compile(
+    r"^\s*(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?"
+    r"(?P<type>[A-Za-z_$][\w.$]*(?:\s*<[^;=(){}]+>)?(?:\s*\[\])?)\s+"
+    r"(?P<name>[A-Za-z_]\w*)\s*(?:=[^;]*)?;\s*$",
+    re.MULTILINE,
+)
+
+
+def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
+    """Extract the readable fields of a Java class or record DTO.
+
+    This intentionally stays conservative: it exposes declared data members,
+    never guesses inherited or serializer-generated properties.
+    """
+    record = next((item for item in _JAVA_RECORD_RE.finditer(source) if item.group("name") == dto_name), None)
+    if record is not None:
+        fields = []
+        for component in record.group("fields").split(","):
+            pieces = component.strip().split()
+            if len(pieces) >= 2:
+                fields.append({"type": " ".join(pieces[:-1]), "name": pieces[-1]})
+        return fields
+    fields = []
+    for match in _JAVA_FIELD_RE.finditer(source):
+        field_type = match.group("type").strip()
+        if field_type in {"return", "throw", "new"}:
+            continue
+        fields.append({"type": field_type, "name": match.group("name")})
+    return fields
+
+
+def _kafka_dto_view(
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    modules: list[DiscoveredModule],
+) -> list[dict[str, object]]:
+    """Build DTO inspector data from Kafka endpoint signatures and Java files."""
+    endpoint_types = {
+        endpoint.message_type
+        for endpoints in endpoints_by_service.values()
+        for endpoint in endpoints
+        if endpoint.system == "kafka" and endpoint.message_type
+    }
+    dto_names = {value.rsplit(".", 1)[-1] for value in endpoint_types}
+    definitions: dict[str, dict[str, object]] = {
+        name: {"name": name, "fields": [], "source": None} for name in sorted(dto_names)
+    }
+    for module in modules:
+        source_root = module.path / "src" / "main" / "java"
+        if not source_root.is_dir():
+            continue
+        for java_path in source_root.glob("**/*.java"):
+            dto_name = java_path.stem
+            if dto_name not in definitions or definitions[dto_name]["source"] is not None:
+                continue
+            try:
+                source = java_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            definitions[dto_name]["fields"] = _java_dto_fields(source, dto_name)
+            definitions[dto_name]["source"] = str(java_path.relative_to(module.path))
+
+    result = []
+    for dto_name, definition in definitions.items():
+        matches = [
+            (service, endpoint)
+            for service, endpoints in endpoints_by_service.items()
+            for endpoint in endpoints
+            if endpoint.system == "kafka" and endpoint.message_type and endpoint.message_type.rsplit(".", 1)[-1] == dto_name
+        ]
+        definition["producers"] = sorted({service for service, endpoint in matches if endpoint.role == "produce"})
+        definition["consumers"] = sorted({service for service, endpoint in matches if endpoint.role == "consume"})
+        definition["topics"] = sorted({endpoint.topic for _service, endpoint in matches})
+        result.append(definition)
+    return result
+
+
 def render_graph_html(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     edges: list[GraphEdge],
@@ -621,6 +729,10 @@ def render_graph_html(
                         endpoint.message_type
                     )
     module_details = modules_by_service or {}
+    all_modules = list({
+        module.path.resolve(): module
+        for module in [*(build_modules or []), *module_details.values()]
+    }.values())
     nodes = []
     for name in ordered_services:
         endpoints = endpoints_by_service.get(name, [])
@@ -656,7 +768,15 @@ def render_graph_html(
                 "resources": resources,
                 "openapi_files": openapi_files,
                 "openapi_contracts": [
-                    {"path": path, "resources": sorted(contract_resources.get(path, set()))}
+                    {
+                        "path": path,
+                        "resources": sorted(contract_resources.get(path, set())),
+                        **(
+                            {"spec": spec}
+                            if (spec := _openapi_contract_spec(path, all_modules)) is not None
+                            else {}
+                        ),
+                    }
                     for path in openapi_files
                 ],
                 "label": "\n".join([name, *shown_apis])
@@ -760,6 +880,7 @@ def render_graph_html(
             "nodes": nodes,
             "links": links,
             "build_dependencies": _module_dependency_view(build_modules, module_dependencies),
+            "kafka_dtos": _kafka_dto_view(endpoints_by_service, all_modules),
             "indexing_issues": _indexing_issues(endpoints_by_service, edges, indexing_warnings),
         },
         ensure_ascii=False,
@@ -1088,8 +1209,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CCC Radar graph</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
   <style>
     :root { color: #172033; background: #f5f7fb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -1202,6 +1325,23 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .legend-row { display: flex; align-items: center; gap: 6px; }
     .legend-mark { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
     .legend-line { width: 18px; height: 2px; }
+    .inspector-modal[hidden] { display: none; }
+    .inspector-modal { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .52); }
+    .inspector-dialog { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(1120px, 100%); height: min(820px, 100%); overflow: hidden; border: 1px solid #cbd5e1; border-radius: 14px; background: #fff; box-shadow: 0 24px 80px rgba(15, 23, 42, .34); }
+    .inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+    .inspector-title { margin: 0; color: #172033; font-size: 16px; overflow-wrap: anywhere; }
+    .inspector-close { flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid #cbd5e1; border-radius: 6px; color: #475569; background: #fff; font-size: 20px; cursor: pointer; }
+    .inspector-body { min-height: 0; overflow: auto; padding: 18px; }
+    .inspector-body.swagger-ui { padding: 0; }
+    .dto-inspector { display: grid; gap: 16px; max-width: 720px; }
+    .dto-summary { margin: 0; color: #64748b; font-size: 13px; }
+    .dto-section { padding: 14px; border: 1px solid #e2e8f0; border-radius: 9px; background: #f8fafc; }
+    .dto-section h2 { margin: 0 0 9px; color: #475569; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .dto-fields, .dto-tags { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .dto-field { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.4fr); gap: 12px; padding: 8px 10px; border-radius: 6px; background: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .dto-field-type { color: #1d4f91; overflow-wrap: anywhere; }
+    .dto-field-name { color: #334155; font-weight: 700; overflow-wrap: anywhere; }
+    .dto-tag { display: inline-flex; width: fit-content; padding: 4px 7px; border-radius: 999px; color: #315f9b; background: #dbeafe; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -1292,6 +1432,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div id="details"><div class="details-empty">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div></div>
   <div id="graph" aria-label="Graphe des interactions"></div>
   <div id="dependency-graph" aria-label="Arbre des dependances entre microservices" hidden></div>
+  <div id="inspector-modal" class="inspector-modal" role="dialog" aria-modal="true" aria-labelledby="inspector-title" hidden>
+    <div class="inspector-dialog">
+      <header class="inspector-header"><h1 id="inspector-title" class="inspector-title"></h1><button id="inspector-close" class="inspector-close" type="button" aria-label="Fermer">×</button></header>
+      <div id="inspector-body" class="inspector-body"></div>
+    </div>
+  </div>
   <script id="graph-data" type="application/json">__GRAPH_DATA__</script>
   <script type="module">
     const graphData = JSON.parse(document.getElementById("graph-data").textContent);
@@ -1908,6 +2054,93 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       section.append(heading, list);
       details.append(section);
     }
+    const inspectorModal = document.getElementById("inspector-modal");
+    const inspectorTitle = document.getElementById("inspector-title");
+    const inspectorBody = document.getElementById("inspector-body");
+    function closeInspector() {
+      inspectorModal.hidden = true;
+      inspectorBody.replaceChildren();
+      inspectorBody.className = "inspector-body";
+    }
+    function openInspector(title) {
+      inspectorTitle.textContent = title;
+      inspectorBody.replaceChildren();
+      inspectorBody.className = "inspector-body";
+      inspectorModal.hidden = false;
+    }
+    function openOpenApiContract(contract) {
+      openInspector(`OpenAPI · ${contract.path}`);
+      if (!contract.spec || !window.SwaggerUIBundle) {
+        const message = document.createElement("p");
+        message.className = "dto-summary";
+        message.textContent = "La specification locale ou Swagger UI n'est pas disponible dans cet export.";
+        inspectorBody.append(message);
+        return;
+      }
+      inspectorBody.classList.add("swagger-ui");
+      window.SwaggerUIBundle({
+        spec: contract.spec,
+        domNode: inspectorBody,
+        deepLinking: false,
+        docExpansion: "list",
+        supportedSubmitMethods: [],
+      });
+    }
+    function appendDtoInspectorSection(title, entries, itemClass = "dto-tag") {
+      if (!entries.length) return;
+      const section = document.createElement("section");
+      section.className = "dto-section";
+      const heading = document.createElement("h2");
+      heading.textContent = title;
+      const list = document.createElement("ul");
+      list.className = "dto-tags";
+      entries.forEach(entry => {
+        const item = document.createElement("li");
+        item.className = itemClass;
+        item.textContent = entry;
+        list.append(item);
+      });
+      section.append(heading, list);
+      inspectorBody.append(section);
+    }
+    function openDtoInspector(dtoName) {
+      const dto = (graphData.kafka_dtos || []).find(item => item.name === dtoName);
+      if (!dto) return;
+      openInspector(`DTO Kafka · ${dto.name}`);
+      inspectorBody.classList.add("dto-inspector");
+      const summary = document.createElement("p");
+      summary.className = "dto-summary";
+      summary.textContent = dto.source
+        ? `Classe source : ${dto.source}`
+        : "Classe Java non retrouvee dans les sources indexees ; les relations Kafka restent disponibles.";
+      inspectorBody.append(summary);
+      const fields = dto.fields || [];
+      if (fields.length) {
+        const section = document.createElement("section");
+        section.className = "dto-section";
+        const heading = document.createElement("h2");
+        heading.textContent = "Champs declares";
+        const list = document.createElement("ul");
+        list.className = "dto-fields";
+        fields.forEach(field => {
+          const item = document.createElement("li");
+          item.className = "dto-field";
+          const type = document.createElement("span");
+          type.className = "dto-field-type";
+          type.textContent = field.type;
+          const name = document.createElement("span");
+          name.className = "dto-field-name";
+          name.textContent = field.name;
+          item.append(type, name);
+          list.append(item);
+        });
+        section.append(heading, list);
+        inspectorBody.append(section);
+      }
+      appendDtoInspectorSection("Topics", dto.topics || []);
+      appendDtoInspectorSection("Producteurs", dto.producers || []);
+      appendDtoInspectorSection("Consommateurs", dto.consumers || []);
+    }
     function selectDependencyModule(id) {
       const node = (graphData.build_dependencies?.nodes || []).find(item => item.id === id);
       if (!node) return;
@@ -2282,10 +2515,26 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           }),
         ];
         appendActionList("APIs publiees", publishedApis);
-        appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).map(contract => ({
-          label: contract.path,
-          title: "Mettre en evidence les consommateurs de ce contrat OpenAPI",
-          action: () => focusOpenApiContract(id, contract),
+        appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).flatMap(contract => [
+          ...(contract.spec ? [{
+            label: `Swagger UI · ${contract.path}`,
+            title: "Ouvrir la specification OpenAPI",
+            action: () => openOpenApiContract(contract),
+          }] : []),
+          {
+            label: `Consommateurs · ${contract.path}`,
+            title: "Mettre en evidence les consommateurs de ce contrat OpenAPI",
+            action: () => focusOpenApiContract(id, contract),
+          },
+        ]));
+        const dtoNames = (graphData.kafka_dtos || [])
+          .filter(dto => (dto.producers || []).includes(node.name) || (dto.consumers || []).includes(node.name))
+          .map(dto => dto.name)
+          .sort();
+        appendActionList("Classes DTO Kafka", dtoNames.map(dto => ({
+          label: dto,
+          title: "Afficher les champs et les relations Kafka de ce DTO",
+          action: () => openDtoInspector(dto),
         })));
         appendRelationList("APIs consommees", [...httpCalls, ...kafkaConsumptions], id, link => {
           if (link.kind === "rest") {
@@ -2315,6 +2564,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           link => nodeDataById.get(link.source).name);
         appendRelationList("Services consommateurs", edges.filter(link => link.kind === "kafka" && link.source === id), id,
           link => nodeDataById.get(link.target).name);
+        const dtoNames = [...new Set([
+          ...(node.published_message_types || []),
+          ...(node.consumed_message_types || []),
+        ])].sort();
+        appendActionList("Classes DTO Kafka", dtoNames.map(dto => ({
+          label: dto,
+          title: "Afficher les champs et les relations Kafka de ce DTO",
+          action: () => openDtoInspector(dto),
+        })));
       }
       if (node.kind === "mongodb_collection") {
         appendList("Stockee par", [node.owner]);
@@ -2411,6 +2669,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("zoom-out").addEventListener("click", () => activeRenderer().getCamera().animatedUnzoom({ duration: 180 }));
     document.getElementById("fit-view").addEventListener("click", () => activeRenderer().getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
+    document.getElementById("inspector-close").addEventListener("click", closeInspector);
+    inspectorModal.addEventListener("click", event => { if (event.target === inspectorModal) closeInspector(); });
+    window.addEventListener("keydown", event => { if (event.key === "Escape" && !inspectorModal.hidden) closeInspector(); });
     document.getElementById("show-path").addEventListener("click", showShortestPath);
     document.getElementById("show-simple-paths").addEventListener("click", showSimplePaths);
     layoutButtons.forEach((button, layout) => button.addEventListener("click", () => applyLayout(layout)));
