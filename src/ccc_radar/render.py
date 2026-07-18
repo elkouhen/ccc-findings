@@ -991,11 +991,25 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-actions { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
     .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 6px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     #show-path { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
-    #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
-    #details strong { display: block; color: #172033; font-size: 14px; }
-    #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    #details ul { margin: 0; padding-left: 18px; }
-    #details li { margin: 2px 0; }
+    #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(68vh, 560px); overflow: auto; border: 1px solid #d7dee9; border-radius: 14px; background: rgba(255, 255, 255, .97); color: #475569; font-size: 13px; line-height: 1.45; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
+    .details-header { padding: 16px; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #f8fafc, #eef5ff); }
+    .details-header.is-low { border-left: 4px solid #2563eb; }
+    .details-header.is-medium { border-left: 4px solid #d97706; }
+    .details-header.is-high { border-left: 4px solid #dc2626; }
+    .details-kicker { margin: 0 0 3px; color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .details-title { margin: 0; overflow-wrap: anywhere; color: #172033; font-size: 18px; line-height: 1.2; }
+    .details-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .detail-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 999px; color: #475569; background: #fff; font-size: 11px; font-weight: 600; }
+    .detail-badge.complexity { border-color: currentColor; }
+    .detail-badge.complexity.low { color: #2563eb; background: #eff6ff; }
+    .detail-badge.complexity.medium { color: #b45309; background: #fffbeb; }
+    .detail-badge.complexity.high { color: #dc2626; background: #fef2f2; }
+    .details-section { padding: 12px 16px; border-bottom: 1px solid #edf2f7; }
+    .details-section:last-child { border-bottom: 0; }
+    .details-section h2 { margin: 0 0 7px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .details-section ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+    .details-section li { padding: 6px 8px; border-radius: 6px; color: #334155; background: #f8fafc; overflow-wrap: anywhere; }
+    .details-empty { padding: 18px; color: #64748b; text-align: center; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
     .legend-content { display: grid; gap: 5px; }
@@ -1046,7 +1060,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <div class="legend-row"><span class="legend-line" style="background:#2563eb"></span>Acces MongoDB</div>
     </div>
   </details>
-  <div id="details">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div>
+  <div id="details"><div class="details-empty">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div></div>
   <div id="graph" aria-label="Graphe des interactions"></div>
   <script id="graph-data" type="application/json">__GRAPH_DATA__</script>
   <script>
@@ -1292,11 +1306,21 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
 
     function appendList(title, values) {
       if (!values.length) return;
+      const section = document.createElement("section");
+      section.className = "details-section";
       const heading = document.createElement("h2");
       heading.textContent = title;
       const list = document.createElement("ul");
       values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
-      details.append(heading, list);
+      section.append(heading, list);
+      details.append(section);
+    }
+    function setDetailsEmpty(message) {
+      details.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "details-empty";
+      empty.textContent = message;
+      details.append(empty);
     }
     function persistState() {
       const params = new URLSearchParams();
@@ -1427,7 +1451,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       if (parsed.error) {
         selectedId = null; relatedNodes = null; relatedEdges = null;
         renderer.refresh();
-        details.textContent = parsed.error;
+        setDetailsEmpty(parsed.error);
         pathStops.splice(0, pathStops.length);
         persistState();
         return;
@@ -1438,7 +1462,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       if (path === null) {
         selectedId = null; relatedNodes = null; relatedEdges = null;
         renderer.refresh();
-        details.textContent = "Aucun chemin oriente entre les deux microservices.";
+        setDetailsEmpty("Aucun chemin oriente entre les deux microservices.");
         persistState();
         return;
       }
@@ -1456,13 +1480,31 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         link => isVisibleRelation(link.kind) && (link.source === id || link.target === id)
       );
       details.replaceChildren();
-      const title = document.createElement("strong");
-      title.textContent = node.name;
       const kindLabel = node.kind === "kafka_topic" ? "Topic Kafka" : node.kind === "mongodb_collection" ? "Collection MongoDB" : "Microservice";
       const complexity = node.complexity;
-      const relationText = `${edges.length} relation${edges.length > 1 ? "s" : ""}`;
-      const complexityText = complexity ? ` - score ${complexity.score} (${complexity.level})` : "";
-      details.append(title, document.createTextNode(`${kindLabel}${complexityText} - ${relationText}`));
+      const header = document.createElement("header");
+      header.className = "details-header";
+      if (complexity) header.classList.add(`is-${complexity.level}`);
+      const kicker = document.createElement("p");
+      kicker.className = "details-kicker";
+      kicker.textContent = kindLabel;
+      const title = document.createElement("h1");
+      title.className = "details-title";
+      title.textContent = node.name;
+      const meta = document.createElement("div");
+      meta.className = "details-meta";
+      const relationBadge = document.createElement("span");
+      relationBadge.className = "detail-badge";
+      relationBadge.textContent = `${edges.length} relation${edges.length > 1 ? "s" : ""}`;
+      meta.append(relationBadge);
+      if (complexity) {
+        const scoreBadge = document.createElement("span");
+        scoreBadge.className = `detail-badge complexity ${complexity.level}`;
+        scoreBadge.textContent = `Complexite : ${complexity.level} (${complexity.score})`;
+        meta.append(scoreBadge);
+      }
+      header.append(kicker, title, meta);
+      details.append(header);
       if (node.kind === "microservice") appendList("APIs exposees", node.resources);
       if (node.kind === "kafka_topic") {
         appendList("Types publies", node.published_message_types);
@@ -1496,7 +1538,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     function reset() {
       selectedId = null; relatedNodes = null; relatedEdges = null;
       renderer.refresh();
-      details.textContent = "Selectionnez un noeud pour isoler ses relations et afficher ses APIs.";
+      setDetailsEmpty("Selectionnez un noeud pour isoler ses relations et afficher ses APIs.");
       search.value = "";
       clearPathControls();
       persistState();
