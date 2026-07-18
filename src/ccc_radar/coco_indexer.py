@@ -23,6 +23,7 @@ def index_repo_with_cocoindex(
     embedder: EmbedderLike,
     full: bool = False,
     disabled: frozenset[str] = frozenset(),
+    include_semgrep_findings: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> IndexReport:
     """Index findings plus code chunks using the experimental target-state path."""
@@ -34,6 +35,7 @@ def index_repo_with_cocoindex(
         full=full,
         index_code_chunks=True,
         disabled=disabled,
+        include_semgrep_findings=include_semgrep_findings,
         progress=progress,
     )
     store.set_meta("index_engine", ENGINE_META_VALUE)

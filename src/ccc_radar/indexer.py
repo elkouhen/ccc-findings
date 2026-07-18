@@ -302,6 +302,7 @@ def index_repo(
     full: bool = False,
     index_code_chunks: bool = False,
     disabled: frozenset[str] = frozenset(),
+    include_semgrep_findings: bool = True,
     extra_files: list[str] | None = None,
     topic_strategy: str = "default",
     progress: ProgressCallback | None = None,
@@ -397,22 +398,28 @@ def index_repo(
     if changed:
         endpoints_removed += store.count_endpoints_for_paths(changed)
         if "semgrep" not in disabled:
-            _report_progress(progress, f"→ Indexation : scan Semgrep sur {len(changed)} fichier(s)...")
+            scan_scope = "inventaire et findings" if include_semgrep_findings else "inventaire"
+            _report_progress(
+                progress,
+                f"→ Indexation : scan Semgrep d'{scan_scope} sur {len(changed)} fichier(s)...",
+            )
             _trace("semgrep.begin", files=len(changed))
-            findings_removed += store.count_findings_for_paths(changed)
 
-            # Un seul scan Semgrep pour findings (K8/`default`) et règles
-            # d'inventaire d'endpoints (K2/K11) mélangées dans config.rules ;
-            # chaque parseur filtre ce qui le concerne sur la même sortie
-            # (BACKLOG-11 A1) — pas de min_severity pour les endpoints (K8 CA2).
+            # Un seul scan Semgrep pour les règles d'inventaire d'endpoints
+            # (K2/K11) et, sur demande, les findings (K8/`default`) mélangés
+            # dans config.rules. Chaque parseur filtre ce qui le concerne sur
+            # la même sortie (BACKLOG-11 A1) ; les endpoints ne dépendent donc
+            # pas de l'option de persistance des findings.
             raw = invoke_semgrep_raw(repo_root, config, files=changed)
             _trace("semgrep.end", bytes=len(raw))
-            min_index = SEVERITY_ORDER.index(config.min_severity)
-            findings = [
-                f
-                for f in parse_semgrep_json(raw, repo_root)
-                if SEVERITY_ORDER.index(f.severity) >= min_index
-            ]
+            if include_semgrep_findings:
+                findings_removed += store.count_findings_for_paths(changed)
+                min_index = SEVERITY_ORDER.index(config.min_severity)
+                findings = [
+                    f
+                    for f in parse_semgrep_json(raw, repo_root)
+                    if SEVERITY_ORDER.index(f.severity) >= min_index
+                ]
             endpoints = parse_semgrep_endpoints(raw, repo_root)
         else:
             _report_progress(
@@ -441,7 +448,7 @@ def index_repo(
             "→ Indexation : écriture des résultats "
             f"({len(findings)} finding(s), {len(endpoints)} endpoint(s)).",
         )
-        if "semgrep" not in disabled:
+        if "semgrep" not in disabled and include_semgrep_findings:
             store.replace_findings_for_files(changed, findings)
         store.replace_endpoints_for_files(changed, endpoints)
         _trace("store.endpoints_written", findings=len(findings), endpoints=len(endpoints))

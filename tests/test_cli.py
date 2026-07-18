@@ -270,6 +270,35 @@ def test_index_passes_topic_strategy_to_manual_indexer(
     assert captured["topic_strategy"] == "strategy1"
 
 
+def test_index_semgrep_option_controls_only_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cccr").mkdir()
+    (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules.yml']\n")
+    calls: list[dict[str, object]] = []
+
+    def fake_index_repo(*args: object, **kwargs: object) -> IndexReport:
+        calls.append(kwargs)
+        return IndexReport(1, 0, 0, 0, 0, 0, 0)
+
+    monkeypatch.setattr("ccc_radar.cli.resolve_embedding_model", lambda model: (model, None))
+    monkeypatch.setattr("ccc_radar.cli.make_embedder", lambda _model: object())
+    monkeypatch.setattr("ccc_radar.cli.index_repo", fake_index_repo)
+
+    assert runner.invoke(app, ["index"]).exit_code == 0
+    assert calls[-1]["include_semgrep_findings"] is False
+    assert "semgrep" not in calls[-1]["disabled"]
+
+    assert runner.invoke(app, ["index", "--semgrep"]).exit_code == 0
+    assert calls[-1]["include_semgrep_findings"] is True
+    assert "semgrep" not in calls[-1]["disabled"]
+
+    assert runner.invoke(app, ["index", "--disable", "semgrep"]).exit_code == 0
+    assert calls[-1]["include_semgrep_findings"] is False
+    assert "semgrep" in calls[-1]["disabled"]
+
+
 def test_init_without_semgrep_config_installs_all_skill_packs_when_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1286,7 +1315,7 @@ class Application {
     (tmp_path / ".cccr").mkdir()
     (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules/rules.yml']\n")
 
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--disable", "semgrep"])
     assert index_result.exit_code == 0
 
     graph_result = runner.invoke(app, ["export", "microservices", "--json"])
@@ -1303,6 +1332,64 @@ class Application {
         ("kafka_consume", "orders.created", "payment-service", "orders.created"),
     }
     assert data["outbound_calls_in_consumers"] == []
+
+
+def test_export_microservices_keeps_configured_http_dependency_without_target_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    modules = [
+        DiscoveredModule(
+            name=name,
+            path=tmp_path / name,
+            build_system="maven",
+            version=None,
+            kind="library",
+            starts_application=True,
+            configuration_example="",
+        )
+        for name in ("caller-service", "domain-annuaire")
+    ]
+    client = MessageEndpoint(
+        id=compute_endpoint_id("call", "ANY <dynamic>", "caller/RestClientConfig.java", 4, 4),
+        role="call",
+        system="rest",
+        topic="ANY <dynamic>",
+        topic_dynamic=True,
+        source="code",
+        framework="configured-api-client-configuration",
+        path="caller/RestClientConfig.java",
+        start_line=4,
+        end_line=4,
+        snippet="cccr-api-domain:domain-annuaire",
+        module="caller-service",
+    )
+    with Store(tmp_path) as store:
+        store.replace_modules(modules)
+        store.replace_endpoints_for_files([client.path], [client])
+
+    result = runner.invoke(app, ["export", "microservices", "--json"])
+
+    assert result.exit_code == 0
+    graph = json.loads(result.output)
+    assert graph["services"] == ["caller-service", "domain-annuaire"]
+    assert graph["edges"] == [
+        {
+            "kind": "rest",
+            "from_node": "caller-service",
+            "from_kind": "microservice",
+            "to_node": "domain-annuaire",
+            "to_kind": "microservice",
+            "label": "domain-annuaire: API",
+            "from_site": {
+                "path": "caller/RestClientConfig.java",
+                "start_line": 4,
+                "end_line": 4,
+                "topic": "ANY <dynamic>",
+            },
+            "to_site": None,
+        }
+    ]
 
 
 def test_microservices_lists_only_runtime_services(
@@ -1585,7 +1672,7 @@ public class BillingServiceMain {
     (tmp_path / ".cccr").mkdir()
     (tmp_path / ".cccr" / "config.yml").write_text("rules: ['rules/rules.yml']\n")
 
-    index_result = runner.invoke(app, ["index"])
+    index_result = runner.invoke(app, ["index", "--disable", "semgrep"])
     assert index_result.exit_code == 0
 
     export_result = runner.invoke(app, ["export", "microservices", "--json"])

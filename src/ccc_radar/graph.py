@@ -16,7 +16,7 @@ class GraphEdge:
     from_service: str
     to_service: str
     from_endpoint: MessageEndpoint  # site d'appel (call) ou de production (produce)
-    to_endpoint: MessageEndpoint  # site exposé (serve) ou de consommation (consume)
+    to_endpoint: MessageEndpoint | None  # site exposé (serve) ou de consommation (consume)
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,17 @@ def qualified_rest_resource(service_name: str, resource: str) -> str:
     remain distinct facts.
     """
     return f"{service_name}: {resource}"
+
+
+def graph_edge_rest_resource(edge: GraphEdge) -> str:
+    """Retourne la ressource REST d'une arête, ou l'API logique du service.
+
+    Une dépendance issue de ``Rest*Config*`` peut désigner un microservice sans
+    qu'une ressource ``serve`` ait été détectée sur celui-ci. Dans ce cas,
+    ``to_endpoint`` est absent mais l'arête A → B reste un fait utile.
+    """
+    resource = edge.to_endpoint.topic if edge.to_endpoint is not None else "API"
+    return qualified_rest_resource(edge.to_service, resource)
 
 
 def _trace(stage: str, **fields: object) -> None:
@@ -269,6 +280,26 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
                     continue
                 seen.add(key)
                 edges.append(GraphEdge("rest", call_service, serve_service, effective_call, serve))
+
+    # Une configuration Rest*Config* établit une dépendance A → B même si B
+    # n'expose aucune ressource REST détectée. Une arête spécifique à une
+    # ressource, déjà ajoutée ci-dessus, reste plus précise et suffit alors.
+    resolved_configured_calls = {
+        (edge.from_endpoint.id, edge.to_service)
+        for edge in edges
+        if edge.kind == "rest" and configured_api_client_domain(edge.from_endpoint) is not None
+    }
+    for call_service, call in calls:
+        domain = configured_api_client_domain(call)
+        if domain is None or domain not in endpoints_by_service or call_service == domain:
+            continue
+        if (call.id, domain) in resolved_configured_calls:
+            continue
+        key = ("rest", call_service, domain, "configured-api", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append(GraphEdge("rest", call_service, domain, call, None))
 
     for produce_service, produce in produces:
         for consume_service, consume in consumes:

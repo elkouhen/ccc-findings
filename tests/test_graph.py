@@ -3,6 +3,7 @@ from pathlib import Path
 from ccc_radar.graph import (
     build_graph,
     find_outbound_calls_in_consumers,
+    graph_edge_rest_resource,
     group_endpoints_by_module,
     paths_match,
     qualified_rest_resource,
@@ -283,6 +284,25 @@ def test_build_graph_uses_domain_from_rest_configuration_to_disambiguate_targets
         "GET /directory/{id}",
         "GET /directory/search",
     }
+
+
+def test_build_graph_keeps_configured_client_dependency_without_target_resource() -> None:
+    call = make_endpoint(
+        "call",
+        "ANY <dynamic>",
+        "caller/RestClientConfig.java",
+        snippet="cccr-api-domain:domain-annuaire",
+    )
+
+    edges = build_graph({"caller-service": [call], "domain-annuaire": []})
+
+    assert len(edges) == 1
+    assert (edges[0].from_service, edges[0].to_service) == (
+        "caller-service",
+        "domain-annuaire",
+    )
+    assert edges[0].to_endpoint is None
+    assert graph_edge_rest_resource(edges[0]) == "domain-annuaire: API"
     assert all(not edge.from_endpoint.topic_dynamic for edge in edges)
 
 

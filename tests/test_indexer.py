@@ -550,6 +550,31 @@ def test_index_repo_populates_endpoints_and_findings_from_the_same_scan(
 
 
 @pytest.mark.integration
+def test_index_repo_can_inventory_semgrep_endpoints_without_persisting_findings(
+    endpoint_repo_copy: Path,
+) -> None:
+    config = make_config(rules=["rules/rules.yml"])
+
+    with Store(endpoint_repo_copy) as store:
+        report = index_repo(
+            endpoint_repo_copy,
+            config,
+            store,
+            FakeEmbedder(),
+            include_semgrep_findings=False,
+        )
+        endpoints = store.all_endpoints()
+        findings = store.all_findings()
+
+    assert report.findings_added == 0
+    assert findings == []
+    assert {(endpoint.role, endpoint.system) for endpoint in endpoints} == {
+        ("consume", "kafka"),
+        ("call", "rest"),
+    }
+
+
+@pytest.mark.integration
 def test_index_repo_second_run_without_changes_leaves_endpoints_untouched(
     endpoint_repo_copy: Path,
 ) -> None:

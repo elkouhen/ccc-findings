@@ -9,7 +9,7 @@ from xml.sax.saxutils import quoteattr
 
 from ccc_radar.ccc_bridge import CodeHitWithFindings
 from ccc_radar.flow import FlowResult
-from ccc_radar.graph import GraphEdge, OutboundCallInConsumer, qualified_rest_resource
+from ccc_radar.graph import GraphEdge, OutboundCallInConsumer, graph_edge_rest_resource
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import DiscoveredModule, ModuleDependency
 from ccc_radar.search import SearchHit, Summary, get_context
@@ -250,9 +250,13 @@ def _graph_edges(edges: list[GraphEdge]) -> list[GraphEdgeInfo]:
                     from_kind="microservice",
                     to_node=edge.to_service,
                     to_kind="microservice",
-                    label=qualified_rest_resource(edge.to_service, edge.to_endpoint.topic),
+                    label=graph_edge_rest_resource(edge),
                     from_site=_endpoint_to_site(edge.from_endpoint),
-                    to_site=_endpoint_to_site(edge.to_endpoint),
+                    to_site=(
+                        _endpoint_to_site(edge.to_endpoint)
+                        if edge.to_endpoint is not None
+                        else None
+                    ),
                 )
             )
             continue
@@ -750,7 +754,7 @@ def render_graph_likec4(
                 "http",
                 service_ids[edge.from_service],
                 service_ids[edge.to_service],
-                qualified_rest_resource(edge.to_service, edge.to_endpoint.topic),
+                graph_edge_rest_resource(edge),
             ))
             continue
         topic_id = topic_ids[edge.from_endpoint.topic]
@@ -1744,7 +1748,7 @@ def _visual_graph_edges(
     for edge in edges:
         visual_edges: list[tuple[str, str, str, str, str]] = []
         if edge.kind == "rest":
-            label = qualified_rest_resource(edge.to_service, edge.to_endpoint.topic)
+            label = graph_edge_rest_resource(edge)
             if edge.from_endpoint.framework == "spring-cloud-gateway":
                 match = re.search(r"Path=([^;]+)", edge.from_endpoint.snippet)
                 if match is not None:

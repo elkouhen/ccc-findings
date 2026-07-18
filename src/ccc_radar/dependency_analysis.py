@@ -9,6 +9,7 @@ from ccc_radar.graph import (
     build_graph,
     configured_api_client_domain,
     find_outbound_calls_in_consumers,
+    graph_edge_rest_resource,
     qualified_rest_resource,
 )
 from ccc_radar.models import MessageEndpoint
@@ -138,7 +139,7 @@ def build_dependency_graph(
                 source,
                 target,
                 "http",
-                qualified_rest_resource(edge.to_service, edge.to_endpoint.topic),
+                graph_edge_rest_resource(edge),
             )
 
     for service, endpoint in _effective_kafka_endpoints(endpoints_by_service):

@@ -261,12 +261,15 @@ dependencies whose two modules are present locally. It is consumed solely by
      raw = invoke_semgrep_raw(repo_root, config, files=changed)  — A SINGLE
        Semgrep scan, whether config.rules mixes findings rules and endpoint
        inventory rules (BACKLOG-11 A1) or not.
-     findings = parse_semgrep_json(raw, repo_root), filtered by min_severity
-       (the filter used to live in run_semgrep, now applied here so `raw` can be
-       shared with endpoints without rescanning).
+     when `include_semgrep_findings` is enabled (CLI: `--semgrep`), findings =
+       parse_semgrep_json(raw, repo_root), filtered by min_severity (the filter
+       used to live in run_semgrep, now applied here so `raw` can be shared with
+       endpoints without rescanning). Otherwise findings already stored for
+       changed files are kept.
      endpoints = parse_semgrep_endpoints(raw, repo_root) + infer_framework_endpoints(...)
        — no min_severity filter (K8 AC2: those are not findings).
-     store.replace_findings_for_files(changed, findings)  — DELETE then INSERT,
+     when `include_semgrep_findings` is enabled,
+       store.replace_findings_for_files(changed, findings) — DELETE then INSERT,
        the only update mechanism (natively handles fixed findings).
      store.replace_endpoints_for_files(changed, endpoints)  — same mechanism.
      set_file_hash for each file in changed.

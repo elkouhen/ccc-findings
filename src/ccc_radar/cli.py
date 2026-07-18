@@ -932,8 +932,8 @@ def init(
 
     typer.echo(f"Configuration créée : {path}")
     typer.echo(
-        "Note : `cccr index` n'exécute pas Semgrep par défaut. "
-        "Passez `--semgrep` pour peupler les findings de sécurité et les règles d'inventaire Semgrep."
+        "Note : `cccr index` exécute les règles Semgrep d'inventaire des intégrations. "
+        "Passez `--semgrep` pour peupler aussi les findings de sécurité."
     )
 
 
@@ -968,18 +968,17 @@ def index_cmd(
         False,
         "--semgrep/--no-semgrep",
         help=(
-            "Active le scan Semgrep : findings de sécurité et inventaire "
-            "complémentaire via règles Semgrep. Désactivé par défaut (plus rapide) ; "
-            "passez --semgrep pour l'activer."
+            "Indexe les findings de sécurité issus de Semgrep. Les règles Semgrep "
+            "d'inventaire des intégrations sont exécutées indépendamment."
         ),
     ),
 ) -> None:
     """Indexe le code et les findings du projet (incrémental par défaut).
 
-    Le scan Semgrep est désactivé par défaut : `cccr index` inventorie le
-    code, les modules et les endpoints détectables localement sans exécuter
-    Semgrep. Ajoutez `--semgrep` pour peupler aussi les findings de sécurité
-    et les règles d'inventaire Semgrep.
+    `cccr index` exécute les règles Semgrep d'inventaire des intégrations,
+    ainsi que les détections locales. Ajoutez `--semgrep` pour indexer aussi
+    les findings de sécurité. Utilisez `--disable semgrep` pour désactiver
+    complètement l'exécution Semgrep.
 
     Exemples : `cccr index`, `cccr index --semgrep`, `cccr index --full`,
     `cccr index --topic-strategy strategy1`,
@@ -1001,9 +1000,10 @@ def index_cmd(
             err=True,
         )
         raise typer.Exit(code=2)
-    # Semgrep est désormais opt-in : désactivé par défaut, sauf si `--semgrep`
-    # est passé (il l'emporte alors sur un éventuel `--disable semgrep`).
-    disabled = (disabled - {"semgrep"}) if semgrep else (disabled | {"semgrep"})
+    # `--semgrep` pilote uniquement les findings ; il l'emporte toutefois sur
+    # `--disable semgrep`, car Semgrep doit alors être exécuté pour les calculer.
+    if semgrep:
+        disabled = disabled - {"semgrep"}
 
     try:
         config = load_config(repo_root)
@@ -1038,12 +1038,13 @@ def index_cmd(
                 report = index_repo_with_cocoindex(
                     repo_root, config, store, embedder, full=full,
                     progress=_echo_index_progress, disabled=disabled,
+                    include_semgrep_findings=semgrep,
                 )
             else:
                 report = index_repo(
                     repo_root, config, store, embedder, full=full, progress=_echo_index_progress,
                     disabled=disabled, extra_files=explicit_manifests,
-                    topic_strategy=topic_strategy,
+                    topic_strategy=topic_strategy, include_semgrep_findings=semgrep,
                 )
                 store.set_meta("index_engine", "manual")
             _trace_index("store.close.begin")
@@ -1194,7 +1195,10 @@ def _load_microservice_graph(
         services = discover_maven_services(workspace)
         federation = load_federation(services)
         warnings.extend(federation.warnings)
-        services_by_name = federation.endpoints_by_service
+        services_by_name = dict(federation.endpoints_by_service)
+        for service, module in federation.modules_by_service.items():
+            if module.starts_application:
+                services_by_name.setdefault(service, [])
         findings_by_service = federation.findings_by_service
         if dependency_warning := dependency_federation_warning(services, federation):
             warnings.append(dependency_warning)
@@ -1213,13 +1217,19 @@ def _load_microservice_graph(
         cross_module_data_available = True
     else:
         grouped_endpoints = group_endpoints_by_module(endpoints)
-        if grouped_endpoints:
-            services_by_name = grouped_endpoints
+        indexed_microservices = {
+            module.name for module in indexed_modules if module.starts_application
+        }
+        if grouped_endpoints or indexed_microservices:
+            services_by_name = {
+                service: grouped_endpoints.get(service, [])
+                for service in sorted(set(grouped_endpoints) | indexed_microservices)
+            }
             findings_by_service = {
                 service: [finding for finding in findings if finding.module == service]
                 for service in services_by_name
             }
-            edges = build_graph(grouped_endpoints)
+            edges = build_graph(services_by_name)
             if include_mongodb:
                 modules_by_service = {
                     module.name: module

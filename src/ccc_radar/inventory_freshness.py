@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v13-configured-http-strategy1"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v14-semgrep-endpoints-default"
 
 
 def current_endpoint_inventory_signature() -> str:
