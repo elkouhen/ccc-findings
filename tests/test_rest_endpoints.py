@@ -416,6 +416,74 @@ def test_configured_api_client_invocation_is_inferred_without_semgrep(tmp_path: 
     assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
 
 
+def test_configured_api_client_bean_declares_dependency_without_resolved_call(
+    tmp_path: Path,
+) -> None:
+    """Un @Bean createInternalClientApi seul (sans site d'appel résolu) émet un
+    endpoint porteur du domaine : la dépendance A→B en découlera même si le type
+    de l'API consommée reste indéterminé."""
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestConfiguration {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    rel = config.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+
+    assert len(endpoints) == 1
+    bean = endpoints[0]
+    assert bean.framework == "configured-api-client-bean"
+    assert bean.topic == "ANY <dynamic>"
+    assert bean.module == "caller-service"
+    assert "cccr-api-domain:domain-annuaire" in bean.snippet
+
+
+def test_configured_api_client_bean_dropped_when_invocation_resolves(tmp_path: Path) -> None:
+    """Quand un appel résolu couvre déjà le domaine, l'endpoint « bean » est
+    retiré pour éviter des arêtes A→B redondantes dans le graphe d'interactions."""
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestConfiguration {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    client = tmp_path / "src" / "main" / "java" / "OrderClient.java"
+    client.write_text(
+        "interface AnnuaireApi { Object getDirectory(); }\n"
+        "class OrderClient {\n"
+        "  private final AnnuaireApi annuaireApi;\n"
+        "  OrderClient(AnnuaireApi annuaireApi) { this.annuaireApi = annuaireApi; }\n"
+        "  Object get() { return annuaireApi.getDirectory(); }\n"
+        "}\n"
+    )
+
+    endpoints = infer_framework_endpoints(tmp_path)
+
+    frameworks = {endpoint.framework for endpoint in endpoints}
+    assert "configured-api-client" in frameworks
+    assert "configured-api-client-bean" not in frameworks
+
+
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:
     source = tmp_path / "src" / "main" / "java" / "OrderListener.java"
     source.parent.mkdir(parents=True)

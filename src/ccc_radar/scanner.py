@@ -1460,6 +1460,12 @@ def _infer_configured_api_client_endpoints(
     dédiées à RestTemplate/WebClient. Leur méthode HTTP et leur route sont
     récupérées plus tard sur le microservice hôte ; l'appel local est donc
     volontairement `ANY <dynamic>` à ce stade, mais porte le domaine résolu.
+
+    Émet aussi un endpoint par déclaration `@Bean` de `RestConfiguration` : la
+    bean déclare seule, et de façon non ambiguë, le microservice cible (domaine
+    passé à `createInternalClientApi`). Cela garantit la dépendance A→B même
+    quand aucun site d'appel ne permet de résoudre le type de l'API — voir
+    `_configured_api_client_bean_endpoints`.
     """
     parsed = java_parser.parse_java(str(repo_root), rel_path)
     if parsed is None:
@@ -1469,6 +1475,8 @@ def _infer_configured_api_client_endpoints(
         return []
 
     endpoints: dict[str, MessageEndpoint] = {}
+    for bean_endpoint in _configured_api_client_bean_endpoints(repo_root, rel_path, source, root):
+        endpoints[bean_endpoint.id] = bean_endpoint
     for invocation in java_parser.walk(root):
         if invocation.type != "method_invocation":
             continue
@@ -1503,6 +1511,64 @@ def _infer_configured_api_client_endpoints(
             domain=domain,
         )
     return list(endpoints.values())
+
+
+def _configured_api_client_bean_endpoints(
+    repo_root: Path, rel_path: str, source: bytes, root
+) -> list[MessageEndpoint]:
+    """Une déclaration `@Bean` de `RestConfiguration` vaut preuve de dépendance.
+
+    Chaque bean `createInternalClientApi(DOMAINE, Api.class)` déclare, sans
+    ambiguïté, le microservice cible (le domaine). On émet donc un endpoint
+    d'appel `ANY <dynamic>` marqué du domaine pour chaque bean non ambigu :
+    la dépendance A→B sera émise par le graphe de dépendances même si aucun
+    site d'appel ne permet de résoudre le type de l'API consommée.
+
+    La déduplication dans `infer_framework_endpoints` retire ensuite les beans
+    déjà couverts par un appel résolu, afin de ne pas surcharger le graphe
+    d'interactions d'arêtes A→B redondantes.
+    """
+    endpoints: list[MessageEndpoint] = []
+    microservice = _rest_client_microservice_name(
+        _rest_configuration_module_root(repo_root, rel_path)
+    )
+    for type_node in java_parser.type_declarations(root):
+        if java_parser.declaration_name(type_node, source) != "RestConfiguration":
+            continue
+        for method_node in java_parser.walk(type_node):
+            if method_node.type != "method_declaration":
+                continue
+            if not any(
+                java_parser.annotation_name(annotation, source) == "Bean"
+                for annotation in java_parser.annotations_of(method_node)
+            ):
+                continue
+            domain = _bean_api_domain(method_node, source, microservice)
+            if domain is None:
+                continue
+            bean_snippet = java_parser.node_text(source, method_node)
+            endpoints.append(
+                _build_endpoint(
+                    repo_root,
+                    rel_path,
+                    method_node.start_point.row + 1,
+                    method_node.end_point.row + 1,
+                    "call",
+                    "rest",
+                    "ANY <dynamic>",
+                    "configured-api-client-bean",
+                    f"{bean_snippet}\ncccr-api-domain:{domain}",
+                    topic_dynamic=True,
+                )
+            )
+            _trace_rest_client(
+                "rest_client.search.bean_dependency",
+                microservice=microservice,
+                path=rel_path,
+                line=method_node.start_point.row + 1,
+                domain=domain,
+            )
+    return endpoints
 
 
 def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
@@ -2127,7 +2193,48 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_openapi_endpoints(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint
+    _drop_bean_endpoints_covered_by_resolved_calls(inferred)
     return list(inferred.values())
+
+
+_CONFIGURED_DOMAIN_MARKER_RE = re.compile(r"cccr-api-domain:([a-z0-9][a-z0-9-]*)", re.IGNORECASE)
+
+
+def _configured_domain_marker(snippet: str) -> str | None:
+    """Domaine tamponné `cccr-api-domain:` dans un snippet, normalisé en
+    minuscules. Reflète `graph.configured_api_client_domain` sans importer le
+    graphe ici."""
+    match = _CONFIGURED_DOMAIN_MARKER_RE.search(snippet)
+    return match.group(1).lower() if match is not None else None
+
+
+def _drop_bean_endpoints_covered_by_resolved_calls(
+    endpoints: dict[str, MessageEndpoint],
+) -> None:
+    """Retire les endpoints « bean » qu'un appel résolu couvre déjà.
+
+    Un bean `_configured_api_client_bean_endpoints` ne doit combler que les
+    domaines qu'aucun site d'appel résolu (Semgrep ou invocation typée) ne
+    prouve : sinon le graphe d'interactions dupliquerait les arêtes A→B. La
+    dépendance, elle, est idempotente (une seule arête A→B par domaine).
+    """
+    covered: dict[str | None, set[str]] = {}
+    for endpoint in endpoints.values():
+        if endpoint.framework == "configured-api-client-bean":
+            continue
+        if endpoint.system != "rest" or endpoint.role != "call":
+            continue
+        domain = _configured_domain_marker(endpoint.snippet)
+        if domain is not None:
+            covered.setdefault(endpoint.module, set()).add(domain)
+    redundant = [
+        identifier
+        for identifier, endpoint in endpoints.items()
+        if endpoint.framework == "configured-api-client-bean"
+        and _configured_domain_marker(endpoint.snippet) in covered.get(endpoint.module, set())
+    ]
+    for identifier in redundant:
+        del endpoints[identifier]
 
 
 _STRATEGY1_PRODUCER_RE = re.compile(r"\bgetTopics\s*\(\s*\)\s*\.\s*get([A-Z]\w*)\s*\(\s*\)")

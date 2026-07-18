@@ -74,6 +74,38 @@ def test_configured_client_relation_emitted_when_host_in_endpoints() -> None:
     assert not [e for e in result["edges"] if e["kind"] == "calls_external"]
 
 
+def test_configured_client_dependency_from_bean_declaration_without_resolved_type() -> None:
+    """La déclaration du bean (RestConfiguration) suffit à établir A→B, même si
+    aucun site d'appel ne résout le type de l'API consommée.
+
+    Un seul endpoint « bean » porteur du domaine, aucun appel résolu : on veut
+    néanmoins la dépendance service A consomme API service B.
+    """
+    bean_declaration = make_endpoint(
+        "call",
+        "ANY <dynamic>",
+        "caller/RestConfiguration.java",
+        module="caller-service",
+        snippet=(
+            "return webClientHelper.createInternalClientApi("
+            "ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);"
+            "\ncccr-api-domain:annuaire"
+        ),
+        topic_dynamic=True,
+    )
+
+    result = build_dependency_graph(
+        {"caller-service": [bean_declaration]},
+        {"annuaire": _module("annuaire")},
+    )
+
+    client_edges = _client_calls(result["edges"])
+    assert len(client_edges) == 1
+    assert client_edges[0]["source"] == "microservice:caller-service"
+    assert client_edges[0]["target"] == "microservice:annuaire"
+    assert result["warnings"] == []
+
+
 def test_configured_client_relation_when_host_known_via_modules_only() -> None:
     caller = make_endpoint(
         "call",
