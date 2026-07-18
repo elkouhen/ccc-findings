@@ -405,7 +405,7 @@ def render_graph_drawio(
     node_dimensions = {
         ("microservice", name): (node_width, _drawio_service_height(service_resources[name]))
         for name in ordered_services
-    } | {("kafka_topic", name): (220, 60) for name in kafka_topics} | {
+    } | {("kafka_topic", name): (140, 140) for name in kafka_topics} | {
         ("mongodb_collection", identity): (220, 60) for identity in mongo_labels
     }
     # The graph model remains detailed, but the visual export bundles calls
@@ -423,7 +423,7 @@ def render_graph_drawio(
             label = _drawio_service_label(name, service_resources[name])
             width, height = node_dimensions[(node_kind, name)]
             style = (
-                "rounded=1;arcSize=14;whiteSpace=wrap;html=1;"
+                "shape=hexagon;perimeter=hexagonPerimeter;whiteSpace=wrap;html=1;"
                 "fillColor=#eaf2ff;strokeColor=#4f79b5;strokeWidth=2;"
                 "fontColor=#183b66;fontSize=14;fontStyle=1;shadow=1;"
                 "spacingLeft=12;spacingRight=12;"
@@ -432,7 +432,7 @@ def render_graph_drawio(
             label = f"<b>{html_escape(name)}</b>"
             width, height = node_dimensions[(node_kind, name)]
             style = (
-                "shape=cylinder3;boundedLbl=1;whiteSpace=wrap;html=1;"
+                "shape=ellipse;aspect=fixed;boundedLbl=1;whiteSpace=wrap;html=1;"
                 "fillColor=#fff3df;strokeColor=#d18b20;strokeWidth=2;"
                 "fontColor=#744a0b;fontSize=13;"
             )
@@ -1217,7 +1217,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
       <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Graphe</button>
-      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Vue en couches des dependances entre microservices">Dépendances</button>
+      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Dépendances</button>
       <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Indexation</button>
       <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Chemins analyses</button>
     </div>
@@ -1280,7 +1280,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible (tiers inferieur)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne (tiers central)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee (tiers superieur)</div>
-      <div class="legend-row"><span class="legend-mark" style="width:14px;border-radius:3px;background:#64748b"></span>Microservice</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
       <div class="legend-row"><span class="legend-mark" style="width:14px;border-radius:50% / 26%;background:#64748b"></span>Collection MongoDB</div>
       <div class="legend-row"><span class="legend-line" style="background:#D55E00"></span>Appel HTTP</div>
@@ -1415,13 +1415,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        vec2 bounds = vec2(.42, .30);
-        float radius = .075;
-        vec2 corner = abs(point) - (bounds - radius);
-        float distance = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - radius;
+        float shape = max(abs(point.x) * .866025 + abs(point.y) * .5, abs(point.y));
+        float distance = shape - .43;
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
-        float border = smoothstep(-.075, -.016, distance);
+        float border = smoothstep(.33, .42, shape);
         vec3 fill = vec3(.98, .99, 1.0);
         gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
@@ -2765,7 +2763,7 @@ def render_graph_d2(
         lines.extend(
             [
                 f"{node_id}: {{",
-                "  shape: rectangle",
+                "  shape: hexagon",
                 '  style.fill: "#dae8fc"',
                 '  style.stroke: "#6c8ebf"',
             ]
@@ -2783,7 +2781,7 @@ def render_graph_d2(
             [
                 f"{node_id}: {{",
                 f'  label: "{_d2_escape(name)}"',
-                "  shape: rectangle",
+                "  shape: circle",
                 '  style.fill: "#ffe6cc"',
                 '  style.stroke: "#d79b00"',
                 "}",

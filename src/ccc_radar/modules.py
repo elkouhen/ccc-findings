@@ -128,9 +128,19 @@ _FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
 _JAVA_STRING_LITERAL_RE = re.compile(r'^\s*"((?:\\.|[^"\\])*)"\s*$')
 
 
-def _is_test_module(name: str) -> bool:
-    """Whether a build module is dedicated to tests and must not be indexed."""
-    return "test" in name.casefold()
+def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
+    """Whether a build module is dedicated to tests and must not be indexed.
+
+    The artifact name is not always explicit: a module in ``contract-tests``
+    may still publish an artifact named ``contract-api``.  Inspect both the
+    build name and every component of its path relative to the workspace,
+    without considering the workspace path itself.
+    """
+    try:
+        path_parts = module_dir.resolve().relative_to(root.resolve()).parts
+    except ValueError:
+        path_parts = (module_dir.name,)
+    return any("test" in value.casefold() for value in (name, *path_parts))
 
 
 def _trace(stage: str, **fields: object) -> None:
@@ -644,7 +654,7 @@ def discover_modules(
         artifact_id, _, packaging = parse_pom(pom_path)
         _trace("module.maven.parsed", pom=pom_path, artifact=artifact_id, packaging=packaging)
         module_name = artifact_id or module_dir.name
-        if _is_test_module(module_name):
+        if _is_test_module(module_name, module_dir, root):
             _trace("module.maven.skipped_test", pom=pom_path, artifact=module_name)
             continue
         if use_tree_sitter:
@@ -675,7 +685,7 @@ def discover_modules(
         module_dir = module_dir.resolve()
         if module_dir in seen_paths:
             continue
-        if _is_test_module(name):
+        if _is_test_module(name, module_dir, root):
             _trace("module.gradle.skipped_test", module=module_dir, name=name)
             continue
         has_build_file = any(

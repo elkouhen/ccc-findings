@@ -607,8 +607,8 @@ def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
     }
 
     assert model.get("page") == "0"
-    assert "rounded=1" in _vertex_for_service(root, "service-a").get("style", "")
-    assert "shape=cylinder3" in next(
+    assert "shape=hexagon" in _vertex_for_service(root, "service-a").get("style", "")
+    assert "shape=ellipse" in next(
         cell.get("style", "")
         for cell in root.iter("mxCell")
         if cell.get("value") == "<b>orders.created</b>"
