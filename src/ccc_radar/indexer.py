@@ -13,7 +13,11 @@ from ccc_radar.config import Config
 from ccc_radar.embedder import EmbeddingError, endpoint_to_text, finding_to_text
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import discover_module_dependencies, discover_modules
+from ccc_radar.modules import (
+    discover_module_dependencies,
+    discover_modules,
+    discover_test_module_paths,
+)
 from ccc_radar.relations import build_architecture_relations
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
@@ -155,11 +159,23 @@ def _nested_build_roots(repo_root: Path) -> tuple[Path, ...]:
     )
 
 
-def _list_repo_files(repo_root: Path, config: Config) -> dict[str, str]:
+def _is_in_excluded_module(path: Path, excluded_module_paths: tuple[Path, ...]) -> bool:
+    return any(module_path == path.parent or module_path in path.parents for module_path in excluded_module_paths)
+
+
+def _list_repo_files(
+    repo_root: Path,
+    config: Config,
+    *,
+    excluded_module_paths: tuple[Path, ...] = (),
+) -> dict[str, str]:
+    repo_root = repo_root.resolve()
     hashes: dict[str, str] = {}
     nested_roots = _nested_build_roots(repo_root)
     for path in sorted(repo_root.rglob("*")):
         if not path.is_file():
+            continue
+        if _is_in_excluded_module(path, excluded_module_paths):
             continue
         if nested_roots and not any(root == path.parent or root in path.parents for root in nested_roots):
             continue
@@ -376,10 +392,15 @@ def index_repo(
 
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     _trace("files.begin")
-    current_hashes = _list_repo_files(repo_root, config)
+    excluded_test_module_paths = discover_test_module_paths(repo_root)
+    current_hashes = _list_repo_files(
+        repo_root,
+        config,
+        excluded_module_paths=excluded_test_module_paths,
+    )
     for rel_path in extra_files or []:
         candidate = repo_root / rel_path
-        if candidate.is_file():
+        if candidate.is_file() and not _is_in_excluded_module(candidate, excluded_test_module_paths):
             current_hashes[rel_path] = _sha256_file(candidate)
     previous_hashes = store.get_file_hashes()
     _trace("files.end", current=len(current_hashes), previous=len(previous_hashes))

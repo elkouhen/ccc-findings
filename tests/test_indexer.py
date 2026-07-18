@@ -7,6 +7,7 @@ import pytest
 
 from ccc_radar.config import Config
 from ccc_radar.indexer import _is_test_source, _list_repo_files, index_repo
+from ccc_radar.modules import discover_test_module_paths
 from ccc_radar.inventory_freshness import current_endpoint_inventory_signature
 from ccc_radar.coco_indexer import index_repo_with_cocoindex
 from ccc_radar.store import Store
@@ -377,6 +378,28 @@ def test_list_repo_files_always_ignores_git_metadata(tmp_path: Path) -> None:
     files = _list_repo_files(tmp_path, Config(rules=[]))
 
     assert set(files) == {"src/App.java"}
+
+
+def test_list_repo_files_excludes_sources_of_test_artifacts(tmp_path: Path) -> None:
+    production = tmp_path / "orders"
+    test_service = tmp_path / "orders-contract"
+    for module, artifact in ((production, "orders-service"), (test_service, "orders-service-test")):
+        (module / "src" / "main" / "java").mkdir(parents=True)
+        (module / "pom.xml").write_text(f"<project><artifactId>{artifact}</artifactId></project>")
+        (module / "src" / "main" / "java" / "Application.java").write_text("class Application {}\n")
+
+    excluded_paths = discover_test_module_paths(tmp_path)
+    files = _list_repo_files(
+        tmp_path,
+        Config(rules=[]),
+        excluded_module_paths=excluded_paths,
+    )
+
+    assert excluded_paths == (test_service.resolve(),)
+    assert set(files) == {
+        "orders/pom.xml",
+        "orders/src/main/java/Application.java",
+    }
 
 
 @pytest.mark.integration

@@ -143,6 +143,32 @@ def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
     return any("test" in value.casefold() for value in (name, *path_parts))
 
 
+def discover_test_module_paths(root: Path) -> tuple[Path, ...]:
+    """Return build-module roots excluded because they are test artifacts.
+
+    Module inventory already omits these modules.  The indexer also needs the
+    paths before scanning files: a test artifact can legitimately contain
+    ``src/main`` sources and would otherwise still produce endpoints and
+    findings despite being absent from the module inventory.
+    """
+    root = root.resolve()
+    paths: set[Path] = set()
+    for pom_path in sorted(root.rglob("pom.xml")):
+        if ".git" in pom_path.relative_to(root).parts:
+            continue
+        module_dir = pom_path.parent.resolve()
+        if not _is_module_within_depth(root, module_dir):
+            continue
+        artifact_id, _, _ = parse_pom(pom_path)
+        if _is_test_module(artifact_id or module_dir.name, module_dir, root):
+            paths.add(module_dir)
+    for name, module_dir, _version in discover_gradle_modules(root):
+        module_dir = module_dir.resolve()
+        if _is_test_module(name, module_dir, root):
+            paths.add(module_dir)
+    return tuple(sorted(paths))
+
+
 def _trace(stage: str, **fields: object) -> None:
     if os.environ.get("CCCR_TRACE") != "1":
         return
