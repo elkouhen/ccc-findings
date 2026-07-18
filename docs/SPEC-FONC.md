@@ -351,7 +351,8 @@ message types of a selected Kafka topic when statically known, as well as direct
 relation uses a stable `source -> target : action` wording rather than a
 selection-relative direction. The `HTTP`, `Kafka` and `MongoDB` toggles independently
 show or hide those relations; hiding Kafka or MongoDB also hides their topic or collection nodes and
-path searches only traverse the currently displayed relation types. A text field accepts a path such as
+path searches only traverse the currently displayed relation types. The path search is kept in the
+expandable `Explorer un chemin` control so that the primary exploration controls remain compact. A text field accepts a path such as
 `service-a -> topic-1 -> service-b` and highlights the shortest directed path
 between every pair of consecutive entries, preserving REST call direction and
 Kafka `producer -> topic -> consumer` steps; producer-to-topic path relations include
@@ -366,7 +367,7 @@ and last entries must be microservices; intermediate entries can be
 microservices or Kafka topics. The
 generated document persists the current node selection or path in its URL
 fragment, so a browser refresh restores it, embeds graph data locally and loads Sigma.js from its CDN
-when opened. Microservices are hexagons, Kafka topics circles and MongoDB
+when opened. Its legend is also collapsible. Microservices are hexagons, Kafka topics circles and MongoDB
 collections squares; a blue, orange or red border reflects the node's number
 of direct relations.
 

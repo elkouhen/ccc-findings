@@ -938,23 +938,33 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
     #graph { width: 100vw; height: 100vh; background: #f8fafc; touch-action: none; }
-    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); padding: 8px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
-    .toolbar strong { padding: 0 6px; font-size: 14px; white-space: nowrap; }
-    .toolbar input { height: 32px; padding: 0 9px; border: 1px solid #b9c5d6; border-radius: 4px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
-    #search { width: 220px; }
-    #path-query { width: min(430px, calc(100vw - 64px)); }
-    .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
+    .toolbar { position: fixed; z-index: 2; top: 16px; left: 16px; display: grid; gap: 10px; width: min(390px, calc(100vw - 32px)); padding: 12px; border: 1px solid #d7dee9; border-radius: 10px; background: rgba(255, 255, 255, .96); box-shadow: 0 4px 20px rgba(15, 23, 42, .12); }
+    .toolbar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .toolbar strong { color: #172033; font-size: 15px; white-space: nowrap; }
+    .toolbar input:not([type="checkbox"]) { height: 34px; padding: 0 10px; border: 1px solid #b9c5d6; border-radius: 6px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    #search, #path-query { width: 100%; }
+    .graph-actions { display: flex; gap: 4px; }
+    .toolbar button { width: 34px; height: 34px; border: 1px solid #b9c5d6; border-radius: 6px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
-    .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
-    .relation-filter input { margin: 0; accent-color: #315f9b; }
-    .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
-    .path-lock input { margin: 0; accent-color: #315f9b; }
+    .relation-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; border: 0; }
+    .relation-filters legend { width: 100%; margin-bottom: 2px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 999px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+    .relation-filter input, .path-lock input { width: 14px; height: 14px; margin: 0; padding: 0; border: 0; accent-color: #315f9b; }
+    .path-controls { border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    .path-controls summary, .legend summary { color: #315f9b; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .path-controls[open] summary { margin-bottom: 8px; }
+    .path-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+    .path-actions { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
+    .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 6px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+    #show-path { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     #details strong { display: block; color: #172033; font-size: 14px; }
     #details h2 { margin: 10px 0 4px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     #details ul { margin: 0; padding-left: 18px; }
     #details li { margin: 2px 0; }
-    .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; display: grid; gap: 5px; padding: 8px 10px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
+    .legend[open] summary { margin-bottom: 8px; }
+    .legend-content { display: grid; gap: 5px; }
     .legend-row { display: flex; align-items: center; gap: 6px; }
     .legend-mark { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
     .legend-line { width: 18px; height: 2px; }
@@ -962,31 +972,46 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
 </head>
 <body>
   <div class="toolbar">
-    <strong>CCC Radar</strong>
+    <div class="toolbar-header">
+      <strong>CCC Radar</strong>
+      <div class="graph-actions" aria-label="Navigation du graphe">
+        <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
+        <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
+        <button id="fit-view" type="button" aria-label="Ajuster a l'ecran" title="Ajuster a l'ecran">o</button>
+        <button id="reset" type="button" aria-label="Reinitialiser la selection" title="Reinitialiser">x</button>
+      </div>
+    </div>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
-    <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
-    <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
-    <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
-    <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
-    <label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label>
-    <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
-    <button id="zoom-out" type="button" aria-label="Dezoomer" title="Dezoomer">-</button>
-    <button id="zoom-in" type="button" aria-label="Zoomer" title="Zoomer">+</button>
-    <button id="fit-view" type="button" aria-label="Ajuster a l'ecran" title="Ajuster a l'ecran">o</button>
-    <button id="reset" type="button" aria-label="Reinitialiser la selection" title="Reinitialiser">x</button>
+    <fieldset class="relation-filters">
+      <legend>Relations affichees</legend>
+      <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
+      <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
+      <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
+    </fieldset>
+    <details class="path-controls">
+      <summary>Explorer un chemin</summary>
+      <div class="path-row">
+        <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
+        <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">Afficher</button>
+        <div class="path-actions"><label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label></div>
+      </div>
+    </details>
   </div>
-  <div class="legend" aria-label="Legende du graphe">
-    <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
-    <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
-    <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
-    <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
-    <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
-    <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
-    <div class="legend-row"><span class="legend-line" style="background:#7c3aed"></span>Appel HTTP</div>
-    <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Publication Kafka</div>
-    <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Consommation Kafka</div>
-    <div class="legend-row"><span class="legend-line" style="background:#2563eb"></span>Acces MongoDB</div>
-  </div>
+  <details class="legend" aria-label="Legende du graphe">
+    <summary>Legende</summary>
+    <div class="legend-content">
+      <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
+      <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
+      <div class="legend-row"><span class="legend-line" style="background:#7c3aed"></span>Appel HTTP</div>
+      <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Publication Kafka</div>
+      <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Consommation Kafka</div>
+      <div class="legend-row"><span class="legend-line" style="background:#2563eb"></span>Acces MongoDB</div>
+    </div>
+  </details>
   <div id="details">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div>
   <div id="graph" aria-label="Graphe des interactions"></div>
   <script id="graph-data" type="application/json">__GRAPH_DATA__</script>

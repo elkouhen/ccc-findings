@@ -326,6 +326,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="relation-http"' in document
     assert 'id="relation-kafka"' in document
     assert 'id="relation-mongodb"' in document
+    assert 'class="relation-filters"' in document
+    assert '<details class="path-controls">' in document
+    assert '<details class="legend"' in document
+    assert '.toolbar input:not([type="checkbox"])' in document
     assert "Appel HTTP" in document
     assert "Publication Kafka" in document
     assert "Consommation Kafka" in document
