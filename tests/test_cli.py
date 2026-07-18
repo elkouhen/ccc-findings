@@ -848,6 +848,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert 'id="analyzed-paths"' in document
     assert "function rememberAnalyzedPath(stops)" in document
     assert "function replayAnalyzedPath(stops)" in document
+    assert "function setPathMicroserviceOrder(path)" in document
+    assert "analyzedPaths.splice(30)" not in document
     assert 'placeholder="service-a -> topic-1 -> service-b"' in document
     assert "function parsePathQuery()" in document
     assert "nodesByNormalizedName" in document
@@ -855,7 +857,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "function shortestPathThrough(stops)" in document
     assert "Chemin le plus court" in document
     assert "Chemin avec noeuds intermediaires" in document
-    assert "Messages publies" in document
+    assert "Parcours" in document
+    assert "const pathRelationText = link" in document
+    assert "const pathStepTitle = link" in document
+    assert "Etape ${index + 1}" in document
     assert "const pathNodeLabel" in document
     assert "node.name} (${types.join" in document
     assert "node.consumed_message_types" in document

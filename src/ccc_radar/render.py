@@ -1146,6 +1146,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     let selectedId = null;
     let relatedNodes = null;
     let relatedEdges = null;
+    let pathMicroserviceOrder = new Map();
     // Sigma invokes reducers while it is constructed, so these controls must
     // exist before creating the renderer.
     const relationHttp = document.getElementById("relation-http");
@@ -1300,7 +1301,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       labelGridCellSize: 110,
       labelRenderedSizeThreshold: 8,
       nodeReducer: (node, data) => {
-        if (!selectedId || relatedNodes.has(node)) return data;
+        if (!selectedId || relatedNodes.has(node)) {
+          const order = pathMicroserviceOrder.get(node);
+          return order ? { ...data, label: `${order}. ${data.label}` } : data;
+        }
         return { ...data, color: "#d8e0ea", label: "" };
       },
       edgeReducer: (edge, data) => {
@@ -1354,7 +1358,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       try {
         const stored = JSON.parse(localStorage.getItem(pathHistoryStorageKey) || "[]");
         if (!Array.isArray(stored)) return;
-        stored.filter(isValidPathStops).slice(0, 30).forEach(stops => analyzedPaths.push(stops));
+        stored.filter(isValidPathStops).forEach(stops => analyzedPaths.push(stops));
       } catch (_error) {
         // The export remains usable when browser storage is unavailable or stale.
       }
@@ -1408,7 +1412,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const existingIndex = analyzedPaths.findIndex(item => item.join("|") === key);
       if (existingIndex >= 0) analyzedPaths.splice(existingIndex, 1);
       analyzedPaths.unshift(path);
-      analyzedPaths.splice(30);
       persistAnalyzedPaths();
       renderAnalyzedPaths();
     }
@@ -1576,12 +1579,23 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     function renderPathQuery() {
       pathQuery.value = pathStops.map(id => nodeDataById.get(id).name).join(" -> ");
     }
+    function setPathMicroserviceOrder(path) {
+      pathMicroserviceOrder = new Map();
+      let order = 1;
+      path.nodes.forEach(id => {
+        if (nodeDataById.get(id).kind !== "microservice") return;
+        pathMicroserviceOrder.set(id, order);
+        order += 1;
+      });
+    }
     function renderPathDetails(path) {
       details.replaceChildren();
       const title = document.createElement("strong");
       title.textContent = pathStops.length > 2 ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
       const pathNodeLabel = (id, index) => {
         const node = nodeDataById.get(id);
+        const order = pathMicroserviceOrder.get(id);
+        if (order) return `${order}. ${node.name}`;
         if (node.kind !== "kafka_topic") return node.name;
         const precedingLink = path.edges[index - 1]?.link;
         const publishedTypes = precedingLink?.published_message_types || node.published_message_types || [];
@@ -1591,20 +1605,39 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       details.append(title, document.createTextNode(
         path.nodes.map(pathNodeLabel).join(" -> ")
       ));
-      const publishedMessages = path.edges.flatMap(step => {
-        const source = nodeDataById.get(step.link.source);
-        const target = nodeDataById.get(step.link.target);
-        return (step.link.published_message_types || []).map(
-          type => `${source.name} -> ${target.name} : ${type}`
-        );
+      appendList("Parcours", path.nodes.map(pathNodeLabel));
+      const pathRelationText = link => {
+        const source = nodeDataById.get(link.source);
+        const target = nodeDataById.get(link.target);
+        const sourceName = pathNodeLabel(link.source, path.nodes.indexOf(link.source));
+        const targetName = pathNodeLabel(link.target, path.nodes.indexOf(link.target));
+        if (link.kind === "rest") {
+          const resource = restResourceLabel(link, target);
+          return resource
+            ? `HTTP · ${sourceName} appelle ${targetName} (${resource})`
+            : `HTTP · ${sourceName} appelle ${targetName} (contrat non indexe)`;
+        }
+        if (link.kind === "mongodb") return `MongoDB · ${sourceName} stocke dans ${targetName}`;
+        if (source.kind === "microservice") {
+          const types = link.published_message_types || [];
+          return `Kafka · ${sourceName} publie${types.length ? ` <${types.join(", ")}>` : ""} sur ${targetName}`;
+        }
+        return `Kafka · ${targetName} consomme ${sourceName}`;
+      };
+      const pathStepTitle = link => {
+        if (link.kind === "rest") return "Appel HTTP";
+        if (link.kind === "mongodb") return "Acces MongoDB";
+        return nodeDataById.get(link.source).kind === "microservice"
+          ? "Publication Kafka" : "Consommation Kafka";
+      };
+      path.edges.forEach((step, index) => {
+        appendList(`Etape ${index + 1} · ${pathStepTitle(step.link)}`, [pathRelationText(step.link)]);
       });
-      appendList("Messages publies", publishedMessages);
-      appendList("Relations", path.edges.map(step => relationText(step.link)));
     }
     function showShortestPath() {
       const parsed = parsePathQuery();
       if (parsed.error) {
-        selectedId = null; relatedNodes = null; relatedEdges = null;
+        selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
         renderer.refresh();
         setDetailsEmpty(parsed.error);
         pathStops.splice(0, pathStops.length);
@@ -1615,7 +1648,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       pathStops.splice(0, pathStops.length, ...stops);
       const path = shortestPathThrough(stops);
       if (path === null) {
-        selectedId = null; relatedNodes = null; relatedEdges = null;
+        selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
         renderer.refresh();
         setDetailsEmpty("Aucun chemin oriente entre les deux microservices.");
         persistState();
@@ -1624,6 +1657,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       selectedId = stops[0];
       relatedNodes = new Set(path.nodes);
       relatedEdges = new Set(path.edges.map(step => step.edge));
+      setPathMicroserviceOrder(path);
       rememberAnalyzedPath(pathStops);
       renderer.refresh();
       renderPathDetails(path);
@@ -1708,6 +1742,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function selectNode(id) {
       if (!pathLock.checked) clearPathControls();
+      pathMicroserviceOrder = new Map();
       selectedId = id;
       relatedNodes = new Set([id]);
       relatedEdges = new Set();
@@ -1724,7 +1759,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       persistState();
     }
     function reset() {
-      selectedId = null; relatedNodes = null; relatedEdges = null;
+      selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
       renderer.refresh();
       setDetailsEmpty("Selectionnez un noeud pour isoler ses relations et afficher ses APIs.");
       search.value = "";
