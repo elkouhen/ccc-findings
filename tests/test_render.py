@@ -602,7 +602,8 @@ def test_render_graph_html_resolves_strategy1_contract_from_workspace_root(tmp_p
     contract_path = tmp_path / "model-annuaire/src/main/openapi/annuaire.yaml"
     contract_path.parent.mkdir(parents=True)
     contract_path.write_text(
-        "openapi: 3.0.3\ninfo: {title: Annuaire, version: v1}\npaths: {}\n",
+        "openapi: 3.0.3\ninfo: {title: Annuaire, version: v1}\npaths: {}\n"
+        "x-published-on: 2026-07-19\n",
         encoding="utf-8",
     )
     service_module = DiscoveredModule(
@@ -630,6 +631,7 @@ def test_render_graph_html_resolves_strategy1_contract_from_workspace_root(tmp_p
     service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:domaine-annuaire")
 
     assert service["openapi_contracts"][0]["spec"]["info"]["title"] == "Annuaire"
+    assert service["openapi_contracts"][0]["spec"]["x-published-on"] == "2026-07-19"
 
 
 def test_render_graph_html_keeps_complexity_architecture_only() -> None:

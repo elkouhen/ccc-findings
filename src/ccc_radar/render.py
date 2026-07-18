@@ -611,7 +611,11 @@ def _openapi_contract_spec(
         except (OSError, yaml.YAMLError):
             continue
         if isinstance(parsed, dict) and ("openapi" in parsed or "swagger" in parsed):
-            return parsed
+            # PyYAML resolves unquoted ISO dates into ``date`` objects, while
+            # the HTML payload must be strict JSON. Round-trip through the
+            # JSON encoder to preserve the document shape and normalize such
+            # scalar values to strings before the final graph serialization.
+            return json.loads(json.dumps(parsed, default=str))
     return None
 
 
