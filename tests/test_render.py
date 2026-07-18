@@ -619,6 +619,8 @@ def test_render_graph_html_recursively_links_project_dtos(tmp_path: Path) -> Non
     assert definitions["Money"]["fields"] == [{"type": "String", "name": "currency"}]
     assert "function dtoDefinition(dtoName)" in document
     assert "Ouvrir le type projet ${references[0]}" in document
+    assert "function returnToContainingDto()" in document
+    assert "← Retour" in document
 
 
 def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:

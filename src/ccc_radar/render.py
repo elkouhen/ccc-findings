@@ -1444,6 +1444,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .inspector-body { min-height: 0; overflow: auto; padding: 18px; }
     .inspector-body.swagger-ui { padding: 0; }
     .dto-inspector { display: grid; gap: 16px; max-width: 720px; }
+    .dto-navigation { display: flex; align-items: center; gap: 8px; }
+    .dto-back { width: fit-content; padding: 6px 9px; border: 1px solid #bfdbfe; border-radius: 6px; color: #1d4f91; background: #eff6ff; font-size: 12px; font-weight: 700; cursor: pointer; }
     .dto-summary { margin: 0; color: #64748b; font-size: 13px; }
     .dto-section { padding: 14px; border: 1px solid #e2e8f0; border-radius: 9px; background: #f8fafc; }
     .dto-section h2 { margin: 0 0 9px; color: #475569; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
@@ -2353,10 +2355,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const inspectorModal = document.getElementById("inspector-modal");
     const inspectorTitle = document.getElementById("inspector-title");
     const inspectorBody = document.getElementById("inspector-body");
+    const dtoNavigation = [];
     function closeInspector() {
       inspectorModal.hidden = true;
       inspectorBody.replaceChildren();
       inspectorBody.className = "inspector-body";
+      dtoNavigation.splice(0);
     }
     function openInspector(title) {
       inspectorTitle.textContent = title;
@@ -2404,10 +2408,34 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         .find(item => item.name === dtoName);
     }
     function openDtoInspector(dtoName) {
+      dtoNavigation.splice(0);
+      renderDtoInspector(dtoName);
+    }
+    function openNestedDtoInspector(dtoName, parentDtoName) {
+      dtoNavigation.push(parentDtoName);
+      renderDtoInspector(dtoName);
+    }
+    function returnToContainingDto() {
+      const parentDtoName = dtoNavigation.pop();
+      if (parentDtoName) renderDtoInspector(parentDtoName);
+    }
+    function renderDtoInspector(dtoName) {
       const dto = dtoDefinition(dtoName);
       if (!dto) return;
       openInspector(`DTO Kafka · ${dto.name}`);
       inspectorBody.classList.add("dto-inspector");
+      if (dtoNavigation.length) {
+        const navigation = document.createElement("div");
+        navigation.className = "dto-navigation";
+        const back = document.createElement("button");
+        back.className = "dto-back";
+        back.type = "button";
+        back.textContent = "← Retour";
+        back.title = `Retour vers ${dtoNavigation.at(-1)}`;
+        back.addEventListener("click", returnToContainingDto);
+        navigation.append(back);
+        inspectorBody.append(navigation);
+      }
       const summary = document.createElement("p");
       summary.className = "dto-summary";
       summary.textContent = dto.source
@@ -2432,7 +2460,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           if (references.length) {
             type.type = "button";
             type.title = `Ouvrir le type projet ${references[0]}`;
-            type.addEventListener("click", () => openDtoInspector(references[0]));
+            type.addEventListener("click", () => openNestedDtoInspector(references[0], dto.name));
           }
           const name = document.createElement("span");
           name.className = "dto-field-name";
