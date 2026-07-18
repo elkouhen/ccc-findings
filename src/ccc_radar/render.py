@@ -1277,8 +1277,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       labelGridCellSize: 110,
       labelRenderedSizeThreshold: 8,
       nodeReducer: (node, data) => {
-        if (data.type === "kafka_topic" && !relationKafka.checked) return { ...data, hidden: true };
-        if (data.type === "mongodb_collection" && !relationMongodb.checked) return { ...data, hidden: true };
         if (!selectedId || relatedNodes.has(node)) return data;
         return { ...data, color: "#d8e0ea", label: "" };
       },
@@ -1650,8 +1648,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const query = event.target.value.trim().toLocaleLowerCase();
       const node = graphData.nodes.find(
         item => item.name.toLocaleLowerCase().includes(query)
-          && (item.kind !== "kafka_topic" || relationKafka.checked)
-          && (item.kind !== "mongodb_collection" || relationMongodb.checked)
       );
       if (node) selectNode(node.id); else if (!query) reset();
     });

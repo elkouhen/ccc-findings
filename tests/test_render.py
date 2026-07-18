@@ -347,6 +347,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "function isVisibleRelation(kind)" in document
     assert 'kind !== "mongodb" || relationMongodb.checked' in document
     assert 'hidden: true' in document
+    assert 'data.type === "kafka_topic" && !relationKafka.checked' not in document
+    assert 'data.type === "mongodb_collection" && !relationMongodb.checked' not in document
+    assert 'item.kind !== "kafka_topic" || relationKafka.checked' not in document
+    assert 'item.kind !== "mongodb_collection" || relationMongodb.checked' not in document
     assert document.index("const relationHttp") < document.index("const renderer")
     assert 'renderer.on("clickNode"' in document
     assert "nodeReducer:" in document
