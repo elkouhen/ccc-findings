@@ -482,6 +482,8 @@ concerned files. Covered cases:
 - Configured generated API clients: each `@Bean` in a class named
   `Rest*Config*` that calls a factory named `create*ClientApi` produces a
   `configured-api-client-bean` call fact carrying its logical service domain.
+  The domain may be supplied directly (`DOMAIN_FOO`) or through
+  `getUriPath(..., DOMAIN_FOO.getKey())`; both normalize to `domain-foo`.
   This fact preserves the A→B dependency even if no invocation of the
   generated interface can be statically resolved;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/

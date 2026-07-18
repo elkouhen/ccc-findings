@@ -2612,23 +2612,53 @@ def _simple_java_type(value: str) -> str:
     return value.split("<", 1)[0].strip().removesuffix("[]")
 
 
-def _api_domain_argument(node, source: bytes) -> str | None:
-    """Extrait un domaine littéral ou la constante terminale de `XXX.NAME`.
+def _normalize_api_domain(value: str) -> str | None:
+    """Normalise une valeur de domaine vers le nom de microservice attendu."""
+    if not _API_DOMAIN_VALUE_RE.fullmatch(value):
+        return None
+    return value.lower().replace("_", "-")
 
-    Les URLs et les chemins ne sont volontairement pas acceptés : ils ne
-    décrivent pas le domaine logique employé par le helper de configuration.
+
+def _api_domain_from_key_invocation(node, source: bytes) -> str | None:
+    """Extrait ``DOMAIN_FOO`` de l'expression ``DOMAIN_FOO.getKey()``."""
+    if node.type != "method_invocation":
+        return None
+    receiver, method_name, args = java_parser.invocation_parts(node, source)
+    if method_name != "getKey" or args or receiver is None:
+        return None
+    receiver_text = java_parser.node_text(source, receiver)
+    return _normalize_api_domain(receiver_text.rsplit(".", 1)[-1])
+
+
+def _api_domain_argument(node, source: bytes) -> str | None:
+    """Extrait le domaine logique donné à un factory de client HTTP.
+
+    Outre un littéral et la constante terminale de ``XXX.NAME``, la
+    convention ``getUriPath(..., DOMAIN_FOO.getKey())`` est acceptée. Les URLs
+    et chemins restent exclus : ils ne désignent pas le microservice cible.
     """
     literal = java_parser.string_value(node, source)
     if literal is not None:
-        return literal.lower() if _API_DOMAIN_VALUE_RE.fullmatch(literal) else None
+        return _normalize_api_domain(literal)
+
+    if node.type == "method_invocation":
+        receiver, method_name, args = java_parser.invocation_parts(node, source)
+        if method_name == "getKey" and not args and receiver is not None:
+            receiver_text = java_parser.node_text(source, receiver)
+            return _normalize_api_domain(receiver_text.rsplit(".", 1)[-1])
+        if method_name == "getUriPath":
+            domains = {
+                domain
+                for argument in args
+                if (domain := _api_domain_from_key_invocation(argument, source)) is not None
+            }
+            return next(iter(domains)) if len(domains) == 1 else None
 
     if node.type not in {"identifier", "field_access", "scoped_identifier"}:
         return None
     text = java_parser.node_text(source, node)
     name = text.rsplit(".", 1)[-1]
-    if not _API_DOMAIN_VALUE_RE.fullmatch(name):
-        return None
-    return name.lower().replace("_", "-")
+    return _normalize_api_domain(name)
 
 
 def _bean_api_domain(method_node, source: bytes, microservice: str) -> str | None:

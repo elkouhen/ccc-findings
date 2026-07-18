@@ -141,6 +141,39 @@ def test_rest_configuration_bean_links_to_the_normalized_host_microservice(tmp_p
     ]
 
 
+def test_rest_configuration_bean_resolves_domain_key_in_uri_path(tmp_path: Path) -> None:
+    """La variante `getUriPath(..., DOMAIN_*.getKey())` déclare A→B."""
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestClientConfig.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestClientConfig {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createClientApi(\n"
+        "      getUriPath(\"/internal\", ApiDomains.DOMAIN_ANNUAIRE.getKey()), AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    rel_path = config.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel_path])
+    result = build_dependency_graph(
+        {"caller-service": endpoints},
+        {"domain-annuaire": _module("domain-annuaire")},
+    )
+
+    assert len(endpoints) == 1
+    assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
+    assert [(edge["source"], edge["target"], edge["label"]) for edge in _client_calls(result["edges"])] == [
+        ("microservice:caller-service", "microservice:domain-annuaire", "domain-annuaire: API")
+    ]
+
+
 def test_configured_client_relation_when_host_known_via_modules_only() -> None:
     caller = make_endpoint(
         "call",
