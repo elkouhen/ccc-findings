@@ -320,6 +320,14 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "new Sigma(network" in document
     assert "new graphology.MultiDirectedGraph" in document
     assert "for (let iteration = 0; iteration < 720; iteration += 1)" in document
+    assert '<script type="module">' in document
+    assert 'id="layout-forceatlas2"' in document
+    assert 'id="layout-noverlap"' in document
+    assert 'id="layout-forceatlas2-noverlap"' in document
+    assert "graphology-layout-forceatlas2@0.10.1" in document
+    assert "graphology-layout-noverlap@0.4.2" in document
+    assert "function applyLayout(layout)" in document
+    assert 'applyLayout("forceatlas2-noverlap")' in document
     assert 'id="layout-flow"' not in document
     assert 'id="layout-force"' not in document
     assert "function sugiyamaPositions(nodes, links)" not in document

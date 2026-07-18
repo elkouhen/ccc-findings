@@ -1003,6 +1003,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .relation-filters legend { width: 100%; margin-bottom: 2px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 999px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     .relation-filter input, .path-lock input { width: 14px; height: 14px; margin: 0; padding: 0; border: 0; accent-color: #315f9b; }
+    .layout-controls { display: grid; gap: 6px; margin: 0; padding: 8px 0 0; border: 0; border-top: 1px solid #e2e8f0; }
+    .layout-controls legend { padding: 0; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .layout-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+    .layout-option { width: auto !important; height: auto !important; min-height: 38px; padding: 6px !important; color: #52616b !important; border-color: #cdd7e5 !important; background: #fff !important; font-size: 11px !important; font-weight: 700; line-height: 1.15; }
+    .layout-option:hover { background: #eff6ff !important; }
+    .layout-option.is-active { color: #1d4f91 !important; border-color: #93c5fd !important; background: #dbeafe !important; box-shadow: inset 0 0 0 1px #bfdbfe; }
+    .layout-status { margin: 0; color: #64748b; font-size: 11px; line-height: 1.35; }
     .path-controls { border-top: 1px solid #e2e8f0; padding-top: 8px; }
     .path-controls summary, .legend summary { color: #315f9b; font-size: 12px; font-weight: 600; cursor: pointer; }
     .path-controls[open] summary { margin-bottom: 8px; }
@@ -1089,6 +1096,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
         <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
       </fieldset>
+      <fieldset class="layout-controls">
+        <legend>Disposition</legend>
+        <div class="layout-options" role="group" aria-label="Choix de la disposition du graphe">
+          <button id="layout-forceatlas2" class="layout-option" type="button" aria-pressed="false" title="Regrouper les noeuds lies avec ForceAtlas2">ForceAtlas2</button>
+          <button id="layout-noverlap" class="layout-option" type="button" aria-pressed="false" title="Ecarter les noeuds qui se chevauchent">Noverlap</button>
+          <button id="layout-forceatlas2-noverlap" class="layout-option is-active" type="button" aria-pressed="true" title="Regrouper puis ecarter les noeuds">ForceAtlas2 + Noverlap</button>
+        </div>
+        <p id="layout-status" class="layout-status" role="status">Chargement de la disposition ForceAtlas2 + Noverlap…</p>
+      </fieldset>
       <details class="path-controls">
         <summary>Explorer un chemin</summary>
         <div class="path-row">
@@ -1129,7 +1145,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div id="details"><div class="details-empty">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div></div>
   <div id="graph" aria-label="Graphe des interactions"></div>
   <script id="graph-data" type="application/json">__GRAPH_DATA__</script>
-  <script>
+  <script type="module">
     const graphData = JSON.parse(document.getElementById("graph-data").textContent);
     const nodeDataById = new Map(graphData.nodes.map(node => [node.id, node]));
     const layoutNodes = graphData.nodes.map((node, index) => {
@@ -1198,6 +1214,20 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       kind: link.kind,
       type: "arrow",
     }));
+    const initialNodePositions = new Map();
+    network.forEachNode((node, attributes) => {
+      initialNodePositions.set(node, { x: attributes.x, y: attributes.y });
+    });
+    const layoutLibraries = Promise.all([
+      import("https://esm.sh/graphology-layout-forceatlas2@0.10.1"),
+      import("https://esm.sh/graphology-layout-noverlap@0.4.2"),
+    ]).then(([forceAtlas2Module, noverlapModule]) => ({
+      forceAtlas2: forceAtlas2Module.default,
+      noverlap: noverlapModule.default,
+    })).catch(error => {
+      console.warn("Impossible de charger les dispositions Graphology.", error);
+      return null;
+    });
 
     let selectedId = null;
     let relatedNodes = null;
@@ -1379,11 +1409,81 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const pathsPanel = document.getElementById("paths-panel");
     const analyzedPathsList = document.getElementById("analyzed-paths");
     const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
+    const layoutStatus = document.getElementById("layout-status");
+    const layoutButtons = new Map([
+      ["forceatlas2", document.getElementById("layout-forceatlas2")],
+      ["noverlap", document.getElementById("layout-noverlap")],
+      ["forceatlas2-noverlap", document.getElementById("layout-forceatlas2-noverlap")],
+    ]);
+    const layoutLabels = new Map([
+      ["forceatlas2", "ForceAtlas2"],
+      ["noverlap", "Noverlap"],
+      ["forceatlas2-noverlap", "ForceAtlas2 + Noverlap"],
+    ]);
+    let layoutRequest = 0;
     const pathStops = [];
     const analyzedPaths = [];
     const MAX_SIMPLE_PATH_DEPTH = 8;
     const MAX_SIMPLE_PATHS = 8;
     const MAX_SIMPLE_PATH_EXPLORATIONS = 2000;
+    function restoreInitialNodePositions() {
+      network.forEachNode(node => {
+        const position = initialNodePositions.get(node);
+        network.setNodeAttribute(node, "x", position.x);
+        network.setNodeAttribute(node, "y", position.y);
+      });
+    }
+    function setActiveLayout(layout) {
+      layoutButtons.forEach((button, key) => {
+        const active = key === layout;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+    }
+    async function applyLayout(layout) {
+      const request = ++layoutRequest;
+      const label = layoutLabels.get(layout);
+      setActiveLayout(layout);
+      layoutStatus.textContent = `Calcul de la disposition ${label}…`;
+      const libraries = await layoutLibraries;
+      if (request !== layoutRequest) return;
+      if (libraries === null) {
+        layoutStatus.textContent = "Les dispositions Graphology sont indisponibles ; la disposition initiale est conservee.";
+        return;
+      }
+      try {
+        restoreInitialNodePositions();
+        if (layout === "forceatlas2" || layout === "forceatlas2-noverlap") {
+          libraries.forceAtlas2.assign(network, {
+            iterations: Math.min(220, Math.max(80, network.order * 3)),
+            settings: {
+              adjustSizes: true,
+              barnesHutOptimize: network.order >= 30,
+              barnesHutTheta: .7,
+              gravity: 1.5,
+              scalingRatio: 12,
+              slowDown: 2,
+            },
+          });
+        }
+        if (layout === "noverlap" || layout === "forceatlas2-noverlap") {
+          libraries.noverlap.assign(network, {
+            maxIterations: 160,
+            settings: { expansion: 1.1, gridSize: 20, margin: 4, ratio: 1.3, speed: 3 },
+          });
+        }
+      } catch (error) {
+        console.error(`Impossible de calculer la disposition ${label}.`, error);
+        restoreInitialNodePositions();
+        renderer.refresh();
+        layoutStatus.textContent = `La disposition ${label} a echoue ; la disposition initiale est restauree.`;
+        return;
+      }
+      if (request !== layoutRequest) return;
+      renderer.refresh();
+      renderer.getCamera().animatedReset({ duration: 260 });
+      layoutStatus.textContent = `${label} actif.`;
+    }
     const nodesByNormalizedName = new Map();
     function normalizeNodeName(name) {
       return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
@@ -1955,6 +2055,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
     document.getElementById("show-simple-paths").addEventListener("click", showSimplePaths);
+    layoutButtons.forEach((button, layout) => button.addEventListener("click", () => applyLayout(layout)));
     graphTab.addEventListener("click", () => setToolbarTab("graph"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
@@ -1964,6 +2065,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     renderAnalyzedPaths();
     restoreState();
+    applyLayout("forceatlas2-noverlap");
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
       const node = graphData.nodes.find(
