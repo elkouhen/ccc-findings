@@ -3,6 +3,7 @@ from pathlib import Path
 from ccc_radar.dependency_analysis import build_dependency_graph
 from ccc_radar.models import MessageEndpoint, compute_endpoint_id
 from ccc_radar.modules import DiscoveredModule
+from ccc_radar.scanner import infer_framework_endpoints
 
 
 def make_endpoint(
@@ -45,7 +46,7 @@ def _module(name: str) -> DiscoveredModule:
 
 
 def _client_calls(edges):
-    return [e for e in edges if e["kind"] == "http" and e["label"] == "client API"]
+    return [e for e in edges if e["kind"] == "http" and e["label"].endswith(": API")]
 
 
 def test_configured_client_relation_emitted_when_host_in_endpoints() -> None:
@@ -70,7 +71,7 @@ def test_configured_client_relation_emitted_when_host_in_endpoints() -> None:
     assert client_edges[0]["target"] == "microservice:annuaire"
     assert result["summary"]["configured_client_relations"] == 1
     # Aucune arête par route fabriquée ni de pollution calls_external.
-    assert not [e for e in result["edges"] if e["kind"] == "http" and e["label"] != "client API"]
+    assert not [e for e in result["edges"] if e["kind"] == "http" and e["label"] != "annuaire: API"]
     assert not [e for e in result["edges"] if e["kind"] == "calls_external"]
 
 
@@ -89,21 +90,55 @@ def test_configured_client_dependency_from_bean_declaration_without_resolved_typ
         snippet=(
             "return webClientHelper.createInternalClientApi("
             "ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);"
-            "\ncccr-api-domain:annuaire"
+            "\ncccr-api-domain:domain-annuaire"
         ),
         topic_dynamic=True,
     )
 
     result = build_dependency_graph(
         {"caller-service": [bean_declaration]},
-        {"annuaire": _module("annuaire")},
+        {"domain-annuaire": _module("domain-annuaire")},
     )
 
     client_edges = _client_calls(result["edges"])
     assert len(client_edges) == 1
     assert client_edges[0]["source"] == "microservice:caller-service"
-    assert client_edges[0]["target"] == "microservice:annuaire"
+    assert client_edges[0]["target"] == "microservice:domain-annuaire"
     assert result["warnings"] == []
+
+
+def test_rest_configuration_bean_links_to_the_normalized_host_microservice(tmp_path: Path) -> None:
+    """Le domaine `DOMAIN_ANNUAIRE` désigne bien `domain-annuaire`.
+
+    Ce test couvre la chaîne réelle scanner → fédération → dépendance, plutôt
+    qu'un marqueur `cccr-api-domain` construit à la main.
+    """
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "import org.springframework.context.annotation.Bean;\n"
+        "class RestConfiguration {\n"
+        "  WebClientHelper webClientHelper;\n"
+        "  @Bean\n"
+        "  AnnuaireApi annuaireApi() {\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "  }\n"
+        "}\n"
+    )
+    rel_path = config.relative_to(tmp_path).as_posix()
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[rel_path])
+    result = build_dependency_graph(
+        {"caller-service": endpoints},
+        {"domain-annuaire": _module("domain-annuaire")},
+    )
+
+    assert [(edge["source"], edge["target"], edge["label"]) for edge in _client_calls(result["edges"])] == [
+        ("microservice:caller-service", "microservice:domain-annuaire", "domain-annuaire: API")
+    ]
 
 
 def test_configured_client_relation_when_host_known_via_modules_only() -> None:

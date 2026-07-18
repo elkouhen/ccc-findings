@@ -25,6 +25,17 @@ class OutboundCallInConsumer:
     call: MessageEndpoint
 
 
+def qualified_rest_resource(service_name: str, resource: str) -> str:
+    """Return the stable identity of a REST resource published by a service.
+
+    ``MessageEndpoint.topic`` deliberately stays as ``METHOD /path`` because
+    route matching operates on that syntax.  Graphs and dependency views use
+    this qualified form instead, so identical routes exposed by two services
+    remain distinct facts.
+    """
+    return f"{service_name}: {resource}"
+
+
 def _trace(stage: str, **fields: object) -> None:
     if os.environ.get("CCCR_TRACE") != "1":
         return

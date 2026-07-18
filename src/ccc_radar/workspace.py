@@ -35,6 +35,36 @@ class FederationResult:
     endpoints_by_module: dict[str, list[MessageEndpoint]] = field(default_factory=dict)
 
 
+def missing_indexed_microservices(
+    services: list[DiscoveredService], federation: FederationResult
+) -> list[str]:
+    """Return runtime services whose inventory is absent from a federation.
+
+    Endpoint facts are indexed locally, one service at a time.  Runtime
+    dependencies must only be derived once every discovered microservice has
+    contributed its inventory; deriving an edge from a partial federation
+    would otherwise make REST and Kafka topology depend on indexing order.
+    """
+    return sorted({
+        service.name
+        for service in services
+        if service.kind == "microservice" and service.name not in federation.endpoints_by_service
+    })
+
+
+def dependency_federation_warning(
+    services: list[DiscoveredService], federation: FederationResult
+) -> str | None:
+    """Explain why inter-service dependencies have not been derived yet."""
+    missing = missing_indexed_microservices(services, federation)
+    if not missing:
+        return None
+    return (
+        "Dépendances inter-microservices différées : indexez d'abord tous les "
+        f"services du workspace (manquants : {', '.join(missing)})."
+    )
+
+
 def _dedupe_by_id(items: list[Finding] | list[MessageEndpoint]) -> list[Finding] | list[MessageEndpoint]:
     deduped: list[Finding] | list[MessageEndpoint] = []
     seen: set[str] = set()

@@ -45,9 +45,9 @@ def test_export_workspace_reports_the_three_service_rest_topology(
     assert set(data["services"]) == {"service-x", "service-y", "service-z"}
     assert len(data["edges"]) == 3
     assert {edge["label"] for edge in data["edges"]} == {
-        "GET /x-status",
-        "GET /y-status",
-        "GET /z-status",
+        "service-x: GET /x-status",
+        "service-y: GET /y-status",
+        "service-z: GET /z-status",
     }
     sites = {(e["from_site"]["path"], e["from_site"]["start_line"]) for e in data["edges"]}
     assert ("app/YClient.java", 13) in sites

@@ -5,7 +5,12 @@ import pytest
 
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id, compute_finding_id
 from ccc_radar.store import Store, StoreError
-from ccc_radar.workspace import discover_maven_services, discover_workspace_services, load_federation
+from ccc_radar.workspace import (
+    dependency_federation_warning,
+    discover_maven_services,
+    discover_workspace_services,
+    load_federation,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 MAVEN_WORKSPACE = FIXTURES_DIR / "maven_workspace"
@@ -287,6 +292,28 @@ def test_load_federation_reads_microservices_and_flags_unindexed(workspace_copy:
     assert [e.topic for e in result.endpoints_by_service["order-service"]] == ["GET /orders"]
     assert "payment-service" not in result.endpoints_by_service
     assert any("payment-service" in w and "non indexé" in w for w in result.warnings)
+
+
+def test_dependency_federation_warning_defers_rest_and_kafka_dependencies_until_complete(
+    workspace_copy: Path,
+) -> None:
+    """Une topologie runtime ne doit jamais dépendre de l'ordre d'indexation.
+
+    Ici order-service est prêt, mais payment-service ne l'est pas encore :
+    une relation REST ou Kafka entre eux doit être différée par les appelants
+    de graphe.
+    """
+    endpoint = make_endpoint("produce", "kafka", "orders.created", "app/Producer.java")
+    with Store(workspace_copy / "service-a") as store:
+        store.replace_endpoints_for_files([endpoint.path], [endpoint])
+
+    services = discover_maven_services(workspace_copy)
+    federation = load_federation(services)
+
+    warning = dependency_federation_warning(services, federation)
+
+    assert warning is not None
+    assert "payment-service" in warning
 
 
 def test_load_federation_includes_shared_module_findings_but_not_endpoints(

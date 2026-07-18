@@ -133,7 +133,7 @@ def test_render_graph_json_expands_kafka_edges_via_topic_nodes() -> None:
             "from_kind": "microservice",
             "to_node": "service-b",
             "to_kind": "microservice",
-            "label": "GET /orders",
+            "label": "service-b: GET /orders",
             "from_site": {
                 "path": "a/Client.java",
                 "start_line": 3,
@@ -197,7 +197,7 @@ def test_render_graph_text_formats_services_edges_and_outbound_calls() -> None:
 
     assert "Services (2) : service-a, service-b" in text
     assert "Topics Kafka (1) : orders.created" in text
-    assert "[rest] service-a (a/Client.java:3) --GET /orders--> service-b" in text
+    assert "[rest] service-a (a/Client.java:3) --service-b: GET /orders--> service-b" in text
     assert "[kafka_produce] service-a" in text
     assert "[kafka_consume] orders.created --orders.created--> service-b" in text
 
@@ -294,7 +294,7 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "style { color complexity_low }" in document
     assert "2 findings (ERROR=2)" in document
     assert "OpenAPI contracts: src/main/resources/openapi.yaml" in document
-    assert "service_service-a -[http]-> service_service-b 'GET /orders'" in document
+    assert "service_service-a -[http]-> service_service-b 'service-b: GET /orders'" in document
     assert "service_service-a -[publishes]-> topic_orders_created 'publishes OrderCreated'" in document
     assert "topic_orders_created -[consumes]-> service_service-b 'consumes OrderCreated'" in document
     assert "service_service-a -[calls_external]-> external_api_POST_external-orders 'POST /external-orders'" in document
@@ -393,9 +393,9 @@ def test_render_graph_drawio_uses_distinct_readable_styles() -> None:
         for cell in root.iter("mxCell")
         if cell.get("value") == "<b>orders.created</b>"
     )
-    assert "strokeColor=#4f79b5" in edge_styles["GET /orders"]
+    assert "strokeColor=#4f79b5" in edge_styles["service-b: GET /orders"]
     assert "dashed=1" in edge_styles["orders.created"]
-    assert "labelBackgroundColor=#ffffff" in edge_styles["GET /orders"]
+    assert "labelBackgroundColor=#ffffff" in edge_styles["service-b: GET /orders"]
 
 
 def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
@@ -417,7 +417,7 @@ def test_render_graph_drawio_deduplicates_duplicate_visual_edges() -> None:
     root = ET.fromstring(document)
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
     assert len(edge_cells) == 1
-    assert edge_cells[0].get("value") == "GET /orders"
+    assert edge_cells[0].get("value") == "service-b: GET /orders"
 
 
 def test_render_graph_drawio_bundles_parallel_relations_in_a_multiline_label() -> None:
@@ -440,7 +440,7 @@ def test_render_graph_drawio_bundles_parallel_relations_in_a_multiline_label() -
     edge_cells = [cell for cell in root.iter("mxCell") if cell.get("edge") == "1"]
 
     assert len(edge_cells) == 1
-    assert edge_cells[0].get("value") == "GET /orders<br/>POST /orders"
+    assert edge_cells[0].get("value") == "service-b: GET /orders<br/>service-b: POST /orders"
     assert edge_cells[0].find("mxGeometry/Array[@as='points']") is None
 
 
@@ -619,7 +619,7 @@ def test_render_graph_d2_encodes_rest_and_kafka_edges() -> None:
     assert "  **service-b**" in rendered
     assert "  - `GET /orders`" in rendered
     assert 'label: "orders.created"' in rendered
-    assert 'svc_0 -> svc_1: "GET /orders" {' in rendered
+    assert 'svc_0 -> svc_1: "service-b: GET /orders" {' in rendered
     assert 'svc_0 -> topic_0: "orders.created" {' in rendered
     assert 'topic_0 -> svc_1: "orders.created" {' in rendered
     assert "style.stroke-dash: 3" in rendered

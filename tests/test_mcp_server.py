@@ -254,6 +254,7 @@ def test_dependency_graph_and_audit_tools_report_data_access_and_event_cycles(
         "mongodb_collections": 2,
         "external_apis": 1,
         "relations": 7,
+        "configured_client_relations": 0,
     }
     assert {edge["kind"] for edge in topology["edges"]} == {
         "publishes", "consumes", "calls_external", "writes", "reads",
@@ -411,11 +412,57 @@ def test_graph_tool_with_workspace_root_reports_a_real_cross_service_topology(
     assert set(result["services"]) == {"service-x", "service-y", "service-z"}
     assert len(result["edges"]) == 3
     assert {edge["label"] for edge in result["edges"]} == {
-        "GET /x-status",
-        "GET /y-status",
-        "GET /z-status",
+        "service-x: GET /x-status",
+        "service-y: GET /y-status",
+        "service-z: GET /z-status",
     }
     assert result["note"] == ""
+
+
+@pytest.mark.integration
+def test_graph_tool_defers_rest_and_kafka_dependencies_until_workspace_is_fully_indexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le graphe ne doit pas dépendre de l'ordre d'indexation des services."""
+    from ccc_radar.cli import app as cli_app
+
+    rest_cycle_workspace = FIXTURES_DIR / "rest_cycle_workspace"
+    dest = tmp_path / "rest_cycle_workspace"
+    shutil.copytree(rest_cycle_workspace, dest)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    monkeypatch.chdir(dest / "service-x")
+    assert runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
+    assert runner.invoke(cli_app, ["index", "--semgrep"]).exit_code == 0
+
+    result = graph(workspace_root=str(dest))
+
+    assert result["edges"] == []
+    assert "Dépendances inter-microservices différées" in result["note"]
+    assert "service-y" in result["note"]
+    assert "service-z" in result["note"]
+
+
+@pytest.mark.integration
+def test_dependency_graph_defers_kafka_relations_until_every_service_is_indexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un producteur seul ne crée pas une topologie Kafka partielle."""
+    from ccc_radar.cli import app as cli_app
+
+    kafka_workspace = FIXTURES_DIR / "kafka_workspace"
+    dest = tmp_path / "kafka_workspace"
+    shutil.copytree(kafka_workspace, dest)
+    monkeypatch.setenv("CCCR_FAKE_EMBEDDER", "1")
+    monkeypatch.chdir(dest / "order-service")
+    assert runner.invoke(cli_app, ["init", "--rules", "rules/java.yaml"]).exit_code == 0
+    assert runner.invoke(cli_app, ["index", "--semgrep"]).exit_code == 0
+
+    result = dependency_graph(workspace_root=str(dest))
+
+    assert result["edges"] == []
+    assert result["nodes"] == []
+    assert any("payment-service" in warning for warning in result["warnings"])
+    assert any("Dépendances inter-microservices différées" in warning for warning in result["warnings"])
 
 
 def test_trace_message_flow_tool_lists_sites_with_overlapping_finding(

@@ -8,7 +8,7 @@ L'accès à une implantation reste une opération explicite de la CLI.
 from collections import deque
 from dataclasses import dataclass
 
-from ccc_radar.graph import GraphEdge, build_graph
+from ccc_radar.graph import GraphEdge, build_graph, qualified_rest_resource
 from ccc_radar.models import ArchitectureRelation, MessageEndpoint
 from ccc_radar.modules import DiscoveredModule
 
@@ -347,7 +347,14 @@ def find_microservice_paths(
         origin = ("microservice", edge.from_service)
         destination = ("microservice", edge.to_service)
         if edge.kind == "rest":
-            add_edge(origin, destination, {"kind": "http", "label": edge.from_endpoint.topic})
+            add_edge(
+                origin,
+                destination,
+                {
+                    "kind": "http",
+                    "label": qualified_rest_resource(edge.to_service, edge.to_endpoint.topic),
+                },
+            )
             continue
         topic = ("topic", edge.from_endpoint.topic)
         add_edge(origin, topic, {"kind": "publishes", "label": edge.from_endpoint.topic})

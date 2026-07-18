@@ -5,6 +5,7 @@ from ccc_radar.graph import (
     find_outbound_calls_in_consumers,
     group_endpoints_by_module,
     paths_match,
+    qualified_rest_resource,
 )
 from dataclasses import replace
 
@@ -63,6 +64,12 @@ def _three_service_fixture() -> dict[str, list[MessageEndpoint]]:
 
 def test_paths_match_literal_call_against_template_serve() -> None:
     assert paths_match("GET /orders/123", "GET /orders/{id}")
+
+
+def test_qualified_rest_resource_keeps_provider_identity_separate_from_route_matching() -> None:
+    assert qualified_rest_resource("domain-annuaire", "GET /annuaire") == (
+        "domain-annuaire: GET /annuaire"
+    )
 
 
 def test_paths_match_requires_same_method() -> None:

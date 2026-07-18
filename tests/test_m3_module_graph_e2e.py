@@ -41,9 +41,9 @@ def test_export_without_workspace_reports_cross_module_topology_from_single_pare
     assert set(data["services"]) == {"service-x", "service-y", "service-z"}
     assert len(data["edges"]) == 3
     assert {edge["label"] for edge in data["edges"]} == {
-        "GET /x-status",
-        "GET /y-status",
-        "GET /z-status",
+        "service-x: GET /x-status",
+        "service-y: GET /y-status",
+        "service-z: GET /z-status",
     }
     assert data["note"] == ""
 

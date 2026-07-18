@@ -675,6 +675,18 @@ Pure functions, no SQLite write (ADR-27):
   the same file. Does not depend on the multi-service graph — works as soon as a
   single project is indexed (K1/K11 are enough).
 
+REST routes keep their raw `METHOD /path` form in `MessageEndpoint.topic` so
+route matching remains possible. Every graph, dependency, and architecture-path
+view qualifies a published REST resource with its provider —
+`<microservice>: METHOD /path` — so identical routes exposed by distinct
+services remain distinguishable.
+
+For a federated workspace, runtime dependencies (both REST and Kafka) are only
+derived after every discovered runtime microservice has an index. If one is
+missing or unreadable, the graph intentionally contains no inter-service edge
+and reports the missing services; this prevents topology from depending on the
+order in which repositories were indexed.
+
 `endpoints_by_service`: two ways to produce that multi-key dict, consumed by
 `build_graph` — topology depends only on the *shape* of the dict, never on
 where it came from:

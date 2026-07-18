@@ -70,7 +70,11 @@ from ccc_radar.search import SearchError, search_findings
 from ccc_radar.search import summary as compute_summary
 from ccc_radar.paths import config_path, db_path, state_dir
 from ccc_radar.store import Store, StoreError
-from ccc_radar.workspace import discover_maven_services, load_federation
+from ccc_radar.workspace import (
+    dependency_federation_warning,
+    discover_maven_services,
+    load_federation,
+)
 from ccc_radar.doctor import has_errors, run_doctor
 
 app = typer.Typer(
@@ -1187,11 +1191,15 @@ def _load_microservice_graph(
     findings_by_service: dict[str, list[Finding]] = {}
     cross_module_data_available = False
     if workspace is not None:
-        federation = load_federation(discover_maven_services(workspace))
+        services = discover_maven_services(workspace)
+        federation = load_federation(services)
         warnings.extend(federation.warnings)
         services_by_name = federation.endpoints_by_service
         findings_by_service = federation.findings_by_service
-        edges = build_graph(services_by_name)
+        if dependency_warning := dependency_federation_warning(services, federation):
+            warnings.append(dependency_warning)
+        else:
+            edges = build_graph(services_by_name)
         if include_mongodb:
             modules_by_service = {
                 service: module

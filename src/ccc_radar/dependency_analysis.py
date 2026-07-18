@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import TypedDict
 
 from ccc_radar.audit import assess_architecture, render_audit_json
-from ccc_radar.graph import build_graph, configured_api_client_domain, find_outbound_calls_in_consumers
+from ccc_radar.graph import (
+    build_graph,
+    configured_api_client_domain,
+    find_outbound_calls_in_consumers,
+    qualified_rest_resource,
+)
 from ccc_radar.models import MessageEndpoint
 from ccc_radar.modules import DiscoveredModule
 
@@ -115,7 +120,12 @@ def build_dependency_graph(
         source = add_node("microservice", edge.from_service)
         target = add_node("microservice", edge.to_service)
         if edge.kind == "rest":
-            add_edge(source, target, "http", edge.from_endpoint.topic)
+            add_edge(
+                source,
+                target,
+                "http",
+                qualified_rest_resource(edge.to_service, edge.to_endpoint.topic),
+            )
 
     for service, endpoint in _effective_kafka_endpoints(endpoints_by_service):
         service_id = add_node("microservice", service)
@@ -154,7 +164,7 @@ def build_dependency_graph(
         for domain in sorted(domains):
             if domain in known_services:
                 host_id = add_node("microservice", domain)
-                add_edge(caller_id, host_id, "http", "client API")
+                add_edge(caller_id, host_id, "http", qualified_rest_resource(domain, "API"))
             else:
                 result_warnings.append(
                     f"{caller} : client configuré du domaine « {domain} » — "
@@ -188,7 +198,9 @@ def build_dependency_graph(
             "external_apis": sum(node["kind"] == "external_api" for node in ordered_nodes),
             "relations": len(ordered_edges),
             "configured_client_relations": sum(
-                1 for edge in ordered_edges if edge["kind"] == "http" and edge["label"] == "client API"
+                1
+                for edge in ordered_edges
+                if edge["kind"] == "http" and edge["label"].endswith(": API")
             ),
         },
         "warnings": result_warnings,

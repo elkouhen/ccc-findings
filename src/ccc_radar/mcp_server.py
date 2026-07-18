@@ -47,7 +47,11 @@ from ccc_radar.search import search_findings as run_search_findings
 from ccc_radar.search import summary as compute_summary
 from ccc_radar.store import Store
 from ccc_radar.modules import DiscoveredModule
-from ccc_radar.workspace import discover_maven_services, load_federation
+from ccc_radar.workspace import (
+    dependency_federation_warning,
+    discover_maven_services,
+    load_federation,
+)
 
 mcp = FastMCP("cccr")
 
@@ -81,8 +85,12 @@ def _dependency_inventory(
         warning = _current_repo_endpoint_warning(store)
     warnings = [warning] if warning else []
     if workspace_root is not None:
-        federation = load_federation(discover_maven_services(Path(workspace_root)))
+        services = discover_maven_services(Path(workspace_root))
+        federation = load_federation(services)
         warnings.extend(federation.warnings)
+        if dependency_warning := dependency_federation_warning(services, federation):
+            warnings.append(dependency_warning)
+            return {}, {}, warnings
         return (
             dict(federation.endpoints_by_service),
             {
@@ -247,12 +255,17 @@ def graph(workspace_root: str | None = None) -> GraphResult:
 
     services = discover_maven_services(Path(workspace_root))
     federation = load_federation(services)
-    edges = build_graph(federation.endpoints_by_service)
+    warnings = ([repo_warning] if repo_warning else []) + federation.warnings
+    if dependency_warning := dependency_federation_warning(services, federation):
+        warnings.append(dependency_warning)
+        edges = []
+    else:
+        edges = build_graph(federation.endpoints_by_service)
     return render_graph_json(
         list(federation.endpoints_by_service),
         edges,
         outbound_calls,
-        warnings=([repo_warning] if repo_warning else []) + federation.warnings,
+        warnings=warnings,
         cross_module_data_available=True,
     )
 
