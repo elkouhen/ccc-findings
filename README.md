@@ -138,6 +138,9 @@ cccr export microservices --c4 architecture-likec4
 cccr export modules --html modules.html
 ```
 
+Dans le fichier HTML des microservices, les interrupteurs `HTTP` et `Kafka`
+permettent d'afficher indépendamment ces deux types de relations.
+
 `cccr index --manifest kafka-flow-graph-anonymous.json` imports a Kafka JSON
 or Markdown manifest when relationships cannot be detected from code. A
 `topics trace` flow is a static hypothesis, never a production trace.

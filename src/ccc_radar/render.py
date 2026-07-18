@@ -945,6 +945,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     #path-query { width: min(430px, calc(100vw - 64px)); }
     .toolbar button { width: 32px; height: 32px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
     .toolbar button:hover { background: #eaf2ff; }
+    .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+    .relation-filter input { margin: 0; accent-color: #315f9b; }
     .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 7px; border: 1px solid #b9c5d6; border-radius: 4px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     .path-lock input { margin: 0; accent-color: #315f9b; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow: auto; padding: 10px 12px; border: 1px solid #d7dee9; border-radius: 6px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 13px; line-height: 1.4; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
@@ -962,6 +964,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <div class="toolbar">
     <strong>CCC Radar</strong>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
+    <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
+    <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
     <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
     <label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label>
     <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
@@ -1189,22 +1193,29 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       labelGridCellSize: 110,
       labelRenderedSizeThreshold: 8,
       nodeReducer: (node, data) => {
+        if (data.type === "kafka_topic" && !relationKafka.checked) return { ...data, hidden: true };
         if (!selectedId || relatedNodes.has(node)) return data;
         return { ...data, color: "#d8e0ea", label: "" };
       },
       edgeReducer: (edge, data) => {
+        if (!isVisibleRelation(data.kind)) return { ...data, hidden: true };
         if (!selectedId || relatedEdges.has(edge)) return data;
         return { ...data, color: "#e5eaf0", size: .35 };
       },
     });
     const details = document.getElementById("details");
     const search = document.getElementById("search");
+    const relationHttp = document.getElementById("relation-http");
+    const relationKafka = document.getElementById("relation-kafka");
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
     const pathStops = [];
     const nodesByNormalizedName = new Map();
     function normalizeNodeName(name) {
       return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
+    }
+    function isVisibleRelation(kind) {
+      return (kind !== "rest" || relationHttp.checked) && (kind !== "kafka" || relationKafka.checked);
     }
     graphData.nodes.forEach(node => {
       const key = normalizeNodeName(node.name);
@@ -1255,6 +1266,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     function shortestPath(sourceId, targetId) {
       const outgoing = new Map();
       graphData.links.forEach((link, index) => {
+        if (!isVisibleRelation(link.kind)) return;
         if (!outgoing.has(link.source)) outgoing.set(link.source, []);
         outgoing.get(link.source).push({ target: link.target, edge: `edge-${index}`, link });
       });
@@ -1372,7 +1384,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function renderDetails(id) {
       const node = nodeDataById.get(id);
-      const edges = graphData.links.filter(link => link.source === id || link.target === id);
+      const edges = graphData.links.filter(
+        link => isVisibleRelation(link.kind) && (link.source === id || link.target === id)
+      );
       details.replaceChildren();
       const title = document.createElement("strong");
       title.textContent = node.name;
@@ -1398,6 +1412,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       relatedNodes = new Set([id]);
       relatedEdges = new Set();
       network.forEachEdge((edge, attributes, source, target) => {
+        if (!isVisibleRelation(attributes.kind)) return;
         if (source === id || target === id) {
           relatedEdges.add(edge); relatedNodes.add(source); relatedNodes.add(target);
         }
@@ -1444,6 +1459,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
+    [relationHttp, relationKafka].forEach(control => control.addEventListener("change", reset));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
       if (event.key === "Enter") showShortestPath();
@@ -1451,7 +1467,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     restoreState();
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();
-      const node = graphData.nodes.find(item => item.name.toLocaleLowerCase().includes(query));
+      const node = graphData.nodes.find(
+        item => item.name.toLocaleLowerCase().includes(query)
+          && (item.kind !== "kafka_topic" || relationKafka.checked)
+      );
       if (node) selectNode(node.id); else if (!query) reset();
     });
     window.addEventListener("resize", () => renderer.refresh());

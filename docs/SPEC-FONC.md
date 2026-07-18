@@ -349,7 +349,9 @@ nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice, and the published and consumed Java
 message types of a selected Kafka topic when statically known, as well as direct relations. Each
 relation uses a stable `source -> target : action` wording rather than a
-selection-relative direction. A text field accepts a path such as
+selection-relative direction. The `HTTP` and `Kafka` toggles independently
+show or hide those relations; hiding Kafka also hides Kafka topic nodes and
+path searches only traverse the currently displayed relation types. A text field accepts a path such as
 `service-a -> topic-1 -> service-b` and highlights the shortest directed path
 between every pair of consecutive entries, preserving REST call direction and
 Kafka `producer -> topic -> consumer` steps; producer-to-topic path relations include

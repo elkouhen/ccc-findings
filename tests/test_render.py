@@ -323,6 +323,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "APIs exposees" in document
     assert "renderer.getCamera().animatedZoom" in document
     assert 'id="fit-view"' in document
+    assert 'id="relation-http"' in document
+    assert 'id="relation-kafka"' in document
+    assert "function isVisibleRelation(kind)" in document
+    assert 'hidden: true' in document
     assert 'renderer.on("clickNode"' in document
     assert "nodeReducer:" in document
     assert "<\\/script>" in document
