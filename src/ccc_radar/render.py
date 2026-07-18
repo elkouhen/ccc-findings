@@ -992,12 +992,16 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-actions { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
     .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 6px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     #show-path { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
-    .path-history { display: grid; gap: 8px; }
-    .path-history-empty { margin: 0; color: #64748b; font-size: 12px; }
-    .path-history-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-    .path-history-item { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 5px; }
-    .path-history-replay { width: auto !important; min-width: 0; height: auto !important; min-height: 34px; padding: 7px 9px; color: #1d4f91 !important; background: #f8fafc !important; font-size: 12px !important; text-align: left; overflow-wrap: anywhere; }
-    .path-history-delete { width: 30px !important; height: 34px !important; color: #a53f3f !important; font-size: 16px !important; }
+    .path-history { gap: 10px; }
+    .path-history-header { padding: 2px 2px 6px; }
+    .path-history-kicker { margin: 0 0 2px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .path-history-title { margin: 0; color: #172033; font-size: 15px; line-height: 1.2; }
+    .path-history-description, .path-history-empty { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.4; }
+    .path-history-list { display: grid; gap: 7px; max-height: 360px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+    .path-history-item { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 6px; }
+    .path-history-replay { width: auto !important; min-width: 0; height: auto !important; min-height: 42px; padding: 8px 10px; border-color: #dbeafe !important; color: #1e429f !important; background: linear-gradient(135deg, #f8fbff, #eff6ff) !important; font-size: 12px !important; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+    .path-history-replay:hover { border-color: #93c5fd !important; background: #dbeafe !important; }
+    .path-history-delete { align-self: center; width: 30px !important; height: 30px !important; color: #a53f3f !important; font-size: 16px !important; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(68vh, 560px); overflow: auto; border: 1px solid #d7dee9; border-radius: 14px; background: rgba(255, 255, 255, .97); color: #475569; font-size: 13px; line-height: 1.45; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
     .details-header { padding: 16px; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #f8fafc, #eef5ff); }
     .details-header.is-low { border-left: 4px solid #2563eb; }
@@ -1020,6 +1024,22 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .relation-link { display: block; width: 100%; padding: 7px 8px; border: 1px solid #e2e8f0; border-radius: 6px; color: #1d4f91; background: #f8fafc; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
     .relation-link:hover, .relation-link:focus-visible { border-color: #93c5fd; background: #eff6ff; outline: none; }
     .details-empty { padding: 18px; color: #64748b; text-align: center; }
+    .path-details-header { padding: 16px; border-bottom: 1px solid #dbeafe; background: linear-gradient(135deg, #eff6ff, #f8fafc 60%, #f0fdf4); }
+    .path-details-kicker { margin: 0 0 3px; color: #1d4f91; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .path-details-title { margin: 0; color: #172033; font-size: 18px; line-height: 1.25; }
+    .path-details-summary { margin: 8px 0 0; color: #52616b; font-size: 12px; }
+    .path-overview { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .path-overview-item { position: relative; padding: 7px 9px 7px 31px !important; border: 1px solid #e2e8f0; background: #fff !important; }
+    .path-overview-item::before { position: absolute; top: 8px; left: 9px; color: #94a3b8; content: "→"; }
+    .path-overview-item:first-child::before { color: #2563eb; content: "●"; font-size: 9px; }
+    .path-overview-item:last-child::before { color: #16a34a; content: "●"; font-size: 9px; }
+    .path-overview-item.is-topic { border-style: dashed; color: #475569; background: #f8fafc !important; }
+    .path-step { border-left: 3px solid #94a3b8; }
+    .path-step.is-rest { border-left-color: #7c3aed; }
+    .path-step.is-kafka { border-left-color: #0f766e; }
+    .path-step.is-mongodb { border-left-color: #2563eb; }
+    .path-step-label { margin: 0 0 4px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .path-step-text { margin: 0; color: #334155; font-size: 13px; line-height: 1.45; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
     .legend-content { display: grid; gap: 5px; }
@@ -1061,7 +1081,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       </details>
     </div>
     <div id="paths-panel" class="toolbar-panel path-history" role="tabpanel" aria-labelledby="paths-tab" hidden>
-      <p class="path-history-empty">Les chemins analyses sont conserves dans ce navigateur.</p>
+      <div class="path-history-header">
+        <p class="path-history-kicker">Navigation architecture</p>
+        <h2 class="path-history-title">Chemins analyses</h2>
+        <p class="path-history-description">Rejouez un parcours ou retirez-le de cette liste locale.</p>
+      </div>
       <ul id="analyzed-paths" class="path-history-list" aria-label="Chemins analyses"></ul>
       <p id="analyzed-paths-empty" class="path-history-empty">Aucun chemin analyse pour le moment.</p>
     </div>
@@ -1590,8 +1614,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function renderPathDetails(path) {
       details.replaceChildren();
-      const title = document.createElement("strong");
-      title.textContent = pathStops.length > 2 ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
       const pathNodeLabel = (id, index) => {
         const node = nodeDataById.get(id);
         const order = pathMicroserviceOrder.get(id);
@@ -1602,10 +1624,35 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const types = publishedTypes.length ? publishedTypes : node.consumed_message_types || [];
         return types.length ? `${node.name} (${types.join(", ")})` : `${node.name} (type Java non indexe)`;
       };
-      details.append(title, document.createTextNode(
-        path.nodes.map(pathNodeLabel).join(" -> ")
-      ));
-      appendList("Parcours", path.nodes.map(pathNodeLabel));
+      const header = document.createElement("header");
+      header.className = "path-details-header";
+      const kicker = document.createElement("p");
+      kicker.className = "path-details-kicker";
+      kicker.textContent = "Analyse de flux";
+      const title = document.createElement("h1");
+      title.className = "path-details-title";
+      title.textContent = pathStops.length > 2 ? "Chemin avec noeuds intermediaires" : "Chemin le plus court";
+      const summary = document.createElement("p");
+      summary.className = "path-details-summary";
+      const serviceCount = path.nodes.filter(id => nodeDataById.get(id).kind === "microservice").length;
+      summary.textContent = `${serviceCount} microservice${serviceCount > 1 ? "s" : ""} · ${path.edges.length} etape${path.edges.length > 1 ? "s" : ""}`;
+      header.append(kicker, title, summary);
+      details.append(header);
+      const overview = document.createElement("section");
+      overview.className = "details-section";
+      const overviewTitle = document.createElement("h2");
+      overviewTitle.textContent = "Parcours";
+      const overviewList = document.createElement("ol");
+      overviewList.className = "path-overview";
+      path.nodes.forEach((id, index) => {
+        const item = document.createElement("li");
+        item.className = "path-overview-item";
+        if (nodeDataById.get(id).kind === "kafka_topic") item.classList.add("is-topic");
+        item.textContent = pathNodeLabel(id, index);
+        overviewList.append(item);
+      });
+      overview.append(overviewTitle, overviewList);
+      details.append(overview);
       const pathRelationText = link => {
         const source = nodeDataById.get(link.source);
         const target = nodeDataById.get(link.target);
@@ -1631,7 +1678,16 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           ? "Publication Kafka" : "Consommation Kafka";
       };
       path.edges.forEach((step, index) => {
-        appendList(`Etape ${index + 1} · ${pathStepTitle(step.link)}`, [pathRelationText(step.link)]);
+        const section = document.createElement("section");
+        section.className = `details-section path-step is-${step.link.kind}`;
+        const label = document.createElement("p");
+        label.className = "path-step-label";
+        label.textContent = `Etape ${index + 1} · ${pathStepTitle(step.link)}`;
+        const text = document.createElement("p");
+        text.className = "path-step-text";
+        text.textContent = pathRelationText(step.link);
+        section.append(label, text);
+        details.append(section);
       });
     }
     function showShortestPath() {

@@ -861,6 +861,9 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "const pathRelationText = link" in document
     assert "const pathStepTitle = link" in document
     assert "Etape ${index + 1}" in document
+    assert 'header.className = "path-details-header"' in document
+    assert 'overviewList.className = "path-overview"' in document
+    assert 'section.className = `details-section path-step is-${step.link.kind}`' in document
     assert "const pathNodeLabel" in document
     assert "node.name} (${types.join" in document
     assert "node.consumed_message_types" in document

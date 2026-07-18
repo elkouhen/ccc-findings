@@ -353,6 +353,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "function setPathMicroserviceOrder(path)" in document
     assert "return `${order}. ${node.name}`;" in document
     assert "label: `${order}. ${data.label}`" in document
+    assert ".path-history-header" in document
+    assert ".path-details-header" in document
+    assert ".path-overview-item" in document
+    assert ".path-step.is-kafka" in document
     assert '<details class="legend"' in document
     assert '.toolbar input:not([type="checkbox"])' in document
     assert "Appel HTTP" in document
