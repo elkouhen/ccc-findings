@@ -77,6 +77,20 @@ def _effective_kafka_endpoints(
     ]
 
 
+def _known_microservices(
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    modules_by_service: dict[str, DiscoveredModule],
+) -> set[str]:
+    """Return services discovered by the workspace, even without endpoints.
+
+    A configured API client establishes a service-level dependency.  Its host
+    therefore only needs to be indexed as a runtime service; it does *not*
+    need a detected REST ``serve`` endpoint.  Federation preserves an empty
+    endpoint list for such a service, hence the dictionary keys are facts too.
+    """
+    return set(endpoints_by_service) | set(modules_by_service)
+
+
 def build_dependency_graph(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     modules_by_service: dict[str, DiscoveredModule],
@@ -141,7 +155,7 @@ def build_dependency_graph(
     # Paires (appelant, domaine) tirées du tampon cccr-api-domain: présent sur
     # les sites d'appel — y compris ceux non matchés à un serve (pour diagnostic).
     configured_clients: dict[str, set[str]] = {}
-    known_services = set(endpoints_by_service) | set(modules_by_service)
+    known_services = _known_microservices(endpoints_by_service, modules_by_service)
 
     for service, endpoints in endpoints_by_service.items():
         service_id = add_node("microservice", service)

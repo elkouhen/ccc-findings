@@ -164,6 +164,28 @@ def test_configured_client_relation_when_host_known_via_modules_only() -> None:
     assert result["warnings"] == []
 
 
+def test_configured_client_relation_does_not_require_a_detected_published_resource() -> None:
+    """Le service cible peut être indexé sans endpoint REST `serve` détecté."""
+    caller = make_endpoint(
+        "call",
+        "ANY <dynamic>",
+        "caller/Client.java",
+        module="caller-service",
+        snippet="annuaireApi.get()\ncccr-api-domain:domain-annuaire",
+        topic_dynamic=True,
+    )
+
+    result = build_dependency_graph(
+        {"caller-service": [caller], "domain-annuaire": []},
+        {},
+    )
+
+    assert [(edge["source"], edge["target"], edge["label"]) for edge in _client_calls(result["edges"])] == [
+        ("microservice:caller-service", "microservice:domain-annuaire", "domain-annuaire: API")
+    ]
+    assert result["warnings"] == []
+
+
 def test_unresolved_configured_client_domain_emits_warning() -> None:
     caller = make_endpoint(
         "call",
