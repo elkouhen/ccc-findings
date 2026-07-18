@@ -1237,6 +1237,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .relation-filters legend { width: 100%; margin-bottom: 2px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 999px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     .relation-filter input, .path-lock input { width: 14px; height: 14px; margin: 0; padding: 0; border: 0; accent-color: #315f9b; }
+    .filter-presets { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 7px; border-top: 1px solid #e2e8f0; }
+    .filter-preset { width: auto !important; height: 27px !important; padding: 0 8px !important; color: #52616b !important; border-color: #d7dee9 !important; background: #fff !important; font-size: 11px !important; font-weight: 700; }
+    .filter-preset:hover, .filter-preset.is-active { color: #1d4f91 !important; border-color: #93c5fd !important; background: #eff6ff !important; }
     .layout-controls { display: grid; gap: 6px; margin: 0; padding: 8px 0 0; border: 0; border-top: 1px solid #e2e8f0; }
     .layout-controls legend { padding: 0; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .layout-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
@@ -1302,6 +1305,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .details-section ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
     .details-section li { padding: 6px 8px; border-radius: 6px; color: #334155; background: #f8fafc; overflow-wrap: anywhere; }
     .details-section li.relation-item { padding: 0; background: transparent; }
+    .details-group { border-bottom: 1px solid #dfe7f0; }
+    .details-group:last-child { border-bottom: 0; }
+    .details-group > summary { display: flex; align-items: center; min-height: 38px; padding: 0 16px; color: #315f9b; font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+    .details-group[open] > summary { border-bottom: 1px solid #edf2f7; background: #f8fafc; }
+    .details-group > .details-section { padding-left: 16px; padding-right: 16px; }
     .relation-link { display: block; width: 100%; padding: 7px 8px; border: 1px solid #e2e8f0; border-radius: 6px; color: #1d4f91; background: #f8fafc; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
     .relation-link:hover, .relation-link:focus-visible { border-color: #93c5fd; background: #eff6ff; outline: none; }
     .details-empty { padding: 18px; color: #64748b; text-align: center; }
@@ -1356,10 +1364,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
-      <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Graphe</button>
-      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Dépendances</button>
-      <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Indexation</button>
-      <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Chemins analyses</button>
+      <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Interactions</button>
+      <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Build</button>
+      <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Qualité</button>
+      <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Parcours</button>
     </div>
     <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">
       <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
@@ -1369,14 +1377,21 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
         <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
       </fieldset>
+      <div class="filter-presets" role="group" aria-label="Vues de relations">
+        <button class="filter-preset is-active" type="button" data-preset="all">Toutes</button>
+        <button class="filter-preset" type="button" data-preset="http">REST</button>
+        <button class="filter-preset" type="button" data-preset="kafka">Kafka</button>
+        <button class="filter-preset" type="button" data-preset="mongodb">MongoDB</button>
+        <button class="filter-preset" type="button" data-preset="selection" title="Isoler les relations du noeud selectionne">Sélection</button>
+      </div>
       <fieldset class="layout-controls">
         <legend>Disposition</legend>
         <div class="layout-options" role="group" aria-label="Choix de la disposition du graphe">
-          <button id="layout-forceatlas2" class="layout-option" type="button" aria-pressed="false" title="Regrouper les noeuds lies avec ForceAtlas2">ForceAtlas2</button>
-          <button id="layout-noverlap" class="layout-option" type="button" aria-pressed="false" title="Ecarter les noeuds qui se chevauchent">Noverlap</button>
-          <button id="layout-forceatlas2-noverlap" class="layout-option is-active" type="button" aria-pressed="true" title="Regrouper puis ecarter les noeuds">ForceAtlas2 + Noverlap</button>
+          <button id="layout-forceatlas2" class="layout-option" type="button" aria-pressed="false" title="ForceAtlas2 : rapprocher les noeuds lies">Regroupée</button>
+          <button id="layout-noverlap" class="layout-option" type="button" aria-pressed="false" title="Noverlap : écarter les noeuds qui se chevauchent">Aérée</button>
+          <button id="layout-forceatlas2-noverlap" class="layout-option is-active" type="button" aria-pressed="true" title="ForceAtlas2 + Noverlap : rapprocher puis écarter">Équilibrée</button>
         </div>
-        <p id="layout-status" class="layout-status" role="status">Chargement de la disposition ForceAtlas2 + Noverlap…</p>
+        <p id="layout-status" class="layout-status" role="status">Chargement de la vue équilibrée…</p>
       </fieldset>
       <details class="path-controls">
         <summary>Explorer un chemin</summary>
@@ -1778,9 +1793,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       ["forceatlas2-noverlap", document.getElementById("layout-forceatlas2-noverlap")],
     ]);
     const layoutLabels = new Map([
-      ["forceatlas2", "ForceAtlas2"],
-      ["noverlap", "Noverlap"],
-      ["forceatlas2-noverlap", "ForceAtlas2 + Noverlap"],
+      ["forceatlas2", "vue regroupée"],
+      ["noverlap", "vue aérée"],
+      ["forceatlas2-noverlap", "vue équilibrée"],
     ]);
     let layoutRequest = 0;
     const pathStops = [];
@@ -1918,7 +1933,49 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         });
       }
     }
+    const filterPresetButtons = [...document.querySelectorAll(".filter-preset")];
+    function setActiveRelationPreset(preset) {
+      filterPresetButtons.forEach(button => button.classList.toggle("is-active", button.dataset.preset === preset));
+    }
+    function setRelationFilters(http, kafka, mongodb) {
+      relationHttp.checked = http;
+      relationKafka.checked = kafka;
+      relationMongodb.checked = mongodb;
+    }
+    function applyRelationPreset(preset) {
+      if (preset === "selection") {
+        setRelationFilters(true, true, true);
+        if (!selectedId) {
+          layoutStatus.textContent = "Selectionnez d'abord un noeud pour isoler ses relations.";
+          setActiveRelationPreset("all");
+          reset();
+          return;
+        }
+        relatedNodes = new Set([selectedId]);
+        relatedEdges = new Set();
+        network.forEachEdge((edge, _attributes, source, target) => {
+          if (source === selectedId || target === selectedId) {
+            relatedEdges.add(edge); relatedNodes.add(source); relatedNodes.add(target);
+          }
+        });
+        setActiveRelationPreset(preset);
+        renderer.refresh();
+        return;
+      }
+      const filters = {
+        all: [true, true, true],
+        http: [true, false, false],
+        kafka: [false, true, false],
+        mongodb: [false, false, true],
+      };
+      const selected = filters[preset];
+      if (!selected) return;
+      setRelationFilters(...selected);
+      setActiveRelationPreset(preset);
+      reset();
+    }
     function renderIndexingIssues() {
+      issuesTab.textContent = `Qualité (${indexingIssues.length})`;
       indexingIssuesList.replaceChildren();
       indexingIssuesEmpty.hidden = indexingIssues.length > 0;
       indexingIssues.forEach(issue => {
@@ -1947,6 +2004,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
     }
     function renderAnalyzedPaths() {
+      pathsTab.textContent = `Parcours (${analyzedPaths.length})`;
       analyzedPathsList.replaceChildren();
       analyzedPathsEmpty.hidden = analyzedPaths.length > 0;
       analyzedPaths.forEach((stops, index) => {
@@ -1990,7 +2048,20 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     loadAnalyzedPaths();
 
-    function appendList(title, values) {
+    function createDetailsGroup(title, open = true) {
+      const group = document.createElement("details");
+      group.className = "details-group";
+      group.open = open;
+      const summary = document.createElement("summary");
+      summary.textContent = title;
+      group.append(summary);
+      details.append(group);
+      return group;
+    }
+    function discardEmptyDetailsGroup(group) {
+      if (!group.querySelector(".details-section")) group.remove();
+    }
+    function appendList(title, values, container = details) {
       if (!values.length) return;
       const section = document.createElement("section");
       section.className = "details-section";
@@ -1999,9 +2070,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const list = document.createElement("ul");
       values.forEach(value => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
       section.append(heading, list);
-      details.append(section);
+      container.append(section);
     }
-    function appendActionList(title, entries) {
+    function appendActionList(title, entries, container = details) {
       if (!entries.length) return;
       const section = document.createElement("section");
       section.className = "details-section";
@@ -2021,9 +2092,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         list.append(item);
       });
       section.append(heading, list);
-      details.append(section);
+      container.append(section);
     }
-    function appendRelationList(title, links, currentId, labelForLink) {
+    function appendRelationList(title, links, currentId, labelForLink, container = details) {
       const seen = new Set();
       const entries = links.flatMap(link => {
         const targetId = link.source === currentId ? link.target : link.source;
@@ -2052,7 +2123,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         list.append(item);
       });
       section.append(heading, list);
-      details.append(section);
+      container.append(section);
     }
     const inspectorModal = document.getElementById("inspector-modal");
     const inspectorTitle = document.getElementById("inspector-title");
@@ -2463,7 +2534,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function renderDetails(id) {
       const node = nodeDataById.get(id);
-      const edges = graphData.links.filter(
+      const indexedEdges = graphData.links.filter(link => link.source === id || link.target === id);
+      const edges = indexedEdges.filter(
         link => isVisibleRelation(link.kind) && (link.source === id || link.target === id)
       );
       details.replaceChildren();
@@ -2482,8 +2554,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       meta.className = "details-meta";
       const relationBadge = document.createElement("span");
       relationBadge.className = "detail-badge";
-      relationBadge.textContent = `Relations visibles : ${edges.length}`;
-      meta.append(relationBadge);
+      relationBadge.textContent = `Relations indexees : ${indexedEdges.length}`;
+      const visibleBadge = document.createElement("span");
+      visibleBadge.className = "detail-badge";
+      visibleBadge.textContent = `Affichees : ${edges.length}`;
+      meta.append(relationBadge, visibleBadge);
       if (complexity) {
         const scoreBadge = document.createElement("span");
         scoreBadge.className = `detail-badge complexity ${complexity.level}`;
@@ -2514,28 +2589,31 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
             };
           }),
         ];
-        appendActionList("APIs publiees", publishedApis);
+        const exposesGroup = createDetailsGroup("Expose");
+        appendActionList("APIs publiees", publishedApis, exposesGroup);
         appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).flatMap(contract => [
           ...(contract.spec ? [{
             label: `Swagger UI · ${contract.path}`,
             title: "Ouvrir la specification OpenAPI",
             action: () => openOpenApiContract(contract),
-          }] : []),
+          }] : [{
+            label: `Specification indisponible · ${contract.path}`,
+            title: "Le fichier OpenAPI n'est pas accessible dans cet export",
+            action: () => focusOpenApiContract(id, contract),
+          }]),
           {
             label: `Consommateurs · ${contract.path}`,
             title: "Mettre en evidence les consommateurs de ce contrat OpenAPI",
             action: () => focusOpenApiContract(id, contract),
           },
-        ]));
-        const dtoNames = (graphData.kafka_dtos || [])
-          .filter(dto => (dto.producers || []).includes(node.name) || (dto.consumers || []).includes(node.name))
-          .map(dto => dto.name)
-          .sort();
-        appendActionList("Classes DTO Kafka", dtoNames.map(dto => ({
-          label: dto,
-          title: "Afficher les champs et les relations Kafka de ce DTO",
-          action: () => openDtoInspector(dto),
-        })));
+        ]), exposesGroup);
+        appendRelationList("Consommateurs REST detectes", httpClients, id, link => {
+          const source = nodeDataById.get(link.source);
+          const resource = restResourceLabel(link, node);
+          return resource ? `${source.name} · ${resource}` : `${source.name} · contrat non indexe`;
+        }, exposesGroup);
+        discardEmptyDetailsGroup(exposesGroup);
+        const consumesGroup = createDetailsGroup("Consomme");
         appendRelationList("APIs consommees", [...httpCalls, ...kafkaConsumptions], id, link => {
           if (link.kind === "rest") {
             const target = nodeDataById.get(link.target);
@@ -2547,23 +2625,31 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           const topic = nodeDataById.get(link.source);
           const types = link.consumed_message_types || [];
           return types.length ? `Kafka · ${topic.name} <${types.join(", ")}>` : `Kafka · ${topic.name}`;
-        });
-        appendRelationList("Consommateurs REST detectes", httpClients, id, link => {
-          const source = nodeDataById.get(link.source);
-          const resource = restResourceLabel(link, node);
-          return resource ? `${source.name} · ${resource}` : `${source.name} · contrat non indexe`;
-        });
+        }, consumesGroup);
+        discardEmptyDetailsGroup(consumesGroup);
+        const dataGroup = createDetailsGroup("Donnees et evenements");
+        const dtoNames = (graphData.kafka_dtos || [])
+          .filter(dto => (dto.producers || []).includes(node.name) || (dto.consumers || []).includes(node.name))
+          .map(dto => dto.name)
+          .sort();
+        appendActionList("Classes DTO Kafka", dtoNames.map(dto => ({
+          label: dto,
+          title: "Afficher les champs et les relations Kafka de ce DTO",
+          action: () => openDtoInspector(dto),
+        })), dataGroup);
         appendRelationList("Collections MongoDB utilisees", mongoCollections, id, link => (
           nodeDataById.get(link.target).name
-        ));
+        ), dataGroup);
+        discardEmptyDetailsGroup(dataGroup);
       }
       if (node.kind === "kafka_topic") {
-        appendList("Types publies", node.published_message_types);
-        appendList("Types consommes", node.consumed_message_types);
+        const eventGroup = createDetailsGroup("Evenement");
+        appendList("Types publies", node.published_message_types, eventGroup);
+        appendList("Types consommes", node.consumed_message_types, eventGroup);
         appendRelationList("Services producteurs", edges.filter(link => link.kind === "kafka" && link.target === id), id,
-          link => nodeDataById.get(link.source).name);
+          link => nodeDataById.get(link.source).name, eventGroup);
         appendRelationList("Services consommateurs", edges.filter(link => link.kind === "kafka" && link.source === id), id,
-          link => nodeDataById.get(link.target).name);
+          link => nodeDataById.get(link.target).name, eventGroup);
         const dtoNames = [...new Set([
           ...(node.published_message_types || []),
           ...(node.consumed_message_types || []),
@@ -2572,12 +2658,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           label: dto,
           title: "Afficher les champs et les relations Kafka de ce DTO",
           action: () => openDtoInspector(dto),
-        })));
+        })), eventGroup);
+        discardEmptyDetailsGroup(eventGroup);
       }
       if (node.kind === "mongodb_collection") {
-        appendList("Stockee par", [node.owner]);
+        const dataGroup = createDetailsGroup("Donnees");
+        appendList("Stockee par", [node.owner], dataGroup);
         appendRelationList("Services utilisant cette collection", edges.filter(link => link.kind === "mongodb" && link.target === id), id,
-          link => nodeDataById.get(link.source).name);
+          link => nodeDataById.get(link.source).name, dataGroup);
+        discardEmptyDetailsGroup(dataGroup);
       }
     }
     function focusNodeRelations(id, matches) {
@@ -2633,6 +2722,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function reset() {
       selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
+      if (document.querySelector('.filter-preset[data-preset="selection"]')?.classList.contains("is-active")) {
+        setActiveRelationPreset("all");
+      }
       renderer.refresh();
       setDetailsEmpty("Selectionnez un noeud pour isoler ses relations et afficher ses APIs.");
       search.value = "";
@@ -2679,7 +2771,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     dependenciesTab.addEventListener("click", () => setToolbarTab("dependencies"));
     issuesTab.addEventListener("click", () => setToolbarTab("issues"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
+    filterPresetButtons.forEach(button => button.addEventListener("click", () => applyRelationPreset(button.dataset.preset)));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", () => {
+      setActiveRelationPreset(null);
       reset();
       dependencyRenderer?.refresh();
     }));

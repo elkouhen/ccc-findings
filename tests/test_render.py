@@ -370,13 +370,17 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "APIs publiees" in document
     assert "APIs consommees" in document
     assert "Consommateurs REST detectes" in document
-    assert "function appendActionList(title, entries)" in document
+    assert "function appendActionList(title, entries, container = details)" in document
     assert "function focusPublishedRestResource(id, resource)" in document
     assert "function focusOpenApiContract(id, contract)" in document
     assert "REST · ${resource}" in document
     assert "Kafka · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
-    assert "function appendRelationList(title, links, currentId, labelForLink)" in document
+    assert "function appendRelationList(title, links, currentId, labelForLink, container = details)" in document
+    assert "Interactions" in document
+    assert "Qualité" in document
+    assert 'data-preset="selection"' in document
+    assert "function createDetailsGroup(title, open = true)" in document
     assert "function activeRenderer()" in document
     assert "activeRenderer().getCamera().animatedZoom" in document
     assert 'id="fit-view"' in document

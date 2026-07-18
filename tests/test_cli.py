@@ -838,7 +838,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "REST · ${resource}" in document
     assert "Kafka · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
-    assert "Relations visibles : ${edges.length}" in document
+    assert "Relations indexees : ${indexedEdges.length}" in document
+    assert "Affichees : ${edges.length}" in document
     assert "contrat non indexe" in document
     assert 'appendList("Findings"' not in document
     assert '"findings"' not in document
