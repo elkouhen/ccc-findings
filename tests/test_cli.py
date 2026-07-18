@@ -855,6 +855,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "graphology-layout-noverlap@0.4.2" in document
     assert "function sugiyamaPositions(nodes, links)" not in document
     assert "function applyLayout(layout, persist = true)" not in document
+    assert 'id="issues-tab"' in document
+    assert 'id="issues-panel"' in document
+    assert 'id="indexing-issues"' in document
+    assert "function renderIndexingIssues()" in document
     assert 'id="paths-tab"' in document
     assert 'id="analyzed-paths"' in document
     assert "function rememberAnalyzedPath(stops)" in document

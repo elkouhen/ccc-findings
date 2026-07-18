@@ -30,13 +30,14 @@ def make_endpoint(
     framework: str | None = None,
     snippet: str = "",
     message_type: str | None = None,
+    topic_dynamic: bool = False,
 ) -> MessageEndpoint:
     return MessageEndpoint(
         id=compute_endpoint_id(role, topic, path, start_line, end_line),
         role=role,
         system=system,
         topic=topic,
-        topic_dynamic=False,
+        topic_dynamic=topic_dynamic,
         source="code",
         framework=framework,
         path=path,
@@ -186,6 +187,33 @@ def test_render_graph_json_returns_note_when_cross_module_data_is_missing() -> N
     assert rendered["services"] == []
     assert rendered["edges"] == []
     assert "topologie inter-services" in rendered["note"]
+
+
+def test_render_graph_html_exposes_all_indexing_issues() -> None:
+    endpoints_by_service = {
+        "orders": [
+            make_endpoint(
+                "produce", "${orders.topic}", "orders/Publisher.java", system="kafka", topic_dynamic=True
+            ),
+            make_endpoint("call", "GET /payments", "orders/PaymentClient.java"),
+        ]
+    }
+
+    document = render_graph_html(
+        endpoints_by_service,
+        [],
+        indexing_warnings=["orders : inventaire obsolete"],
+    )
+
+    assert 'id="issues-tab"' in document
+    assert 'id="issues-panel"' in document
+    assert 'id="indexing-issues"' in document
+    assert "Problemes d'indexation" in document
+    assert "Avertissement d'inventaire" in document
+    assert "Topic Kafka dynamique" in document
+    assert "Type Kafka inconnu" in document
+    assert "Appel HTTP non rapproche" in document
+    assert "function renderIndexingIssues()" in document
 
 
 def test_render_graph_text_formats_services_edges_and_outbound_calls() -> None:

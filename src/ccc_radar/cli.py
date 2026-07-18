@@ -1171,6 +1171,7 @@ class _MicroserviceGraphData:
     collections_by_service: dict[str, list[str]]
     modules_by_service: dict[str, DiscoveredModule]
     findings_by_service: dict[str, list[Finding]]
+    warnings: list[str]
     result: dict[str, object]
 
 
@@ -1251,7 +1252,7 @@ def _load_microservice_graph(
         cross_module_data_available=cross_module_data_available,
     )
     return _MicroserviceGraphData(
-        services_by_name, edges, collections_by_service, modules_by_service, findings_by_service, result
+        services_by_name, edges, collections_by_service, modules_by_service, findings_by_service, warnings, result
     )
 
 
@@ -1357,6 +1358,7 @@ def export_microservices_cmd(
                 graph_data.edges,
                 graph_data.collections_by_service,
                 graph_data.modules_by_service,
+                graph_data.warnings,
             ),
             encoding="utf-8",
         )

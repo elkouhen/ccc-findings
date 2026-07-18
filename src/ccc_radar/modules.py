@@ -128,6 +128,11 @@ _FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
 _JAVA_STRING_LITERAL_RE = re.compile(r'^\s*"((?:\\.|[^"\\])*)"\s*$')
 
 
+def _is_test_module(name: str) -> bool:
+    """Whether a build module is dedicated to tests and must not be indexed."""
+    return "test" in name.casefold()
+
+
 def _trace(stage: str, **fields: object) -> None:
     if os.environ.get("CCCR_TRACE") != "1":
         return
@@ -638,6 +643,10 @@ def discover_modules(
         _trace("module.maven.begin", pom=pom_path)
         artifact_id, _, packaging = parse_pom(pom_path)
         _trace("module.maven.parsed", pom=pom_path, artifact=artifact_id, packaging=packaging)
+        module_name = artifact_id or module_dir.name
+        if _is_test_module(module_name):
+            _trace("module.maven.skipped_test", pom=pom_path, artifact=module_name)
+            continue
         if use_tree_sitter:
             entrypoint = _starts_application(module_dir)
         else:
@@ -651,7 +660,7 @@ def discover_modules(
         )
         modules.append(
             DiscoveredModule(
-                name=artifact_id or module_dir.name,
+                name=module_name,
                 path=module_dir,
                 build_system="maven",
                 version=pom_version(pom_path),
@@ -665,6 +674,9 @@ def discover_modules(
     for name, module_dir, version in discover_gradle_modules(root):
         module_dir = module_dir.resolve()
         if module_dir in seen_paths:
+            continue
+        if _is_test_module(name):
+            _trace("module.gradle.skipped_test", module=module_dir, name=name)
             continue
         has_build_file = any(
             (module_dir / filename).is_file() for filename in ("build.gradle", "build.gradle.kts")

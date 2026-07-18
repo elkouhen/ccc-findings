@@ -55,6 +55,19 @@ def test_discover_modules_includes_maven_aggregators_libraries_and_gradle_projec
     ]
 
 
+def test_discover_modules_excludes_maven_and_gradle_modules_named_as_tests(tmp_path: Path) -> None:
+    maven_test = tmp_path / "orders-tests"
+    gradle_test = tmp_path / "contract-test-kit"
+    production = tmp_path / "orders"
+    for module in (maven_test, gradle_test, production):
+        module.mkdir()
+    _write_pom(maven_test / "pom.xml", "orders-tests", "1.0.0")
+    _write_pom(production / "pom.xml", "orders-api", "1.0.0")
+    (gradle_test / "build.gradle").write_text("archivesBaseName = 'contract-test-kit'\n")
+
+    assert [module.name for module in discover_modules(tmp_path)] == ["orders-api"]
+
+
 def test_discover_module_dependencies_keeps_only_local_maven_and_gradle_targets(
     tmp_path: Path,
 ) -> None:

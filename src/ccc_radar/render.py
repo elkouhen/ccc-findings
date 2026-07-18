@@ -498,11 +498,63 @@ def render_graph_drawio(
     )
 
 
+def _indexing_issues(
+    endpoints_by_service: dict[str, list[MessageEndpoint]],
+    edges: list[GraphEdge],
+    warnings: list[str] | None,
+) -> list[dict[str, str]]:
+    """Return every unresolved inventory fact suitable for the HTML export."""
+    issues: list[dict[str, str]] = []
+
+    def add(
+        severity: str, category: str, message: str, endpoint: MessageEndpoint | None = None
+    ) -> None:
+        issue = {"severity": severity, "category": category, "message": message}
+        if endpoint is not None:
+            issue["location"] = f"{endpoint.path}:{endpoint.start_line}"
+        issues.append(issue)
+
+    for warning in dict.fromkeys(warnings or []):
+        add("warning", "Avertissement d'inventaire", warning)
+
+    matched_http_call_ids = {edge.from_endpoint.id for edge in edges if edge.kind == "rest"}
+    for service, endpoints in sorted(endpoints_by_service.items()):
+        for endpoint in sorted(endpoints, key=lambda item: (item.path, item.start_line, item.id)):
+            if endpoint.system == "kafka" and endpoint.topic_dynamic:
+                add(
+                    "warning",
+                    "Topic Kafka dynamique",
+                    f"{service} : le topic {endpoint.topic!r} ne peut pas etre resolu statiquement.",
+                    endpoint,
+                )
+            if endpoint.system == "kafka" and not endpoint.message_type:
+                add(
+                    "info",
+                    "Type Kafka inconnu",
+                    f"{service} : le type Java du message sur {endpoint.topic!r} n'a pas ete deduit.",
+                    endpoint,
+                )
+            if endpoint.system == "rest" and endpoint.role == "call" and endpoint.id not in matched_http_call_ids:
+                add(
+                    "warning" if endpoint.topic_dynamic else "info",
+                    "Appel HTTP non rapproche",
+                    f"{service} : aucun microservice fournisseur n'a ete identifie pour {endpoint.topic!r}.",
+                    endpoint,
+                )
+
+    severity_rank = {"warning": 0, "info": 1}
+    return sorted(
+        issues,
+        key=lambda item: (severity_rank[item["severity"]], item["category"], item["message"]),
+    )
+
+
 def render_graph_html(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     edges: list[GraphEdge],
     collections_by_service: dict[str, list[str]] | None = None,
     modules_by_service: dict[str, DiscoveredModule] | None = None,
+    indexing_warnings: list[str] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -653,7 +705,14 @@ def render_graph_html(
         }
         node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
         node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
-    graph_data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
+    graph_data = json.dumps(
+        {
+            "nodes": nodes,
+            "links": links,
+            "indexing_issues": _indexing_issues(endpoints_by_service, edges, indexing_warnings),
+        },
+        ensure_ascii=False,
+    ).replace("</", "<\\/")
     return _SIGMA_GRAPH_HTML_TEMPLATE.replace("__GRAPH_DATA__", graph_data)
 
 
@@ -1033,6 +1092,22 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-history-replay { width: auto !important; min-width: 0; height: auto !important; min-height: 42px; padding: 8px 10px; border-color: #dbeafe !important; color: #1e429f !important; background: linear-gradient(135deg, #f8fbff, #eff6ff) !important; font-size: 12px !important; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
     .path-history-replay:hover { border-color: #93c5fd !important; background: #dbeafe !important; }
     .path-history-delete { align-self: center; width: 30px !important; height: 30px !important; color: #a53f3f !important; font-size: 16px !important; }
+    .indexing-issues { gap: 10px; }
+    .indexing-issues-header { padding: 2px 2px 6px; }
+    .indexing-issues-kicker { margin: 0 0 2px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .indexing-issues-title { margin: 0; color: #172033; font-size: 15px; line-height: 1.2; }
+    .indexing-issues-description, .indexing-issues-empty { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.4; }
+    .indexing-issues-list { display: grid; gap: 7px; max-height: 360px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+    .indexing-issue { padding: 9px 10px; border: 1px solid #e2e8f0; border-left: 3px solid #94a3b8; border-radius: 7px; background: #f8fafc; }
+    .indexing-issue.warning { border-left-color: #d97706; background: #fffbeb; }
+    .indexing-issue.info { border-left-color: #2563eb; background: #eff6ff; }
+    .indexing-issue-header { display: flex; align-items: center; gap: 6px; }
+    .indexing-issue-category { color: #334155; font-size: 12px; font-weight: 700; }
+    .indexing-issue-severity { padding: 2px 5px; border-radius: 999px; color: #475569; background: #e2e8f0; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .indexing-issue.warning .indexing-issue-severity { color: #92400e; background: #fef3c7; }
+    .indexing-issue.info .indexing-issue-severity { color: #1d4f91; background: #dbeafe; }
+    .indexing-issue-message { margin: 5px 0 0; color: #475569; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+    .indexing-issue-location { display: block; margin-top: 5px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow-wrap: anywhere; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(68vh, 560px); overflow: auto; border: 1px solid #d7dee9; border-radius: 14px; background: rgba(255, 255, 255, .97); color: #475569; font-size: 13px; line-height: 1.45; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
     .details-header { padding: 16px; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #f8fafc, #eef5ff); }
     .details-header.is-low { border-left: 4px solid #2563eb; }
@@ -1086,6 +1161,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
       <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Graphe</button>
+      <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Indexation</button>
       <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Chemins analyses</button>
     </div>
     <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">
@@ -1116,6 +1192,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           </div>
         </div>
       </details>
+    </div>
+    <div id="issues-panel" class="toolbar-panel indexing-issues" role="tabpanel" aria-labelledby="issues-tab" hidden>
+      <div class="indexing-issues-header">
+        <p class="indexing-issues-kicker">Qualite de l'inventaire</p>
+        <h2 class="indexing-issues-title">Problemes d'indexation</h2>
+        <p class="indexing-issues-description">Corrigez ces points pour rendre le graphe plus complet et plus fiable.</p>
+      </div>
+      <ul id="indexing-issues" class="indexing-issues-list" aria-label="Problemes d'indexation"></ul>
+      <p id="indexing-issues-empty" class="indexing-issues-empty">Aucun probleme d'indexation detecte.</p>
     </div>
     <div id="paths-panel" class="toolbar-panel path-history" role="tabpanel" aria-labelledby="paths-tab" hidden>
       <div class="path-history-header">
@@ -1404,9 +1489,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
     const graphTab = document.getElementById("graph-tab");
+    const issuesTab = document.getElementById("issues-tab");
     const pathsTab = document.getElementById("paths-tab");
     const graphPanel = document.getElementById("graph-panel");
+    const issuesPanel = document.getElementById("issues-panel");
     const pathsPanel = document.getElementById("paths-panel");
+    const indexingIssuesList = document.getElementById("indexing-issues");
+    const indexingIssuesEmpty = document.getElementById("indexing-issues-empty");
+    const indexingIssues = graphData.indexing_issues || [];
     const analyzedPathsList = document.getElementById("analyzed-paths");
     const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
     const layoutStatus = document.getElementById("layout-status");
@@ -1530,13 +1620,46 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       }
     }
     function setToolbarTab(tab) {
+      const showingGraph = tab === "graph";
+      const showingIssues = tab === "issues";
       const showingPaths = tab === "paths";
-      graphTab.classList.toggle("is-active", !showingPaths);
-      graphTab.setAttribute("aria-selected", String(!showingPaths));
+      graphTab.classList.toggle("is-active", showingGraph);
+      graphTab.setAttribute("aria-selected", String(showingGraph));
+      issuesTab.classList.toggle("is-active", showingIssues);
+      issuesTab.setAttribute("aria-selected", String(showingIssues));
       pathsTab.classList.toggle("is-active", showingPaths);
       pathsTab.setAttribute("aria-selected", String(showingPaths));
-      graphPanel.hidden = showingPaths;
+      graphPanel.hidden = !showingGraph;
+      issuesPanel.hidden = !showingIssues;
       pathsPanel.hidden = !showingPaths;
+    }
+    function renderIndexingIssues() {
+      indexingIssuesList.replaceChildren();
+      indexingIssuesEmpty.hidden = indexingIssues.length > 0;
+      indexingIssues.forEach(issue => {
+        const item = document.createElement("li");
+        item.className = `indexing-issue ${issue.severity}`;
+        const header = document.createElement("div");
+        header.className = "indexing-issue-header";
+        const severity = document.createElement("span");
+        severity.className = "indexing-issue-severity";
+        severity.textContent = issue.severity === "warning" ? "A corriger" : "A verifier";
+        const category = document.createElement("span");
+        category.className = "indexing-issue-category";
+        category.textContent = issue.category;
+        const message = document.createElement("p");
+        message.className = "indexing-issue-message";
+        message.textContent = issue.message;
+        header.append(severity, category);
+        item.append(header, message);
+        if (issue.location) {
+          const location = document.createElement("code");
+          location.className = "indexing-issue-location";
+          location.textContent = issue.location;
+          item.append(location);
+        }
+        indexingIssuesList.append(item);
+      });
     }
     function renderAnalyzedPaths() {
       analyzedPathsList.replaceChildren();
@@ -2057,12 +2180,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("show-simple-paths").addEventListener("click", showSimplePaths);
     layoutButtons.forEach((button, layout) => button.addEventListener("click", () => applyLayout(layout)));
     graphTab.addEventListener("click", () => setToolbarTab("graph"));
+    issuesTab.addEventListener("click", () => setToolbarTab("issues"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
       if (event.key === "Enter") showShortestPath();
     });
+    renderIndexingIssues();
     renderAnalyzedPaths();
     restoreState();
     applyLayout("forceatlas2-noverlap");
