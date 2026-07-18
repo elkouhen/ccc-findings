@@ -826,8 +826,21 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Types publies" in document
     assert "Types consommes" in document
     assert "function relationText(link)" in document
+    assert "function restResourceLabel(link, target)" in document
     assert "link.published_message_types" in document
     assert "publie${types.length" in document
+    assert "HTTP · ${source.name} appelle ${target.name}" in document
+    assert "MongoDB · ${source.name} stocke dans ${target.name}" in document
+    assert "Kafka · ${source.name} publie" in document
+    assert "Services HTTP consommes" in document
+    assert "Clients HTTP detectes" in document
+    assert "Evenements Kafka publies" in document
+    assert "Evenements Kafka consommes" in document
+    assert "Collections MongoDB utilisees" in document
+    assert "Relations visibles : ${edges.length}" in document
+    assert "contrat non indexe" in document
+    assert 'appendList("Findings"' not in document
+    assert '"findings"' not in document
     assert 'link.source === id ? "vers"' not in document
     assert 'id="path-query"' in document
     assert 'id="path-lock"' in document
@@ -860,7 +873,7 @@ def test_graph_html_writes_interactive_sigma_document(
     assert (c4_project / "package.json").is_file()
     assert (c4_project / ".gitignore").is_file()
     assert (c4_project / "README.md").is_file()
-    assert "Node colors" in (c4_project / "README.md").read_text(encoding="utf-8")
+    assert "Microservice colors" in (c4_project / "README.md").read_text(encoding="utf-8")
     c4_document = (c4_project / "architecture.c4").read_text(encoding="utf-8")
     assert "element microservice" in c4_document
     assert "element kafka_topic" in c4_document

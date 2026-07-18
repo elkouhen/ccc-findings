@@ -502,7 +502,7 @@ def render_graph_html(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     edges: list[GraphEdge],
     collections_by_service: dict[str, list[str]] | None = None,
-    findings_by_service: dict[str, list[Finding]] | None = None,
+    modules_by_service: dict[str, DiscoveredModule] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -528,9 +528,11 @@ def render_graph_html(
                     published_message_types_by_relation.setdefault((service, endpoint.topic), set()).add(
                         endpoint.message_type
                     )
+    module_details = modules_by_service or {}
     nodes = []
     for name in ordered_services:
         resources = _rest_resources_served(endpoints_by_service.get(name, []))
+        module = module_details.get(name)
         shown_resources = resources[:4]
         if len(resources) > len(shown_resources):
             shown_resources.append(f"+ {len(resources) - len(shown_resources)} API")
@@ -540,6 +542,7 @@ def render_graph_html(
                 "kind": "microservice",
                 "name": name,
                 "resources": resources,
+                "openapi_files": list(module.openapi_files) if module else [],
                 "label": "\n".join([name, *shown_resources])
                 if shown_resources
                 else f"{name}\nAucune API exposée",
@@ -617,26 +620,18 @@ def render_graph_html(
         if node["kind"] == "microservice"
     }
     complexity_levels = _complexity_levels(microservice_counts)
-    severities = ("ERROR", "WARNING", "INFO")
     for node in nodes:
         base_size = 17 if node["kind"] == "microservice" else 14 if node["kind"] == "mongodb_collection" else 13
         if node["kind"] != "microservice":
             node["color"] = "#64748b"
             node["size"] = base_size
             continue
-        findings = findings_by_service.get(node["name"], []) if findings_by_service else []
-        severity_counts = {
-            severity: sum(1 for finding in findings if finding.severity == severity)
-            for severity in severities
-        }
         score = relation_counts[node["id"]]
         level = complexity_levels[node["id"]]
         node["complexity"] = {
             "score": score,
             "level": level,
             "relations": relation_counts[node["id"]],
-            "findings": len(findings),
-            "severity_counts": severity_counts,
         }
         node["color"] = {"low": "#2563eb", "medium": "#d97706", "high": "#dc2626"}[level]
         node["size"] = base_size + {"low": 0, "medium": 2, "high": 4}[level]
@@ -1009,6 +1004,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .details-section h2 { margin: 0 0 7px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .details-section ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
     .details-section li { padding: 6px 8px; border-radius: 6px; color: #334155; background: #f8fafc; overflow-wrap: anywhere; }
+    .details-section li.relation-item { padding: 0; background: transparent; }
+    .relation-link { display: block; width: 100%; padding: 7px 8px; border: 1px solid #e2e8f0; border-radius: 6px; color: #1d4f91; background: #f8fafc; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+    .relation-link:hover, .relation-link:focus-visible { border-color: #93c5fd; background: #eff6ff; outline: none; }
     .details-empty { padding: 18px; color: #64748b; text-align: center; }
     .legend { position: fixed; z-index: 2; left: 16px; bottom: 16px; width: 210px; padding: 9px 11px; border: 1px solid #d7dee9; border-radius: 8px; background: rgba(255, 255, 255, .95); color: #475569; font-size: 11px; box-shadow: 0 2px 12px rgba(15, 23, 42, .10); }
     .legend[open] summary { margin-bottom: 8px; }
@@ -1315,6 +1313,37 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       section.append(heading, list);
       details.append(section);
     }
+    function appendRelationList(title, links, currentId, labelForLink) {
+      const seen = new Set();
+      const entries = links.flatMap(link => {
+        const targetId = link.source === currentId ? link.target : link.source;
+        const label = labelForLink(link);
+        const key = `${targetId}::${label}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{ targetId, label }];
+      });
+      if (!entries.length) return;
+      const section = document.createElement("section");
+      section.className = "details-section";
+      const heading = document.createElement("h2");
+      heading.textContent = title;
+      const list = document.createElement("ul");
+      entries.forEach(({ targetId, label }) => {
+        const item = document.createElement("li");
+        item.className = "relation-item";
+        const button = document.createElement("button");
+        button.className = "relation-link";
+        button.type = "button";
+        button.textContent = label;
+        button.title = "Selectionner ce noeud dans le graphe";
+        button.addEventListener("click", () => selectNode(targetId));
+        item.append(button);
+        list.append(item);
+      });
+      section.append(heading, list);
+      details.append(section);
+    }
     function setDetailsEmpty(message) {
       details.replaceChildren();
       const empty = document.createElement("div");
@@ -1342,18 +1371,26 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       pathQuery.value = "";
       pathStops.splice(0, pathStops.length);
     }
+    function restResourceLabel(link, target) {
+      const servicePrefix = `${target.name}: `;
+      if (link.label === `${target.name}: API`) return "";
+      return link.label.startsWith(servicePrefix) ? link.label.slice(servicePrefix.length) : link.label;
+    }
     function relationText(link) {
       const source = nodeDataById.get(link.source);
       const target = nodeDataById.get(link.target);
-      let action;
-      if (link.kind === "rest") action = `appelle ${link.label}`;
-      else if (link.kind === "mongodb") action = "stocke dans";
-      else if (source.kind === "microservice") {
-        const types = link.published_message_types || [];
-        action = `publie${types.length ? ` <${types.join(", ")}>` : ""}`;
+      if (link.kind === "rest") {
+        const resource = restResourceLabel(link, target);
+        return resource
+          ? `HTTP · ${source.name} appelle ${target.name} (${resource})`
+          : `HTTP · ${source.name} appelle ${target.name} (contrat non indexe)`;
       }
-      else action = "est consomme par";
-      return `${source.name} -> ${target.name} : ${action}`;
+      if (link.kind === "mongodb") return `MongoDB · ${source.name} stocke dans ${target.name}`;
+      if (source.kind === "microservice") {
+        const types = link.published_message_types || [];
+        return `Kafka · ${source.name} publie${types.length ? ` <${types.join(", ")}>` : ""} sur ${target.name}`;
+      }
+      return `Kafka · ${target.name} consomme ${source.name}`;
     }
     function shortestPath(sourceId, targetId) {
       const outgoing = new Map();
@@ -1495,28 +1532,60 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       meta.className = "details-meta";
       const relationBadge = document.createElement("span");
       relationBadge.className = "detail-badge";
-      relationBadge.textContent = `${edges.length} relation${edges.length > 1 ? "s" : ""}`;
+      relationBadge.textContent = `Relations visibles : ${edges.length}`;
       meta.append(relationBadge);
       if (complexity) {
         const scoreBadge = document.createElement("span");
         scoreBadge.className = `detail-badge complexity ${complexity.level}`;
-        scoreBadge.textContent = `Complexite : ${complexity.level} (${complexity.score})`;
+        scoreBadge.textContent = `Connectivite : ${complexity.level} (${complexity.score})`;
         meta.append(scoreBadge);
       }
       header.append(kicker, title, meta);
       details.append(header);
-      if (node.kind === "microservice") appendList("APIs exposees", node.resources);
+      if (node.kind === "microservice") {
+        const httpCalls = edges.filter(link => link.kind === "rest" && link.source === id);
+        const httpClients = edges.filter(link => link.kind === "rest" && link.target === id);
+        const kafkaPublications = edges.filter(link => link.kind === "kafka" && link.source === id);
+        const kafkaConsumptions = edges.filter(link => link.kind === "kafka" && link.target === id);
+        const mongoCollections = edges.filter(link => link.kind === "mongodb" && link.source === id);
+        appendList("APIs HTTP exposees", node.resources);
+        appendList("Contrats OpenAPI detectes", node.openapi_files || []);
+        appendRelationList("Services HTTP consommes", httpCalls, id, link => {
+          const target = nodeDataById.get(link.target);
+          const resource = restResourceLabel(link, target);
+          return resource ? `${target.name} · ${resource}` : `${target.name} · contrat non indexe`;
+        });
+        appendRelationList("Clients HTTP detectes", httpClients, id, link => {
+          const source = nodeDataById.get(link.source);
+          const resource = restResourceLabel(link, node);
+          return resource ? `${source.name} · ${resource}` : `${source.name} · contrat non indexe`;
+        });
+        appendRelationList("Evenements Kafka publies", kafkaPublications, id, link => {
+          const topic = nodeDataById.get(link.target);
+          const types = link.published_message_types || [];
+          return types.length ? `${topic.name} · ${types.join(", ")}` : topic.name;
+        });
+        appendRelationList("Evenements Kafka consommes", kafkaConsumptions, id, link => {
+          const topic = nodeDataById.get(link.source);
+          return topic.name;
+        });
+        appendRelationList("Collections MongoDB utilisees", mongoCollections, id, link => (
+          nodeDataById.get(link.target).name
+        ));
+      }
       if (node.kind === "kafka_topic") {
         appendList("Types publies", node.published_message_types);
         appendList("Types consommes", node.consumed_message_types);
+        appendRelationList("Services producteurs", edges.filter(link => link.kind === "kafka" && link.target === id), id,
+          link => nodeDataById.get(link.source).name);
+        appendRelationList("Services consommateurs", edges.filter(link => link.kind === "kafka" && link.source === id), id,
+          link => nodeDataById.get(link.target).name);
       }
-      if (node.kind === "microservice" && complexity && complexity.findings) {
-        appendList("Findings", Object.entries(complexity.severity_counts)
-          .filter(([, count]) => count)
-          .map(([severity, count]) => `${severity}: ${count}`));
+      if (node.kind === "mongodb_collection") {
+        appendList("Stockee par", [node.owner]);
+        appendRelationList("Services utilisant cette collection", edges.filter(link => link.kind === "mongodb" && link.target === id), id,
+          link => nodeDataById.get(link.source).name);
       }
-      if (node.kind === "mongodb_collection") appendList("Stockee par", [node.owner]);
-      appendList("Relations", edges.map(relationText));
     }
     function selectNode(id) {
       if (!pathLock.checked) clearPathControls();

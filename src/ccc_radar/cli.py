@@ -1356,7 +1356,7 @@ def export_microservices_cmd(
                 graph_data.services_by_name,
                 graph_data.edges,
                 graph_data.collections_by_service,
-                graph_data.findings_by_service,
+                graph_data.modules_by_service,
             ),
             encoding="utf-8",
         )

@@ -320,7 +320,12 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "new Sigma(network" in document
     assert "new graphology.MultiDirectedGraph" in document
     assert "for (let iteration = 0; iteration < 720; iteration += 1)" in document
-    assert "APIs exposees" in document
+    assert "APIs HTTP exposees" in document
+    assert "Services HTTP consommes" in document
+    assert "Clients HTTP detectes" in document
+    assert "Evenements Kafka publies" in document
+    assert "Collections MongoDB utilisees" in document
+    assert "function appendRelationList(title, links, currentId, labelForLink)" in document
     assert "renderer.getCamera().animatedZoom" in document
     assert 'id="fit-view"' in document
     assert 'id="relation-http"' in document
@@ -362,15 +367,17 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
     assert [link["direction"] for link in graph_data["links"]] == ["outgoing", "outgoing", "incoming"]
 
 
-def test_render_graph_html_ranks_complexity_independently_from_findings() -> None:
+def test_render_graph_html_keeps_complexity_architecture_only() -> None:
     endpoints_by_service = _fixture()
-    findings = [
-        Finding("finding-1", "rule-1", "ERROR", "Failure", "a/Client.java", 1, 1, "", None, [], [], "service-a"),
-        Finding("finding-2", "rule-2", "ERROR", "Failure", "a/Producer.java", 1, 1, "", None, [], [], "service-a"),
-    ]
-
     document = render_graph_html(
-        endpoints_by_service, build_graph(endpoints_by_service), findings_by_service={"service-a": findings}
+        endpoints_by_service,
+        build_graph(endpoints_by_service),
+        modules_by_service={
+            "service-a": DiscoveredModule(
+                "service-a", Path("service-a"), "maven", None, "library", True, "",
+                openapi_files=("src/main/resources/openapi.yaml",),
+            )
+        },
     )
     graph_data = json.loads(
         re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
@@ -382,13 +389,14 @@ def test_render_graph_html_ranks_complexity_independently_from_findings() -> Non
         "score": 2,
         "level": "low",
         "relations": 2,
-        "findings": 2,
-        "severity_counts": {"ERROR": 2, "WARNING": 0, "INFO": 0},
     }
+    assert service["openapi_files"] == ["src/main/resources/openapi.yaml"]
+    assert '"findings"' not in document
+    assert "severity_counts" not in document
     assert service["color"] == "#2563eb"
     assert "complexity" not in topic
     assert topic["color"] == "#64748b"
-    assert "Complexite elevee" in document
+    assert "Connectivite : ${complexity.level} (${complexity.score})" in document
     assert 'type: "arrow"' in document
     assert 'type: node.kind,' in document
     assert "nodeProgramClasses:" in document
