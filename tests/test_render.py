@@ -320,6 +320,13 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "new Sigma(network" in document
     assert "new graphology.MultiDirectedGraph" in document
     assert "for (let iteration = 0; iteration < 720; iteration += 1)" in document
+    assert 'id="layout-flow"' in document
+    assert 'id="layout-force"' in document
+    assert "function sugiyamaPositions(nodes, links)" in document
+    assert "Tarjan condenses cycles before layering the resulting DAG" in document
+    assert "const flowPositions = sugiyamaPositions(graphData.nodes, graphData.links);" in document
+    assert "function applyLayout(layout, persist = true)" in document
+    assert 'params.set("layout", "force")' in document
     assert "APIs HTTP exposees" in document
     assert "Services HTTP consommes" in document
     assert "Clients HTTP detectes" in document

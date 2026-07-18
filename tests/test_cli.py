@@ -844,6 +844,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert 'link.source === id ? "vers"' not in document
     assert 'id="path-query"' in document
     assert 'id="path-lock"' in document
+    assert 'id="layout-flow"' in document
+    assert 'id="layout-force"' in document
+    assert "function sugiyamaPositions(nodes, links)" in document
+    assert "function applyLayout(layout, persist = true)" in document
     assert 'id="paths-tab"' in document
     assert 'id="analyzed-paths"' in document
     assert "function rememberAnalyzedPath(stops)" in document

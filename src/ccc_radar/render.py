@@ -985,6 +985,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .relation-filters legend { width: 100%; margin-bottom: 2px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .relation-filter { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 999px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     .relation-filter input, .path-lock input { width: 14px; height: 14px; margin: 0; padding: 0; border: 0; accent-color: #315f9b; }
+    .layout-controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; border: 0; }
+    .layout-controls legend { width: 100%; margin-bottom: 2px; color: #59708d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .layout-button { width: auto !important; height: 30px !important; padding: 0 9px; color: #52616b !important; font-size: 12px !important; font-weight: 600; }
+    .layout-button.is-active { border-color: #93c5fd !important; color: #1d4f91 !important; background: #eff6ff !important; }
     .path-controls { border-top: 1px solid #e2e8f0; padding-top: 8px; }
     .path-controls summary, .legend summary { color: #315f9b; font-size: 12px; font-weight: 600; cursor: pointer; }
     .path-controls[open] summary { margin-bottom: 8px; }
@@ -1065,6 +1069,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
         <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
       </fieldset>
+      <fieldset class="layout-controls">
+        <legend>Disposition</legend>
+        <button id="layout-flow" class="layout-button is-active" type="button" aria-pressed="true" title="Vue de flux Sugiyama, orientee de gauche a droite">Flux</button>
+        <button id="layout-force" class="layout-button" type="button" aria-pressed="false" title="Exploration libre par forces">Exploration</button>
+      </fieldset>
       <details class="path-controls">
         <summary>Explorer un chemin</summary>
         <div class="path-row">
@@ -1143,6 +1152,69 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         node.vx *= .72; node.vy *= .72;
       });
     }
+    const forcePositions = new Map(layoutNodes.map(node => [node.id, { x: node.x, y: node.y }]));
+
+    function sugiyamaPositions(nodes, links) {
+      const adjacency = new Map(nodes.map(node => [node.id, []]));
+      links.forEach(link => adjacency.get(link.source)?.push(link.target));
+      // Tarjan condenses cycles before layering the resulting DAG. A cycle is
+      // therefore kept visible in one column instead of breaking the layout.
+      const indexes = new Map(), lowlinks = new Map(), stack = [], onStack = new Set(), components = [];
+      let nextIndex = 0;
+      function visit(nodeId) {
+        indexes.set(nodeId, nextIndex); lowlinks.set(nodeId, nextIndex); nextIndex += 1;
+        stack.push(nodeId); onStack.add(nodeId);
+        for (const targetId of adjacency.get(nodeId) || []) {
+          if (!indexes.has(targetId)) {
+            visit(targetId);
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), lowlinks.get(targetId)));
+          } else if (onStack.has(targetId)) {
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), indexes.get(targetId)));
+          }
+        }
+        if (lowlinks.get(nodeId) !== indexes.get(nodeId)) return;
+        const component = [];
+        for (;;) {
+          const member = stack.pop(); onStack.delete(member); component.push(member);
+          if (member === nodeId) break;
+        }
+        components.push(component.sort());
+      }
+      nodes.map(node => node.id).sort().forEach(nodeId => { if (!indexes.has(nodeId)) visit(nodeId); });
+
+      const componentByNode = new Map();
+      components.forEach((component, index) => component.forEach(nodeId => componentByNode.set(nodeId, index)));
+      const successors = components.map(() => new Set());
+      const indegrees = components.map(() => 0);
+      links.forEach(link => {
+        const source = componentByNode.get(link.source), target = componentByNode.get(link.target);
+        if (source === target || successors[source].has(target)) return;
+        successors[source].add(target); indegrees[target] += 1;
+      });
+      const levels = components.map(() => 0);
+      const queue = components.map((_component, index) => index).filter(index => indegrees[index] === 0).sort((a, b) => a - b);
+      for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const component = queue[cursor];
+        [...successors[component]].sort((a, b) => a - b).forEach(target => {
+          levels[target] = Math.max(levels[target], levels[component] + 1);
+          indegrees[target] -= 1;
+          if (indegrees[target] === 0) queue.push(target);
+        });
+      }
+      const layers = new Map();
+      components.forEach((component, index) => {
+        const level = levels[index];
+        layers.set(level, [...(layers.get(level) || []), ...component]);
+      });
+      const positions = new Map();
+      [...layers.entries()].sort(([left], [right]) => left - right).forEach(([level, nodeIds]) => {
+        nodeIds.sort();
+        const center = (nodeIds.length - 1) / 2;
+        nodeIds.forEach((nodeId, row) => positions.set(nodeId, { x: level * 2.8, y: row - center }));
+      });
+      return positions;
+    }
+    const flowPositions = sugiyamaPositions(graphData.nodes, graphData.links);
 
     const RELATION_COLORS = Object.freeze({
       http: "#D55E00",
@@ -1159,8 +1231,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
       label: node.name,
-      x: node.x,
-      y: node.y,
+      x: flowPositions.get(node.id).x,
+      y: flowPositions.get(node.id).y,
       size: node.size,
       color: node.color,
       type: node.kind,
@@ -1177,6 +1249,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     let relatedNodes = null;
     let relatedEdges = null;
     let pathMicroserviceOrder = new Map();
+    let activeLayout = "flow";
     // Sigma invokes reducers while it is constructed, so these controls must
     // exist before creating the renderer.
     const relationHttp = document.getElementById("relation-http");
@@ -1347,6 +1420,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const search = document.getElementById("search");
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
+    const layoutFlow = document.getElementById("layout-flow");
+    const layoutForce = document.getElementById("layout-force");
     const graphTab = document.getElementById("graph-tab");
     const pathsTab = document.getElementById("paths-tab");
     const graphPanel = document.getElementById("graph-panel");
@@ -1502,8 +1577,25 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       empty.textContent = message;
       details.append(empty);
     }
+    function applyLayout(layout, persist = true) {
+      activeLayout = layout === "force" ? "force" : "flow";
+      const positions = activeLayout === "force" ? forcePositions : flowPositions;
+      network.forEachNode(nodeId => {
+        const position = positions.get(nodeId);
+        network.setNodeAttribute(nodeId, "x", position.x);
+        network.setNodeAttribute(nodeId, "y", position.y);
+      });
+      layoutFlow.classList.toggle("is-active", activeLayout === "flow");
+      layoutFlow.setAttribute("aria-pressed", String(activeLayout === "flow"));
+      layoutForce.classList.toggle("is-active", activeLayout === "force");
+      layoutForce.setAttribute("aria-pressed", String(activeLayout === "force"));
+      renderer.refresh();
+      renderer.getCamera().animatedReset({ duration: 260 });
+      if (persist) persistState();
+    }
     function persistState() {
       const params = new URLSearchParams();
+      if (activeLayout === "force") params.set("layout", "force");
       if (pathStops.length) params.set("from", pathStops[0]);
       if (pathStops.length > 1) params.set("to", pathStops[pathStops.length - 1]);
       pathStops.slice(1, -1).forEach(id => params.append("via", id));
@@ -1796,6 +1888,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const params = new URLSearchParams(location.hash.slice(1));
       const sourceId = params.get("from");
       const targetId = params.get("to");
+      if (params.get("layout") === "force") applyLayout("force", false);
       pathLock.checked = params.get("lock") === "1";
       const restoredStops = [sourceId, ...params.getAll("via"), targetId];
       if (
@@ -1822,6 +1915,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("show-path").addEventListener("click", showShortestPath);
     graphTab.addEventListener("click", () => setToolbarTab("graph"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
+    layoutFlow.addEventListener("click", () => applyLayout("flow"));
+    layoutForce.addEventListener("click", () => applyLayout("force"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
