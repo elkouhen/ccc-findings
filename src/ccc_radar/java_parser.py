@@ -129,6 +129,32 @@ def enclosing_method_name(source: bytes, node: Node) -> str | None:
     return node_text(source, name) if name is not None else None
 
 
+def has_spring_boot_main_class(source: bytes) -> bool:
+    """Whether parsed Java source contains a Spring Boot ``main`` entrypoint."""
+    root = java_parser("spring_boot_main").parse(source).root_node
+    if root.has_error:
+        return False
+    for method in walk(root):
+        if method.type != "method_declaration":
+            continue
+        name = method.child_by_field_name("name")
+        if name is None or node_text(source, name) != "main":
+            continue
+        modifiers = modifiers_node(method)
+        if modifiers is None or not any(node_text(source, child) == "static" for child in modifiers.children):
+            continue
+        return_type = method.child_by_field_name("type")
+        if return_type is None or node_text(source, return_type) != "void":
+            continue
+        for invocation in walk(method):
+            if invocation.type != "method_invocation":
+                continue
+            receiver, method_name, _arguments = invocation_parts(invocation, source)
+            if receiver is not None and method_name == "run" and node_text(source, receiver) == "SpringApplication":
+                return True
+    return False
+
+
 def evidence_fields(source: bytes, node: Node, rel_path: str) -> tuple[int, int, str, str]:
     """1-based ``(start_line, end_line, snippet, source_hash)`` for a node.
 

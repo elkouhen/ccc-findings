@@ -521,6 +521,28 @@ def test_rest_configuration_domains_are_inferred_only_in_strategy1(tmp_path: Pat
     assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
 
 
+def test_rest_configuration_ignores_constant_shaped_text_outside_java_identifiers(tmp_path: Path) -> None:
+    config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "class RestConfiguration {\n"
+        "  // DOMAIN_COMMENT_ONLY\n"
+        "  String documentation = \"DOMAIN_STRING_ONLY\";\n"
+        "  Object client() { return ApiDomains.DOMAIN_ANNUAIRE; }\n"
+        "}\n"
+    )
+
+    endpoints = infer_framework_endpoints(
+        tmp_path,
+        files=[config.relative_to(tmp_path).as_posix()],
+        configured_api_client_strategy1=True,
+    )
+
+    assert [endpoint.snippet.rsplit("\n", 1)[-1] for endpoint in endpoints] == [
+        "cccr-api-domain:domain-annuaire"
+    ]
+
+
 def test_rest_configuration_domain_declares_dependency_without_a_bean(
     tmp_path: Path,
 ) -> None:

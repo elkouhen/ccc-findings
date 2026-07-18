@@ -13,6 +13,7 @@ from xml.sax.saxutils import quoteattr
 from ccc_radar.ccc_bridge import CodeHitWithFindings
 from ccc_radar.flow import FlowResult
 from ccc_radar.graph import GraphEdge, OutboundCallInConsumer, graph_edge_rest_resource
+from ccc_radar import java_parser
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import DiscoveredModule, ModuleDependency
 from ccc_radar.search import SearchHit, Summary, get_context
@@ -619,35 +620,64 @@ def _openapi_contract_spec(
     return None
 
 
-_JAVA_RECORD_RE = re.compile(r"\brecord\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<fields>.*?)\)", re.DOTALL)
-_JAVA_FIELD_RE = re.compile(
-    r"^\s*(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?"
-    r"(?P<type>[A-Za-z_$][\w.$]*(?:\s*<[^;=(){}]+>)?(?:\s*\[\])?)\s+"
-    r"(?P<name>[A-Za-z_]\w*)\s*(?:=[^;]*)?;\s*$",
-    re.MULTILINE,
-)
-
-
 def _java_dto_fields(source: str, dto_name: str) -> list[dict[str, str]]:
     """Extract the readable fields of a Java class or record DTO.
 
     This intentionally stays conservative: it exposes declared data members,
     never guesses inherited or serializer-generated properties.
     """
-    record = next((item for item in _JAVA_RECORD_RE.finditer(source) if item.group("name") == dto_name), None)
-    if record is not None:
-        fields = []
-        for component in record.group("fields").split(","):
-            pieces = component.strip().split()
-            if len(pieces) >= 2:
-                fields.append({"type": " ".join(pieces[:-1]), "name": pieces[-1]})
-        return fields
+    source_bytes = source.encode("utf-8")
+    root = java_parser.java_parser("dto_fields").parse(source_bytes).root_node
+    if root.has_error:
+        return []
+    declaration = next(
+        (
+            node
+            for node in java_parser.type_declarations(root)
+            if java_parser.declaration_name(node, source_bytes) == dto_name
+        ),
+        None,
+    )
+    if declaration is None:
+        return []
+
+    def field(node) -> dict[str, str] | None:
+        type_node = node.child_by_field_name("type")
+        name_node = node.child_by_field_name("name")
+        if type_node is None or name_node is None:
+            return None
+        return {
+            "type": java_parser.node_text(source_bytes, type_node).strip(),
+            "name": java_parser.node_text(source_bytes, name_node),
+        }
+
+    if declaration.type == "record_declaration":
+        parameters = java_parser.child_by_type(declaration, "formal_parameters")
+        if parameters is None:
+            return []
+        return [
+            value
+            for parameter in parameters.named_children
+            if parameter.type == "formal_parameter"
+            if (value := field(parameter)) is not None
+        ]
+
     fields = []
-    for match in _JAVA_FIELD_RE.finditer(source):
-        field_type = match.group("type").strip()
-        if field_type in {"return", "throw", "new"}:
+    for node in java_parser.walk(declaration):
+        if node.type != "field_declaration" or java_parser.enclosing(
+            node, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration"
+        ) != declaration:
             continue
-        fields.append({"type": field_type, "name": match.group("name")})
+        type_node = node.child_by_field_name("type")
+        if type_node is None:
+            continue
+        field_type = java_parser.node_text(source_bytes, type_node).strip()
+        for declarator in node.children:
+            if declarator.type != "variable_declarator":
+                continue
+            name_node = declarator.child_by_field_name("name")
+            if name_node is not None:
+                fields.append({"type": field_type, "name": java_parser.node_text(source_bytes, name_node)})
     return fields
 
 

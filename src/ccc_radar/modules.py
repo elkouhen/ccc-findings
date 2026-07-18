@@ -92,40 +92,20 @@ class JavaArchitectureExtension(Protocol):
     def extract(self, files: list[tuple[str, bytes]]) -> tuple[KafkaMethod, ...]: ...
 
 
-_DOCUMENT_COLLECTION_RE = re.compile(
-    r"@(?:[\w.]+\.)?Document\s*\(\s*(?:collection\s*=\s*)?[\"']([^\"']+)[\"']"
-)
-_DOCUMENT_CLASS_RE = re.compile(
-    r"@(?:[\w.]+\.)?Document\s*\(\s*(?:collection\s*=\s*)?[\"']([^\"']+)[\"'][^)]*\)"
-    r"\s*(?:public\s+)?(?:final\s+)?(?:class|record)\s+(\w+)",
-    re.DOTALL,
-)
-_MONGO_REPOSITORY_DECLARATION_RE = re.compile(
-    r"\binterface\s+(\w+)\b.*?\b(?:MongoRepository|ReactiveMongoRepository)\s*<\s*([A-Za-z_]\w*)",
-    re.DOTALL,
-)
-_REPOSITORY_FIELD_RE = re.compile(
-    r"\b([A-Za-z_]\w*)(?:\s*<\s*([A-Za-z_]\w*)[^>]*>)?\s+([A-Za-z_]\w*)\s*(?:=|;|,)"
-)
-_JAVA_RECEIVER_CALL_RE = re.compile(
-    r"\s*(?:this\s*\.\s*)?([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\("
-)
 _MONGO_TEMPLATE_OPERATIONS = frozenset({
     "aggregate", "bulkOps", "count", "exists", "find", "findAll", "findAndModify",
     "findAndReplace", "findById", "findOne", "getCollection", "insert", "remove",
     "save", "updateFirst", "updateMulti", "upsert", "watch",
 })
-_REPOSITORY_OPERATIONS = re.compile(
-    r"^(?:save(?:All)?|insert(?:All)?|delete(?:All(?:ById)?|ById)?|find(?:All|ById|One)?|"
-    r"existsById|count|aggregate)$"
-)
+_REPOSITORY_OPERATIONS = frozenset({
+    "aggregate", "count", "delete", "deleteAll", "deleteAllById", "deleteById",
+    "existsById", "find", "findAll", "findById", "findOne", "insert", "insertAll",
+    "save", "saveAll",
+})
 _OPENAPI_FILENAMES = (
     "openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml", "swagger.yml", "swagger.json",
 )
 _MAX_NESTED_MODULE_DEPTH = 5
-_KAFKA_TOPIC_RE = re.compile(r"(?:topics?|value)\s*=\s*([\"'])(.*?)\1")
-_FIRST_STRING_RE = re.compile(r"\(\s*([\"'])(.*?)\1")
-_JAVA_STRING_LITERAL_RE = re.compile(r'^\s*"((?:\\.|[^"\\])*)"\s*$')
 
 
 def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
@@ -233,10 +213,21 @@ def _source_evidence(source: bytes, node, rel_path: str) -> SourceEvidence:
     )
 
 
-def _kafka_topic_literal(match: re.Match[str] | None) -> str | None:
-    if match is None:
+def _first_string_value(node, source: bytes) -> str | None:
+    """Return the first string literal nested in a parsed Java expression."""
+    if node is None:
         return None
-    literal = match.group(2)
+    for child in _walk(node):
+        literal = java_parser.string_value(child, source)
+        if literal is not None:
+            return literal
+    return None
+
+
+def _kafka_topic_value(node, source: bytes) -> str | None:
+    literal = _first_string_value(node, source)
+    if literal is None:
+        return None
     reference = spring_topic_reference(literal)
     if reference is not None:
         return reference.display_name
@@ -247,51 +238,38 @@ def _module_relative(module_dir: Path, path: Path) -> str:
     return path.relative_to(module_dir).as_posix()
 
 
-def _top_level_arguments(invocation: str) -> list[str]:
-    """Split the arguments of an already parsed Java method invocation."""
-    opening = invocation.find("(")
-    if opening == -1:
-        return []
-    arguments: list[str] = []
-    start = opening + 1
-    depth = 1
-    quote: str | None = None
-    escaped = False
-    for index, character in enumerate(invocation[start:], start=start):
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            continue
-        if character in {"\"", "'"}:
-            quote = character
-        elif character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-            if depth == 0:
-                value = invocation[start:index].strip()
-                if value:
-                    arguments.append(value)
-                break
-        elif character == "," and depth == 1:
-            arguments.append(invocation[start:index].strip())
-            start = index + 1
-    return arguments
-
-
-def _mongo_collection_literal(invocation: str) -> str | None:
+def _mongo_collection_literal(invocation, source: bytes) -> str | None:
     """Return a literal trailing Mongo collection argument, when present."""
-    arguments = _top_level_arguments(invocation)
+    arguments = java_parser.argument_nodes(invocation)
     if not arguments:
         return None
-    match = _JAVA_STRING_LITERAL_RE.match(arguments[-1])
-    if match is None:
+    return java_parser.string_value(arguments[-1], source)
+
+
+def _invocation_receiver_and_operation(invocation, source: bytes) -> tuple[str, str] | None:
+    """Extract a direct Java call receiver and its operation from the AST."""
+    receiver, operation, _arguments = java_parser.invocation_parts(invocation, source)
+    if receiver is None or receiver.type not in {"identifier", "field_access"}:
         return None
-    return match.group(1)
+    receiver_text = _node_text(source, receiver)
+    return receiver_text.rsplit(".", 1)[-1], operation
+
+
+def _type_identifiers(node, source: bytes) -> list[str]:
+    return [
+        _node_text(source, child)
+        for child in _walk(node)
+        if child.type in {"type_identifier", "scoped_type_identifier"}
+    ]
+
+
+def _repository_entity(type_node, source: bytes) -> str | None:
+    identifiers = _type_identifiers(type_node, source)
+    if len(identifiers) >= 2 and identifiers[0].rsplit(".", 1)[-1] in {
+        "MongoRepository", "ReactiveMongoRepository"
+    }:
+        return identifiers[1].rsplit(".", 1)[-1]
+    return None
 
 
 def _module_files(module_dir: Path, module_roots: set[Path], pattern: str):
@@ -335,36 +313,40 @@ class KafkaArchitectureExtension:
                 if method_name_node is None:
                     continue
                 method_name = _node_text(source, method_name_node)
-                for annotation_node in _walk(method_node):
-                    if annotation_node.type != "annotation":
-                        continue
-                    annotation = _node_text(source, annotation_node)
-                    if "KafkaListener" in annotation or "KafkaHandler" in annotation:
-                        topic_match = _KAFKA_TOPIC_RE.search(annotation)
+                for annotation_node in java_parser.annotations_of(method_node):
+                    annotation_name = java_parser.annotation_name(annotation_node, source)
+                    if annotation_name in {"KafkaListener", "KafkaHandler"}:
+                        topic_node = (
+                            java_parser.annotation_argument(annotation_node, source, "topics")
+                            or java_parser.annotation_argument(annotation_node, source, "topic")
+                            or java_parser.annotation_argument(annotation_node, source, "value")
+                            or java_parser.annotation_argument(annotation_node, source)
+                        )
                         methods.add(KafkaMethod(
                             role="receive", mechanism="spring-kafka-listener", method=method_name,
                             path=rel, line=method_node.start_point.row + 1,
-                            topic=_kafka_topic_literal(topic_match),
+                            topic=_kafka_topic_value(topic_node, source),
                             evidence=_source_evidence(source, annotation_node, rel),
                         ))
-                    if "@SendTo" in annotation:
-                        topic_match = _FIRST_STRING_RE.search(annotation)
+                    if annotation_name == "SendTo":
                         methods.add(KafkaMethod(
                             role="send", mechanism="spring-kafka-send-to", method=method_name,
                             path=rel, line=method_node.start_point.row + 1,
-                            topic=_kafka_topic_literal(topic_match),
+                            topic=_kafka_topic_value(
+                                java_parser.annotation_argument(annotation_node, source), source
+                            ),
                             evidence=_source_evidence(source, annotation_node, rel),
                         ))
                 for invocation in _walk(method_node):
                     if invocation.type != "method_invocation":
                         continue
-                    invocation_text = _node_text(source, invocation)
-                    call_match = _JAVA_RECEIVER_CALL_RE.match(invocation_text)
-                    if call_match is None:
+                    call = _invocation_receiver_and_operation(invocation, source)
+                    if call is None:
                         continue
-                    receiver, operation = call_match.groups()
-                    topic_match = _FIRST_STRING_RE.search(invocation_text)
-                    topic = _kafka_topic_literal(topic_match)
+                    receiver, operation = call
+                    topic = _kafka_topic_value(
+                        java_parser.argument_nodes(invocation)[0], source
+                    ) if java_parser.argument_nodes(invocation) else None
                     mechanism: str | None = None
                     role: str | None = None
                     if operation in {"send", "sendDefault"} and (
@@ -424,13 +406,35 @@ def _extract_java_architecture(
             source = path.read_bytes()
         except OSError:
             continue
-        source_text = source.decode("utf-8", errors="replace")
         production_files.append((path, rel, source))
-        for collection, entity in _DOCUMENT_CLASS_RE.findall(source_text):
-            collections.add(collection)
-            entity_collections[entity] = collection
-        for repository, entity in _MONGO_REPOSITORY_DECLARATION_RE.findall(source_text):
-            repository_entities[repository] = entity
+        root_node = parser.parse(source).root_node
+        if root_node.has_error:
+            continue
+        for declaration in java_parser.type_declarations(root_node):
+            declaration_name = java_parser.declaration_name(declaration, source)
+            if declaration_name is None:
+                continue
+            document_annotation = next(
+                (
+                    annotation
+                    for annotation in java_parser.annotations_of(declaration)
+                    if java_parser.annotation_name(annotation, source) == "Document"
+                ),
+                None,
+            )
+            if document_annotation is not None:
+                collection = _first_string_value(
+                    java_parser.annotation_argument(document_annotation, source, "collection")
+                    or java_parser.annotation_argument(document_annotation, source),
+                    source,
+                )
+                if collection is not None:
+                    collections.add(collection)
+                    entity_collections[declaration_name] = collection
+            if declaration.type == "interface_declaration":
+                entity = _repository_entity(declaration, source)
+                if entity is not None:
+                    repository_entities[declaration_name] = entity
 
     methods: set[MongoMethod] = set()
     kafka_methods = next(
@@ -440,7 +444,6 @@ def _extract_java_architecture(
     )
     blocking_points: set[BlockingPoint] = set()
     for path, rel, source in production_files:
-        source_text = source.decode("utf-8", errors="replace")
         _trace("module.architecture.parse.begin", module=module_dir, path=rel)
         tree = parser.parse(source)
         _trace("module.architecture.parse.end", module=module_dir, path=rel)
@@ -456,21 +459,25 @@ def _extract_java_architecture(
         _trace("module.architecture.walk_metadata.begin", module=module_dir, path=rel)
         for node in _walk(root_node):
             if node.type == "field_declaration":
-                text = _node_text(source, node)
-                for type_name, generic_entity, receiver in _REPOSITORY_FIELD_RE.findall(text):
-                    entity = repository_entities.get(type_name) or generic_entity
-                    if entity and (
-                        type_name in repository_entities
-                        or type_name in {"MongoRepository", "ReactiveMongoRepository"}
-                    ):
-                        repository_receivers[receiver] = entity_collections.get(entity)
-                if "CrudRepository" in text:
-                    for receiver in re.findall(r"\b([A-Za-z_]\w*)\s*(?:=|;|,)", text):
-                        repository_receivers.setdefault(receiver, None)
-            elif node.type == "annotation":
-                match = _DOCUMENT_COLLECTION_RE.search(_node_text(source, node))
-                if match:
-                    collections.add(match.group(1))
+                type_node = node.child_by_field_name("type")
+                if type_node is None:
+                    continue
+                type_names = _type_identifiers(type_node, source)
+                type_name = type_names[0].rsplit(".", 1)[-1] if type_names else ""
+                entity = repository_entities.get(type_name) or _repository_entity(type_node, source)
+                is_crud_repository = type_name in {"CrudRepository", "ReactiveCrudRepository"}
+                if entity is None and not is_crud_repository:
+                    continue
+                for declarator in node.children:
+                    if declarator.type != "variable_declarator":
+                        continue
+                    receiver_node = declarator.child_by_field_name("name")
+                    if receiver_node is None:
+                        continue
+                    receiver = _node_text(source, receiver_node)
+                    repository_receivers[receiver] = (
+                        entity_collections.get(entity) if entity is not None else None
+                    )
         _trace("module.architecture.walk_metadata.end", module=module_dir, path=rel)
         _trace("module.architecture.walk_methods.begin", module=module_dir, path=rel)
         for method_node in _walk(root_node):
@@ -484,11 +491,10 @@ def _extract_java_architecture(
             for invocation in _walk(method_node):
                 if invocation.type != "method_invocation":
                     continue
-                invocation_text = _node_text(source, invocation)
-                call_match = _JAVA_RECEIVER_CALL_RE.match(invocation_text)
-                if call_match is None:
+                call = _invocation_receiver_and_operation(invocation, source)
+                if call is None:
                     continue
-                receiver, operation = call_match.groups()
+                receiver, operation = call
                 blocking_mechanism: str | None = None
                 detail: str | None = None
                 if receiver == "Thread" and operation == "sleep":
@@ -521,20 +527,19 @@ def _extract_java_architecture(
         for node in _walk(root_node):
             if node.type != "method_invocation":
                 continue
-            text = _node_text(source, node)
-            match = _JAVA_RECEIVER_CALL_RE.match(text)
-            if match is None:
+            call = _invocation_receiver_and_operation(node, source)
+            if call is None:
                 continue
-            receiver, operation = match.groups()
+            receiver, operation = call
             is_template = receiver.lower().endswith(("template", "operations"))
             is_repository = receiver in repository_receivers
             if (is_template and operation in _MONGO_TEMPLATE_OPERATIONS) or (
-                is_repository and _REPOSITORY_OPERATIONS.match(operation)
+                is_repository and operation in _REPOSITORY_OPERATIONS
             ):
                 collection = (
                     repository_receivers.get(receiver)
                     if is_repository
-                    else _mongo_collection_literal(text)
+                    else _mongo_collection_literal(node, source)
                 )
                 if collection:
                     collections.add(collection)
@@ -589,29 +594,28 @@ def _has_rest_controllers(module_dir: Path, module_roots: set[Path]) -> tuple[st
 
     Retourne une tuple de chaînes au format "ClassName (relative/path.java)".
     """
-    _REST_CONTROLLER_RE = re.compile(r"@(?:org\.springframework\.web\.bind\.annotation\.)?RestController\b")
-    _CLASS_DECL_RE = re.compile(
-        r'@(?:org\.springframework\.web\.bind\.annotation\.)?RestController\b.*?(?:public\s+|protected\s+|private\s+)?(?:final\s+)?(?:static\s+)?(?:abstract\s+)?class\s+(\w+)',
-        re.DOTALL
-    )
-
-    controller_classes = []
+    parser = _java_parser("rest_controllers")
+    controller_classes: list[str] = []
 
     for java_file in _module_files(module_dir, module_roots, "*.java"):
         try:
-            content = java_file.read_text(encoding="utf-8", errors="replace")
-            if _REST_CONTROLLER_RE.search(content):
-                class_match = _CLASS_DECL_RE.search(content)
-                if class_match:
-                    class_name = class_match.group(1)
-                    rel_path = _module_relative(module_dir, java_file)
-                    controller_classes.append(f"{class_name} ({rel_path})")
-                else:
-                    # Fallback: utilise le nom du fichier si la classe n'est pas détectée
-                    rel_path = _module_relative(module_dir, java_file)
-                    controller_classes.append(f"Unknown ({rel_path})")
+            source = java_file.read_bytes()
         except OSError:
             continue
+        root_node = parser.parse(source).root_node
+        if root_node.has_error:
+            continue
+        rel_path = _module_relative(module_dir, java_file)
+        for declaration in java_parser.type_declarations(root_node):
+            if declaration.type != "class_declaration":
+                continue
+            if not any(
+                java_parser.annotation_name(annotation, source) == "RestController"
+                for annotation in java_parser.annotations_of(declaration)
+            ):
+                continue
+            class_name = java_parser.declaration_name(declaration, source) or "Unknown"
+            controller_classes.append(f"{class_name} ({rel_path})")
 
     return tuple(sorted(set(controller_classes)))
 

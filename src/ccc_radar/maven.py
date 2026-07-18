@@ -7,9 +7,9 @@ from functools import lru_cache
 from pathlib import Path
 import re
 
+from ccc_radar import java_parser
+
 _MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
-_MAIN_METHOD_RE = re.compile(r"\bstatic\s+void\s+main\s*\(")
-_SPRING_APPLICATION_RUN_RE = re.compile(r"SpringApplication\.run\(")
 _MAVEN_PROPERTY_RE = re.compile(r"\$\{([^}]+)\}")
 
 
@@ -162,8 +162,8 @@ def _resolve_openapi_spec_root_directory(
         return ()
 
 
-def _is_spring_boot_main_class(text: str) -> bool:
-    return bool(_MAIN_METHOD_RE.search(text)) and bool(_SPRING_APPLICATION_RUN_RE.search(text))
+def _is_spring_boot_main_class(source: bytes) -> bool:
+    return java_parser.has_spring_boot_main_class(source)
 
 
 @lru_cache(maxsize=256)
@@ -174,10 +174,10 @@ def _module_has_spring_boot_main_class(module_dir_str: str) -> bool:
         return False
     for java_file in source_root.rglob("*.java"):
         try:
-            text = java_file.read_text(encoding="utf-8", errors="replace")
+            source = java_file.read_bytes()
         except OSError:
             continue
-        if _is_spring_boot_main_class(text):
+        if _is_spring_boot_main_class(source):
             return True
     return False
 

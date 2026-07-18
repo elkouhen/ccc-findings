@@ -494,7 +494,6 @@ _REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]
 _FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
 _NAMED_STRING_ARG_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
 _REST_CLIENT_RECEIVER_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.")
-_API_DOMAIN_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _ENABLE_SWAGGER2_RE = re.compile(r"@EnableSwagger2\b")
 _OPENAPI_HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _METHOD_DECL_RE = re.compile(
@@ -2565,30 +2564,38 @@ def _resolve_value_annotated_variable(
 # convention, un `@Bean` délègue à un helper auquel est passé le domaine qui
 # publie l'API. On conserve ce domaine dans l'évidence de l'endpoint pour que
 # le graphe puisse restreindre la cible, sans prétendre résoudre une URL.
-_REST_CLIENT_CONFIGURATION_RE = re.compile(r"^Rest.*Config.*$")
-_CONFIGURED_API_CLIENT_FACTORY_RE = re.compile(r"^create.*ClientApi$")
-_REST_CONFIGURATION_DOMAIN_RE = re.compile(r"\b[A-Z][A-Z0-9]*_[A-Z0-9_]*\b")
-
-
 def _is_rest_client_configuration(class_name: str) -> bool:
     """Whether a Java configuration name follows the ``Rest*Config*`` convention."""
-    return bool(_REST_CLIENT_CONFIGURATION_RE.fullmatch(class_name))
+    return class_name.startswith("Rest") and "Config" in class_name
+
+
+def _is_uppercase_underscore_constant(name: str) -> bool:
+    return (
+        "_" in name
+        and name[0].isupper()
+        and all(character.isupper() or character.isdigit() or character == "_" for character in name)
+    )
 
 
 def _rest_configuration_domains(type_node, source: bytes) -> list[tuple[str, int]]:
-    """Retourne les constantes majuscules avec underscore d'une configuration REST."""
-    configuration = java_parser.node_text(source, type_node)
-    first_line = type_node.start_point.row + 1
+    """Return uppercase constants of a REST configuration from its Java AST.
+
+    Only identifier nodes are considered.  A constant mentioned in a comment,
+    a string literal or an annotation value therefore cannot create a false
+    microservice dependency.
+    """
     domains = {
-        (match.group(0).lower().replace("_", "-"), first_line + configuration[:match.start()].count("\n"))
-        for match in _REST_CONFIGURATION_DOMAIN_RE.finditer(configuration)
+        (name.lower().replace("_", "-"), node.start_point.row + 1)
+        for node in java_parser.walk(type_node)
+        if node.type in {"identifier", "field_identifier"}
+        if _is_uppercase_underscore_constant(name := java_parser.node_text(source, node))
     }
     return sorted(domains)
 
 
 def _is_configured_api_client_factory(method_name: str) -> bool:
     """Whether a helper name follows the ``create*ClientApi`` convention."""
-    return bool(_CONFIGURED_API_CLIENT_FACTORY_RE.fullmatch(method_name))
+    return method_name.startswith("create") and method_name.endswith("ClientApi")
 
 
 def _simple_java_type(value: str) -> str:
@@ -2599,7 +2606,11 @@ def _simple_java_type(value: str) -> str:
 
 def _normalize_api_domain(value: str) -> str | None:
     """Normalise une valeur de domaine vers le nom de microservice attendu."""
-    if not _API_DOMAIN_VALUE_RE.fullmatch(value):
+    if (
+        not value
+        or not value[0].isalpha()
+        or any(not (character.isalnum() or character in {"_", "-"}) for character in value)
+    ):
         return None
     return value.lower().replace("_", "-")
 

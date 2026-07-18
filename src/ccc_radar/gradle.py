@@ -4,8 +4,8 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-_MAIN_METHOD_RE = re.compile(r"\bstatic\s+void\s+main\s*\(")
-_SPRING_APPLICATION_RUN_RE = re.compile(r"SpringApplication\.run\(")
+from ccc_radar import java_parser
+
 _GRADLE_ARTIFACT_RE = re.compile(
     r"(?:archiveBaseName|archivesBaseName|archivesName)\s*(?:\.set\s*\()?\s*=\s*['\"]([^'\"]+)['\"]"
 )
@@ -22,8 +22,8 @@ def _is_module_within_depth(root: Path, module_dir: Path) -> bool:
     return len(module_dir.relative_to(root).parts) <= _MAX_NESTED_MODULE_DEPTH
 
 
-def _is_spring_boot_main_class(text: str) -> bool:
-    return bool(_MAIN_METHOD_RE.search(text)) and bool(_SPRING_APPLICATION_RUN_RE.search(text))
+def _is_spring_boot_main_class(source: bytes) -> bool:
+    return java_parser.has_spring_boot_main_class(source)
 
 
 def _nearest_gradle_project(repo_root: Path, java_file: Path) -> Path | None:
@@ -74,10 +74,10 @@ def _service_root_artifacts(repo_root_str: str) -> tuple[tuple[str, str], ...]:
     roots: dict[str, str] = {}
     for java_file in repo_root.rglob("*.java"):
         try:
-            text = java_file.read_text(encoding="utf-8", errors="replace")
+            source = java_file.read_bytes()
         except OSError:
             continue
-        if not _is_spring_boot_main_class(text):
+        if not _is_spring_boot_main_class(source):
             continue
 
         service_dir = _nearest_gradle_project(repo_root, java_file)
