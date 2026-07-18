@@ -370,7 +370,9 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "dependencyRenderer = new Sigma(dependencyNetwork" in document
     assert "function applyLayout(layout, persist = true)" not in document
     assert "APIs publiees" in document
-    assert "APIs consommees" in document
+    assert "APIs REST consommees" in document
+    assert "API de ${nodeDataById.get(link.target).name}" in document
+    assert "Evenements Kafka consommes" in document
     assert "Consommateurs REST detectes" in document
     assert "function appendActionList(title, entries, container = details)" in document
     assert "function focusPublishedRestResource(id, resource)" in document
@@ -594,6 +596,40 @@ def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
             "resources": ["GET /directory"],
         }
     ]
+
+
+def test_render_graph_html_resolves_strategy1_contract_from_workspace_root(tmp_path: Path) -> None:
+    contract_path = tmp_path / "model-annuaire/src/main/openapi/annuaire.yaml"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(
+        "openapi: 3.0.3\ninfo: {title: Annuaire, version: v1}\npaths: {}\n",
+        encoding="utf-8",
+    )
+    service_module = DiscoveredModule(
+        "domaine-annuaire", tmp_path / "domaine-annuaire", "maven", None, "library", True, ""
+    )
+    endpoints_by_service = {
+        "domaine-annuaire": [
+            make_endpoint(
+                "serve", "GET /directory", "src/main/resources/openapi/annuaire.rest",
+                framework="openapi",
+                snippet="cccr-openapi-contract:model-annuaire/src/main/openapi/annuaire.yaml",
+            )
+        ]
+    }
+
+    document = render_graph_html(
+        endpoints_by_service,
+        build_graph(endpoints_by_service),
+        modules_by_service={"domaine-annuaire": service_module},
+        source_roots=[tmp_path],
+    )
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+    service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:domaine-annuaire")
+
+    assert service["openapi_contracts"][0]["spec"]["info"]["title"] == "Annuaire"
 
 
 def test_render_graph_html_keeps_complexity_architecture_only() -> None:

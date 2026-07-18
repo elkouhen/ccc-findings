@@ -833,7 +833,8 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "MongoDB · ${source.name} stocke dans ${target.name}" in document
     assert "Kafka · ${source.name} publie" in document
     assert "APIs publiees" in document
-    assert "APIs consommees" in document
+    assert "APIs REST consommees" in document
+    assert "Evenements Kafka consommes" in document
     assert "Consommateurs REST detectes" in document
     assert "REST · ${resource}" in document
     assert "Kafka · ${topic.name}" in document

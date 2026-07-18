@@ -588,6 +588,7 @@ def _module_dependency_view(
 def _openapi_contract_spec(
     contract_path: str,
     modules: list[DiscoveredModule],
+    source_roots: list[Path] | None = None,
 ) -> dict[str, object] | None:
     """Read a local OpenAPI document so Swagger UI can render it offline.
 
@@ -598,6 +599,7 @@ def _openapi_contract_spec(
     source_path = Path(contract_path)
     candidates = [source_path] if source_path.is_absolute() else []
     module_paths = [module.path.resolve() for module in modules]
+    candidates.extend(root.resolve() / source_path for root in source_roots or [])
     candidates.extend(path / source_path for path in module_paths)
     if module_paths:
         common_root = Path(os.path.commonpath(module_paths))
@@ -698,6 +700,7 @@ def render_graph_html(
     indexing_warnings: list[str] | None = None,
     build_modules: list[DiscoveredModule] | None = None,
     module_dependencies: list[ModuleDependency] | None = None,
+    source_roots: list[Path] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -773,7 +776,7 @@ def render_graph_html(
                         "resources": sorted(contract_resources.get(path, set())),
                         **(
                             {"spec": spec}
-                            if (spec := _openapi_contract_spec(path, all_modules)) is not None
+                            if (spec := _openapi_contract_spec(path, all_modules, source_roots)) is not None
                             else {}
                         ),
                     }
@@ -2747,18 +2750,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         }, exposesGroup);
         discardEmptyDetailsGroup(exposesGroup);
         const consumesGroup = createDetailsGroup("Consomme");
-        appendRelationList("APIs consommees", [...httpCalls, ...kafkaConsumptions], id, link => {
-          if (link.kind === "rest") {
-            const target = nodeDataById.get(link.target);
-            const resource = restResourceLabel(link, target);
-            return resource
-              ? `REST · ${target.name} · ${resource}`
-              : `REST · ${target.name} · contrat non indexe`;
-          }
-          const topic = nodeDataById.get(link.source);
-          const types = link.consumed_message_types || [];
-          return types.length ? `Kafka · ${topic.name} <${types.join(", ")}>` : `Kafka · ${topic.name}`;
-        }, consumesGroup);
+        appendRelationList("APIs REST consommees", httpCalls, id, link => (
+          `API de ${nodeDataById.get(link.target).name}`
+        ), consumesGroup);
         discardEmptyDetailsGroup(consumesGroup);
         const dataGroup = createDetailsGroup("Donnees et evenements");
         const dtoNames = (graphData.kafka_dtos || [])
@@ -2770,6 +2764,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           title: "Afficher les champs et les relations Kafka de ce DTO",
           action: () => openDtoInspector(dto),
         })), dataGroup);
+        appendRelationList("Evenements Kafka consommes", kafkaConsumptions, id, link => {
+          const topic = nodeDataById.get(link.source);
+          return `Evenement ${topic.name}`;
+        }, dataGroup);
         appendRelationList("Collections MongoDB utilisees", mongoCollections, id, link => (
           nodeDataById.get(link.target).name
         ), dataGroup);

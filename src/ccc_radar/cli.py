@@ -1173,6 +1173,7 @@ class _MicroserviceGraphData:
     findings_by_service: dict[str, list[Finding]]
     build_modules: list[DiscoveredModule]
     module_dependencies: list[ModuleDependency]
+    source_roots: list[Path]
     warnings: list[str]
     result: dict[str, object]
 
@@ -1195,9 +1196,11 @@ def _load_microservice_graph(
     findings_by_service: dict[str, list[Finding]] = {}
     build_modules: list[DiscoveredModule] = indexed_modules
     module_dependencies: list[ModuleDependency] = []
+    source_roots = [repo_root.resolve()]
     cross_module_data_available = False
     if workspace is not None:
         services = discover_maven_services(workspace)
+        source_roots = [workspace.resolve(), *(service.path.resolve() for service in services)]
         federation = load_federation(services)
         warnings.extend(federation.warnings)
         build_modules = list(federation.modules.values())
@@ -1267,6 +1270,7 @@ def _load_microservice_graph(
         findings_by_service,
         build_modules,
         module_dependencies,
+        source_roots,
         warnings,
         result,
     )
@@ -1377,6 +1381,7 @@ def export_microservices_cmd(
                 graph_data.warnings,
                 graph_data.build_modules,
                 graph_data.module_dependencies,
+                graph_data.source_roots,
             ),
             encoding="utf-8",
         )
