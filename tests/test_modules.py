@@ -68,6 +68,19 @@ def test_discover_modules_excludes_maven_and_gradle_modules_in_test_directories(
     assert [module.name for module in discover_modules(tmp_path)] == ["orders-api"]
 
 
+def test_discover_modules_excludes_maven_and_gradle_mock_projects(tmp_path: Path) -> None:
+    maven_mock = tmp_path / "orders-mock"
+    gradle_mock = tmp_path / "payment-stubs"
+    production = tmp_path / "orders"
+    for module in (maven_mock, gradle_mock, production):
+        module.mkdir()
+    _write_pom(maven_mock / "pom.xml", "orders-mock", "1.0.0")
+    (gradle_mock / "build.gradle").write_text("archivesBaseName = 'payment-mock'\n")
+    _write_pom(production / "pom.xml", "orders-api", "1.0.0")
+
+    assert [module.name for module in discover_modules(tmp_path)] == ["orders-api"]
+
+
 def test_discover_module_dependencies_keeps_only_local_maven_and_gradle_targets(
     tmp_path: Path,
 ) -> None:

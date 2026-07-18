@@ -109,18 +109,23 @@ _MAX_NESTED_MODULE_DEPTH = 5
 
 
 def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
-    """Whether a build module is dedicated to tests and must not be indexed.
+    """Whether a non-production build module must not be indexed.
 
-    The artifact name is not always explicit: a module in ``contract-tests``
-    may still publish an artifact named ``contract-api``.  Inspect both the
-    build name and every component of its path relative to the workspace,
-    without considering the workspace path itself.
+    Test and mock projects do not describe the production architecture.  Their
+    artifact name is not always explicit: a module in ``contract-tests`` may
+    still publish an artifact named ``contract-api``. Inspect both the build
+    name and every component of its path relative to the workspace, without
+    considering the workspace path itself.
     """
     try:
         path_parts = module_dir.resolve().relative_to(root.resolve()).parts
     except ValueError:
         path_parts = (module_dir.name,)
-    return any("test" in value.casefold() for value in (name, *path_parts))
+    return any(
+        marker in value.casefold()
+        for value in (name, *path_parts)
+        for marker in ("test", "mock")
+    )
 
 
 def discover_test_module_paths(root: Path) -> tuple[Path, ...]:
