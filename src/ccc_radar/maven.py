@@ -137,6 +137,31 @@ def _resolve_openapi_spec_path(
     return module_relative.as_posix()
 
 
+def _resolve_openapi_spec_root_directory(
+    pom_path: Path, raw_value: str, properties: dict[str, str]
+) -> tuple[str, ...]:
+    """Return every local file configured through ``inputSpecRootDirectory``."""
+    resolved = _resolve_maven_value(raw_value, properties)
+    if "${" in resolved or "://" in resolved and not resolved.startswith("file://"):
+        return ()
+    if resolved.startswith("file://"):
+        resolved = resolved[7:]
+    candidate = Path(resolved)
+    if not candidate.is_absolute():
+        candidate = pom_path.parent / candidate
+    if not candidate.is_dir():
+        return ()
+    try:
+        root = pom_path.parent.resolve()
+        return tuple(
+            path.relative_to(root).as_posix()
+            for path in sorted(candidate.rglob("*"))
+            if path.is_file() and root in path.resolve().parents
+        )
+    except (OSError, ValueError):
+        return ()
+
+
 def _is_spring_boot_main_class(text: str) -> bool:
     return bool(_MAIN_METHOD_RE.search(text)) and bool(_SPRING_APPLICATION_RUN_RE.search(text))
 
@@ -208,7 +233,7 @@ def detect_openapi_generator_input_specs(pom_path: Path) -> tuple[str, ...]:
     """Liste les contrats OpenAPI/Swagger locaux référencés par le plugin Maven.
 
     Les implémentations serveur générées par ``openapi-generator-maven-plugin``
-    publient l'API décrite par ``inputSpec`` même quand les classes
+    publient l'API décrite par ``inputSpec`` ou ``inputSpecRootDirectory`` même quand les classes
     ``@RestController`` n'exposent aucune annotation de méthode locale.
     """
     root = _parse_pom_root(pom_path)
@@ -222,12 +247,24 @@ def detect_openapi_generator_input_specs(pom_path: Path) -> tuple[str, ...]:
             resolved = _resolve_openapi_spec_path(pom_path, plugin_level, properties)
             if resolved is not None:
                 specs.add(resolved)
+        plugin_root_directory = _plugin_config_value(plugin, "inputSpecRootDirectory")
+        if plugin_root_directory:
+            specs.update(
+                _resolve_openapi_spec_root_directory(pom_path, plugin_root_directory, properties)
+            )
         for configuration in _execution_configurations(plugin):
             execution_level = _pom_child_text(configuration, "inputSpec")
             if execution_level:
                 resolved = _resolve_openapi_spec_path(pom_path, execution_level, properties)
                 if resolved is not None:
                     specs.add(resolved)
+            execution_root_directory = _pom_child_text(configuration, "inputSpecRootDirectory")
+            if execution_root_directory:
+                specs.update(
+                    _resolve_openapi_spec_root_directory(
+                        pom_path, execution_root_directory, properties
+                    )
+                )
     return tuple(sorted(specs))
 
 

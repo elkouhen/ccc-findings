@@ -1210,13 +1210,15 @@ def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpo
 
 
 @lru_cache(maxsize=64)
-def _openapi_generator_contract_paths(repo_root_str: str) -> tuple[str, ...]:
+def _openapi_generator_contract_paths(
+    repo_root_str: str, *, configured_api_client_strategy1: bool = False
+) -> tuple[str, ...]:
     repo_root = Path(repo_root_str)
     contracts: set[str] = set()
     for pom_path in sorted(repo_root.rglob("pom.xml")):
         try:
             module_dir = pom_path.parent
-            if not _has_rest_controllers(module_dir, set()):
+            if not configured_api_client_strategy1 and not _has_rest_controllers(module_dir, set()):
                 continue
             for module_relative in maven_module.detect_openapi_generator_input_specs(pom_path):
                 contracts.add((module_dir / module_relative).relative_to(repo_root).as_posix())
@@ -1242,16 +1244,20 @@ def _is_openapi_contract_path(
     return path.name in {
         "openapi.yaml", "openapi.yml", "openapi.json",
         "swagger.yaml", "swagger.yml", "swagger.json",
-    } or rel_path in _openapi_generator_contract_paths(str(repo_root)) or (
+    } or rel_path in _openapi_generator_contract_paths(
+        str(repo_root), configured_api_client_strategy1=configured_api_client_strategy1
+    ) or (
         configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)
     )
 
 
-def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+def _infer_openapi_generator_endpoints(
+    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
+) -> list[MessageEndpoint]:
     path = repo_root / rel_path
     if path.name != "pom.xml":
         return []
-    if not _has_rest_controllers(path.parent, set()):
+    if not configured_api_client_strategy1 and not _has_rest_controllers(path.parent, set()):
         return []
     endpoints: list[MessageEndpoint] = []
     for module_relative in maven_module.detect_openapi_generator_input_specs(path):
@@ -1259,7 +1265,13 @@ def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[M
             contract_rel_path = (path.parent / module_relative).relative_to(repo_root).as_posix()
         except ValueError:
             continue
-        endpoints.extend(_infer_openapi_endpoints(repo_root, contract_rel_path))
+        endpoints.extend(
+            _infer_openapi_endpoints(
+                repo_root,
+                contract_rel_path,
+                configured_api_client_strategy1=configured_api_client_strategy1,
+            )
+        )
     return endpoints
 
 
@@ -2139,7 +2151,11 @@ def infer_framework_endpoints(
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith("pom.xml"):
-            for endpoint in _infer_openapi_generator_endpoints(repo_root, rel_path):
+            for endpoint in _infer_openapi_generator_endpoints(
+                repo_root,
+                rel_path,
+                configured_api_client_strategy1=configured_api_client_strategy1,
+            ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith((".properties", ".yml", ".yaml")) or (
             configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)

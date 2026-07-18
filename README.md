@@ -128,7 +128,10 @@ It normalizes a producer call `getTopics().getAbcDefGhiJkl()` and a
 `@KafkaListener` placeholder `${kafka.topics.abc_def_ghi_jkl.name}` to the
 physical topic `ABC_DEF_GHI_JKL`; it also creates configured HTTP-client
 relations from every uppercase constant containing an underscore in those REST
-configuration classes.
+configuration classes. A Maven OpenAPI generator configured with
+`inputSpecRootDirectory` also publishes the operations declared by every
+contract in that local directory, without relying on generated `XxxApi` Java
+interfaces.
 Changing the strategy triggers a full
 inventory refresh. `strategy1` is available with the default `manual` engine,
 not with the experimental `cocoindex` engine.

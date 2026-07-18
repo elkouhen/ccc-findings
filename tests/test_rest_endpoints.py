@@ -308,6 +308,41 @@ def test_openapi_generator_pom_points_to_authoritative_contract_for_rest_control
     }
 
 
+def test_strategy1_openapi_generator_parses_every_contract_in_input_spec_root_directory(
+    tmp_path: Path,
+) -> None:
+    """A generated ``XxxApi`` interface is not needed to identify publication."""
+    specs = tmp_path / "src" / "main" / "resources" / "openapi"
+    specs.mkdir(parents=True)
+    (specs / "annuaire.rest").write_text(
+        "openapi: 3.0.0\npaths:\n  /annuaire:\n    get:\n      responses: {}\n"
+    )
+    (specs / "billing.yaml").write_text(
+        "openapi: 3.0.0\npaths:\n  /billing:\n    post:\n      responses: {}\n"
+    )
+    (tmp_path / "pom.xml").write_text(
+        "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+        "<modelVersion>4.0.0</modelVersion><artifactId>gateway</artifactId>"
+        "<build><plugins><plugin><groupId>org.openapitools</groupId>"
+        "<artifactId>openapi-generator-maven-plugin</artifactId>"
+        "<configuration><inputSpecRootDirectory>"
+        "${project.basedir}/src/main/resources/openapi"
+        "</inputSpecRootDirectory></configuration>"
+        "</plugin></plugins></build></project>"
+    )
+
+    assert infer_framework_endpoints(tmp_path, files=["pom.xml"]) == []
+
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=["pom.xml"], configured_api_client_strategy1=True
+    )
+
+    assert {(endpoint.topic, endpoint.path, endpoint.framework) for endpoint in endpoints} == {
+        ("GET /annuaire", "src/main/resources/openapi/annuaire.rest", "openapi"),
+        ("POST /billing", "src/main/resources/openapi/billing.yaml", "openapi"),
+    }
+
+
 def test_java_client_call_with_variable_base_extracts_literal_suffix_as_dynamic() -> None:
     # getForObject(base + "/orders/" + id, ...) : premier littéral trouvé
     # au milieu de l'expression, toujours marqué dynamique (concaténation).
