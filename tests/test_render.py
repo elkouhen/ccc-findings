@@ -8,7 +8,7 @@ from pathlib import Path
 import ccc_radar.render as render_module
 from ccc_radar.graph import build_graph
 from ccc_radar.models import Finding, MessageEndpoint, compute_endpoint_id
-from ccc_radar.modules import DiscoveredModule, MongoMethod
+from ccc_radar.modules import DiscoveredModule, ModuleDependency, MongoMethod
 from ccc_radar.render import (
     render_graph_d2,
     render_graph_drawio,
@@ -361,8 +361,8 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="dependencies-tab"' in document
     assert 'id="dependencies-panel"' in document
     assert 'id="dependency-graph"' in document
-    assert "function dependencyGraphData(nodes, links)" in document
-    assert "function sugiyamaPositions(nodes, links)" in document
+    assert "function dependencyGraphData()" in document
+    assert "function sugiyamaPositions(nodes, links)" not in document
     assert "function ensureDependencyRenderer()" in document
     assert "let dependencyRenderer = null;" in document
     assert "dependencyRenderer = new Sigma(dependencyNetwork" in document
@@ -447,6 +447,60 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
     assert [link["direction"] for link in graph_data["links"]] == ["outgoing", "outgoing", "incoming"]
     assert graph_data["links"][1]["published_message_types"] == ["OrderCreated"]
     assert graph_data["links"][2]["consumed_message_types"] == ["OrderCreated"]
+
+
+def test_render_graph_html_embeds_maven_gradle_dependency_tree() -> None:
+    modules = [
+        DiscoveredModule("orders-service", Path("orders"), "maven", None, "library", True, ""),
+        DiscoveredModule("shared-kernel", Path("shared"), "gradle", None, "library", False, ""),
+        DiscoveredModule("standalone-tool", Path("tool"), "maven", None, "library", False, ""),
+    ]
+    document = render_graph_html(
+        {},
+        [],
+        build_modules=modules,
+        module_dependencies=[ModuleDependency("orders-service", "shared-kernel")],
+    )
+    graph_data = json.loads(
+        re.search(r'<script id="graph-data" type="application/json">(.*)</script>', document).group(1)
+    )
+
+    assert graph_data["build_dependencies"] == {
+        "nodes": [
+            {
+                "id": "module:orders-service",
+                "name": "orders-service",
+                "kind": "build_module",
+                "build_system": "maven",
+                "color": "#2563eb",
+                "size": 17,
+            },
+            {
+                "id": "module:shared-kernel",
+                "name": "shared-kernel",
+                "kind": "build_module",
+                "build_system": "gradle",
+                "color": "#64748b",
+                "size": 14,
+            },
+            {
+                "id": "module:standalone-tool",
+                "name": "standalone-tool",
+                "kind": "build_module",
+                "build_system": "maven",
+                "color": "#64748b",
+                "size": 14,
+            },
+        ],
+        "links": [
+            {
+                "source": "module:orders-service",
+                "target": "module:shared-kernel",
+                "kind": "build",
+                "label": "dépend de",
+            }
+        ],
+    }
 
 
 def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:

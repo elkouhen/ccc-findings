@@ -42,7 +42,7 @@ from ccc_radar.graph import (
 from ccc_radar.indexer import index_repo
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import DiscoveredModule, discover_modules
+from ccc_radar.modules import DiscoveredModule, ModuleDependency, discover_modules
 from ccc_radar.render import (
     render_code_search_text,
     render_endpoints_json,
@@ -1171,6 +1171,8 @@ class _MicroserviceGraphData:
     collections_by_service: dict[str, list[str]]
     modules_by_service: dict[str, DiscoveredModule]
     findings_by_service: dict[str, list[Finding]]
+    build_modules: list[DiscoveredModule]
+    module_dependencies: list[ModuleDependency]
     warnings: list[str]
     result: dict[str, object]
 
@@ -1191,11 +1193,15 @@ def _load_microservice_graph(
     collections_by_service: dict[str, list[str]] = {}
     modules_by_service: dict[str, DiscoveredModule] = {}
     findings_by_service: dict[str, list[Finding]] = {}
+    build_modules: list[DiscoveredModule] = indexed_modules
+    module_dependencies: list[ModuleDependency] = []
     cross_module_data_available = False
     if workspace is not None:
         services = discover_maven_services(workspace)
         federation = load_federation(services)
         warnings.extend(federation.warnings)
+        build_modules = list(federation.modules.values())
+        module_dependencies = federation.module_dependencies
         services_by_name = dict(federation.endpoints_by_service)
         for service, module in federation.modules_by_service.items():
             if module.starts_application:
@@ -1218,6 +1224,8 @@ def _load_microservice_graph(
         cross_module_data_available = True
     else:
         grouped_endpoints = group_endpoints_by_module(endpoints)
+        with Store(repo_root, readonly=True) as store:
+            module_dependencies = store.all_module_dependencies()
         indexed_microservices = {
             module.name for module in indexed_modules if module.starts_application
         }
@@ -1252,7 +1260,15 @@ def _load_microservice_graph(
         cross_module_data_available=cross_module_data_available,
     )
     return _MicroserviceGraphData(
-        services_by_name, edges, collections_by_service, modules_by_service, findings_by_service, warnings, result
+        services_by_name,
+        edges,
+        collections_by_service,
+        modules_by_service,
+        findings_by_service,
+        build_modules,
+        module_dependencies,
+        warnings,
+        result,
     )
 
 
@@ -1359,6 +1375,8 @@ def export_microservices_cmd(
                 graph_data.collections_by_service,
                 graph_data.modules_by_service,
                 graph_data.warnings,
+                graph_data.build_modules,
+                graph_data.module_dependencies,
             ),
             encoding="utf-8",
         )

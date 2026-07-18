@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ccc_radar.inventory_freshness import endpoint_inventory_warning
 from ccc_radar.models import Finding, MessageEndpoint
-from ccc_radar.modules import DiscoveredModule, discover_modules
+from ccc_radar.modules import DiscoveredModule, ModuleDependency, discover_modules
 from ccc_radar.paths import db_path
 from ccc_radar.store import Store, StoreError
 
@@ -33,6 +33,8 @@ class FederationResult:
     warnings: list[str]
     modules_by_service: dict[str, DiscoveredModule] = field(default_factory=dict)
     endpoints_by_module: dict[str, list[MessageEndpoint]] = field(default_factory=dict)
+    modules: dict[str, DiscoveredModule] = field(default_factory=dict)
+    module_dependencies: list[ModuleDependency] = field(default_factory=list)
 
 
 def missing_indexed_microservices(
@@ -127,6 +129,8 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
     findings_by_service: dict[str, list[Finding]] = {}
     modules_by_service: dict[str, DiscoveredModule] = {}
     endpoints_by_module: dict[str, list[MessageEndpoint]] = {}
+    modules: dict[str, DiscoveredModule] = {}
+    module_dependencies: set[ModuleDependency] = set()
     warnings: list[str] = []
 
     for service in services:
@@ -139,6 +143,8 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
         try:
             with Store(service.index_root, readonly=True) as store:
                 indexed_modules = {module.name: module for module in store.all_modules()}
+                modules.update(indexed_modules)
+                module_dependencies.update(store.all_module_dependencies())
                 if module := indexed_modules.get(service.name):
                     modules_by_service[service.name] = module
                 if service.index_root == service.path:
@@ -169,4 +175,6 @@ def load_federation(services: list[DiscoveredService]) -> FederationResult:
         warnings,
         modules_by_service,
         endpoints_by_module,
+        modules,
+        sorted(module_dependencies, key=lambda dependency: (dependency.source, dependency.target)),
     )

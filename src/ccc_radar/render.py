@@ -549,12 +549,47 @@ def _indexing_issues(
     )
 
 
+def _module_dependency_view(
+    modules: list[DiscoveredModule] | None,
+    dependencies: list[ModuleDependency] | None,
+) -> dict[str, list[dict[str, object]]]:
+    """Serialize the Maven/Gradle dependency tree used by the HTML sub-view."""
+    dependencies = dependencies or []
+    connected = {name for dependency in dependencies for name in (dependency.source, dependency.target)}
+    modules_by_name = {module.name: module for module in modules or []}
+    module_names = set(modules_by_name) | connected
+    return {
+        "nodes": [
+            {
+                "id": f"module:{name}",
+                "name": name,
+                "kind": "build_module",
+                "build_system": modules_by_name[name].build_system if name in modules_by_name else "unknown",
+                "color": "#2563eb" if modules_by_name.get(name, None) and modules_by_name[name].starts_application else "#64748b",
+                "size": 17 if modules_by_name.get(name, None) and modules_by_name[name].starts_application else 14,
+            }
+            for name in sorted(module_names)
+        ],
+        "links": [
+            {
+                "source": f"module:{dependency.source}",
+                "target": f"module:{dependency.target}",
+                "kind": "build",
+                "label": "dépend de",
+            }
+            for dependency in dependencies
+        ],
+    }
+
+
 def render_graph_html(
     endpoints_by_service: dict[str, list[MessageEndpoint]],
     edges: list[GraphEdge],
     collections_by_service: dict[str, list[str]] | None = None,
     modules_by_service: dict[str, DiscoveredModule] | None = None,
     indexing_warnings: list[str] | None = None,
+    build_modules: list[DiscoveredModule] | None = None,
+    module_dependencies: list[ModuleDependency] | None = None,
 ) -> str:
     """Render an interactive Sigma.js graph as a self-contained HTML document.
 
@@ -724,6 +759,7 @@ def render_graph_html(
         {
             "nodes": nodes,
             "links": links,
+            "build_dependencies": _module_dependency_view(build_modules, module_dependencies),
             "indexing_issues": _indexing_issues(endpoints_by_service, edges, indexing_warnings),
         },
         ensure_ascii=False,
@@ -1215,9 +1251,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       </details>
     </div>
     <div id="dependencies-panel" class="toolbar-panel dependency-view" role="tabpanel" aria-labelledby="dependencies-tab" hidden>
-      <p class="dependency-view-kicker">Architecture applicative</p>
+      <p class="dependency-view-kicker">Structure de build</p>
       <h2>Arbre des dépendances</h2>
-      <p>Disposition Sugiyama en couches. Un lien va du service consommateur vers son fournisseur HTTP ou vers le service qui publie l’événement Kafka. Les collections MongoDB et les microservices isolés restent dans la vue Graphe.</p>
+      <p>Les liens Maven et Gradle partent du module qui dépend vers le module requis. La disposition rapproche les modules liés sans imposer de couches. Les interactions HTTP, Kafka et MongoDB restent dans la vue Graphe.</p>
     </div>
     <div id="issues-panel" class="toolbar-panel indexing-issues" role="tabpanel" aria-labelledby="issues-tab" hidden>
       <div class="indexing-issues-header">
@@ -1244,9 +1280,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible (tiers inferieur)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne (tiers central)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee (tiers superieur)</div>
-      <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
+      <div class="legend-row"><span class="legend-mark" style="width:14px;border-radius:3px;background:#64748b"></span>Microservice</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
-      <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
+      <div class="legend-row"><span class="legend-mark" style="width:14px;border-radius:50% / 26%;background:#64748b"></span>Collection MongoDB</div>
       <div class="legend-row"><span class="legend-line" style="background:#D55E00"></span>Appel HTTP</div>
       <div class="legend-row"><span class="legend-line" style="background:#009E73"></span>Publication Kafka</div>
       <div class="legend-row"><span class="legend-line" style="background:#0072B2"></span>Consommation Kafka</div>
@@ -1303,115 +1339,17 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       kafkaPublish: "#009E73",
       kafkaConsume: "#0072B2",
       mongodb: "#CC79A7",
+      build: "#475569",
     });
     function relationColor(link) {
       if (link.kind === "rest") return RELATION_COLORS.http;
+      if (link.kind === "build") return RELATION_COLORS.build;
       if (link.direction === "incoming") return RELATION_COLORS.kafkaConsume;
       if (link.direction === "data_access") return RELATION_COLORS.mongodb;
       return RELATION_COLORS.kafkaPublish;
     }
-    function dependencyGraphData(nodes, links) {
-      const microservices = new Map(
-        nodes.filter(node => node.kind === "microservice").map(node => [node.id, node])
-      );
-      const grouped = new Map();
-      function add(source, target, kind, label) {
-        if (source === target || !microservices.has(source) || !microservices.has(target)) return;
-        const key = `${source}|${target}|${kind}`;
-        const entry = grouped.get(key) || { source, target, kind, labels: new Set() };
-        entry.labels.add(label);
-        grouped.set(key, entry);
-      }
-      links.filter(link => link.kind === "rest").forEach(link => {
-        add(link.source, link.target, "rest", "HTTP");
-      });
-      const producersByTopic = new Map();
-      const consumersByTopic = new Map();
-      links.filter(link => link.kind === "kafka").forEach(link => {
-        if (microservices.has(link.source)) {
-          producersByTopic.set(link.target, [...(producersByTopic.get(link.target) || []), link.source]);
-        }
-        if (microservices.has(link.target)) {
-          consumersByTopic.set(link.source, [...(consumersByTopic.get(link.source) || []), link.target]);
-        }
-      });
-      consumersByTopic.forEach((consumers, topicId) => {
-        const topic = nodeDataById.get(topicId);
-        (producersByTopic.get(topicId) || []).forEach(producer => {
-          consumers.forEach(consumer => add(consumer, producer, "kafka", `Kafka · ${topic.name}`));
-        });
-      });
-      const dependencyLinks = [...grouped.values()].map(entry => ({
-        source: entry.source,
-        target: entry.target,
-        kind: entry.kind,
-        direction: entry.kind === "kafka" ? "incoming" : "outgoing",
-        label: [...entry.labels].sort().join("\\n"),
-      }));
-      const connectedIds = new Set(dependencyLinks.flatMap(link => [link.source, link.target]));
-      return {
-        nodes: [...connectedIds].sort().map(id => microservices.get(id)),
-        links: dependencyLinks,
-      };
-    }
-    function sugiyamaPositions(nodes, links) {
-      const adjacency = new Map(nodes.map(node => [node.id, []]));
-      links.forEach(link => adjacency.get(link.source)?.push(link.target));
-      // Condense cycles first: each strongly connected component is then a
-      // single vertex in the acyclic graph used for layer assignment.
-      const indexes = new Map(), lowlinks = new Map(), stack = [], onStack = new Set(), components = [];
-      let nextIndex = 0;
-      function visit(nodeId) {
-        indexes.set(nodeId, nextIndex); lowlinks.set(nodeId, nextIndex); nextIndex += 1;
-        stack.push(nodeId); onStack.add(nodeId);
-        for (const targetId of adjacency.get(nodeId) || []) {
-          if (!indexes.has(targetId)) {
-            visit(targetId);
-            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), lowlinks.get(targetId)));
-          } else if (onStack.has(targetId)) {
-            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), indexes.get(targetId)));
-          }
-        }
-        if (lowlinks.get(nodeId) !== indexes.get(nodeId)) return;
-        const component = [];
-        for (;;) {
-          const member = stack.pop(); onStack.delete(member); component.push(member);
-          if (member === nodeId) break;
-        }
-        components.push(component.sort());
-      }
-      nodes.map(node => node.id).sort().forEach(nodeId => { if (!indexes.has(nodeId)) visit(nodeId); });
-      const componentByNode = new Map();
-      components.forEach((component, index) => component.forEach(nodeId => componentByNode.set(nodeId, index)));
-      const successors = components.map(() => new Set());
-      const indegrees = components.map(() => 0);
-      links.forEach(link => {
-        const source = componentByNode.get(link.source), target = componentByNode.get(link.target);
-        if (source === target || successors[source].has(target)) return;
-        successors[source].add(target); indegrees[target] += 1;
-      });
-      const levels = components.map(() => 0);
-      const queue = components.map((_component, index) => index).filter(index => indegrees[index] === 0).sort((a, b) => a - b);
-      for (let cursor = 0; cursor < queue.length; cursor += 1) {
-        const component = queue[cursor];
-        [...successors[component]].sort((a, b) => a - b).forEach(target => {
-          levels[target] = Math.max(levels[target], levels[component] + 1);
-          indegrees[target] -= 1;
-          if (indegrees[target] === 0) queue.push(target);
-        });
-      }
-      const layers = new Map();
-      components.forEach((component, index) => {
-        const level = levels[index];
-        layers.set(level, [...(layers.get(level) || []), ...component]);
-      });
-      const positions = new Map();
-      [...layers.entries()].sort(([left], [right]) => left - right).forEach(([level, nodeIds]) => {
-        nodeIds.sort();
-        const center = (nodeIds.length - 1) / 2;
-        nodeIds.forEach((nodeId, row) => positions.set(nodeId, { x: level * 2.8, y: row - center }));
-      });
-      return positions;
+    function dependencyGraphData() {
+      return graphData.build_dependencies || { nodes: [], links: [] };
     }
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
@@ -1477,11 +1415,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        float shape = max(abs(point.x) * .866025 + abs(point.y) * .5, abs(point.y));
-        float distance = shape - .43;
+        vec2 bounds = vec2(.42, .30);
+        float radius = .075;
+        vec2 corner = abs(point) - (bounds - radius);
+        float distance = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - radius;
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
-        float border = smoothstep(.33, .42, shape);
+        float border = smoothstep(-.075, -.016, distance);
         vec3 fill = vec3(.98, .99, 1.0);
         gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
@@ -1505,13 +1445,19 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       varying vec4 v_color;
       void main() {
         vec2 point = gl_PointCoord - vec2(.5);
-        float shape = max(abs(point.x), abs(point.y));
-        float distance = shape - .42;
+        vec2 bounds = vec2(.40, .31);
+        float radius = .11;
+        vec2 corner = abs(point) - (bounds - radius);
+        float distance = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - radius;
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
-        float border = smoothstep(.32, .41, shape);
+        float border = smoothstep(-.065, -.016, distance);
+        float topRim = 1.0 - smoothstep(.016, .032, abs(length(vec2(point.x / .36, (point.y + .19) / .075)) - 1.0));
+        float bottomRim = 1.0 - smoothstep(.016, .032, abs(length(vec2(point.x / .36, (point.y - .19) / .075)) - 1.0));
+        float rim = max(topRim, bottomRim);
         vec3 fill = vec3(.98, .99, 1.0);
-        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
+        vec3 body = mix(fill, v_color.rgb, border);
+        gl_FragColor = vec4(mix(body, v_color.rgb, rim), v_color.a * alpha);
       }
     `;
     const packedColorBuffer = new ArrayBuffer(4);
@@ -1631,18 +1577,17 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const dependencyCanvas = document.getElementById("dependency-graph");
     function ensureDependencyRenderer() {
       if (dependencyRenderer !== null) return dependencyRenderer;
-      const dependencyData = dependencyGraphData(graphData.nodes, graphData.links);
-      const dependencyPositions = sugiyamaPositions(dependencyData.nodes, dependencyData.links);
+      const dependencyData = dependencyGraphData();
       const dependencyNetwork = new graphology.MultiDirectedGraph();
-      dependencyData.nodes.forEach(node => {
-        const position = dependencyPositions.get(node.id) || { x: 0, y: 0 };
+      dependencyData.nodes.forEach((node, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(1, dependencyData.nodes.length);
         dependencyNetwork.addNode(node.id, {
           label: node.name,
-          x: position.x,
-          y: position.y,
+          x: Math.cos(angle),
+          y: Math.sin(angle),
           size: node.size,
           color: node.color,
-          type: "microservice",
+          type: "build_module",
         });
       });
       dependencyData.links.forEach((link, index) => dependencyNetwork.addEdgeWithKey(
@@ -1655,16 +1600,25 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         }
       ));
       dependencyRenderer = new Sigma(dependencyNetwork, dependencyCanvas, {
-        nodeProgramClasses: { microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER) },
+        nodeProgramClasses: { build_module: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER) },
         renderEdgeLabels: false,
         labelDensity: .12,
         labelGridCellSize: 110,
         labelRenderedSizeThreshold: 8,
-        edgeReducer: (_edge, data) => (
-          isVisibleRelation(data.kind) ? data : { ...data, hidden: true }
-        ),
       });
-      dependencyRenderer.on("clickNode", ({ node }) => selectNode(node));
+      layoutLibraries.then(libraries => {
+        if (libraries === null || dependencyNetwork.order === 0) return;
+        libraries.forceAtlas2.assign(dependencyNetwork, {
+          iterations: Math.min(160, Math.max(60, dependencyNetwork.order * 3)),
+          settings: { adjustSizes: true, gravity: 1.2, scalingRatio: 10, slowDown: 2 },
+        });
+        libraries.noverlap.assign(dependencyNetwork, {
+          maxIterations: 120,
+          settings: { expansion: 1.1, gridSize: 20, margin: 4, ratio: 1.3, speed: 3 },
+        });
+        dependencyRenderer?.refresh();
+      });
+      dependencyRenderer.on("clickNode", ({ node }) => selectDependencyModule(node));
       dependencyRenderer.on("clickStage", reset);
       return dependencyRenderer;
     }
@@ -1955,6 +1909,32 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
       section.append(heading, list);
       details.append(section);
+    }
+    function selectDependencyModule(id) {
+      const node = (graphData.build_dependencies?.nodes || []).find(item => item.id === id);
+      if (!node) return;
+      const links = graphData.build_dependencies?.links || [];
+      const dependencies = links
+        .filter(link => link.source === id)
+        .map(link => (graphData.build_dependencies.nodes.find(item => item.id === link.target) || {}).name)
+        .filter(Boolean);
+      const dependents = links
+        .filter(link => link.target === id)
+        .map(link => (graphData.build_dependencies.nodes.find(item => item.id === link.source) || {}).name)
+        .filter(Boolean);
+      details.replaceChildren();
+      const header = document.createElement("header");
+      header.className = "details-header";
+      const kicker = document.createElement("p");
+      kicker.className = "details-kicker";
+      kicker.textContent = `Module ${node.build_system === "unknown" ? "Maven / Gradle" : node.build_system}`;
+      const title = document.createElement("h1");
+      title.className = "details-title";
+      title.textContent = node.name;
+      header.append(kicker, title);
+      details.append(header);
+      appendList("Depend de", [...new Set(dependencies)].sort());
+      appendList("Utilise par", [...new Set(dependents)].sort());
     }
     function setDetailsEmpty(message) {
       details.replaceChildren();
