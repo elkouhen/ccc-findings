@@ -325,7 +325,13 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="fit-view"' in document
     assert 'id="relation-http"' in document
     assert 'id="relation-kafka"' in document
+    assert 'id="relation-mongodb"' in document
+    assert "Appel HTTP" in document
+    assert "Publication Kafka" in document
+    assert "Consommation Kafka" in document
+    assert 'link.kind === "rest" ? "#7c3aed"' in document
     assert "function isVisibleRelation(kind)" in document
+    assert 'kind !== "mongodb" || relationMongodb.checked' in document
     assert 'hidden: true' in document
     assert document.index("const relationHttp") < document.index("const renderer")
     assert 'renderer.on("clickNode"' in document

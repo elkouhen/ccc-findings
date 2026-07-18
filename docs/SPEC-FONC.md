@@ -349,8 +349,8 @@ nodes and edges so dense hubs remain inspectable. The details panel lists the
 APIs exposed by the selected microservice, and the published and consumed Java
 message types of a selected Kafka topic when statically known, as well as direct relations. Each
 relation uses a stable `source -> target : action` wording rather than a
-selection-relative direction. The `HTTP` and `Kafka` toggles independently
-show or hide those relations; hiding Kafka also hides Kafka topic nodes and
+selection-relative direction. The `HTTP`, `Kafka` and `MongoDB` toggles independently
+show or hide those relations; hiding Kafka or MongoDB also hides their topic or collection nodes and
 path searches only traverse the currently displayed relation types. A text field accepts a path such as
 `service-a -> topic-1 -> service-b` and highlights the shortest directed path
 between every pair of consecutive entries, preserving REST call direction and
@@ -369,6 +369,9 @@ fragment, so a browser refresh restores it, embeds graph data locally and loads 
 when opened. Microservices are hexagons, Kafka topics circles and MongoDB
 collections squares; a blue, orange or red border reflects the node's number
 of direct relations.
+
+The HTML legend distinguishes relationship protocols: HTTP calls are purple,
+Kafka publications green, Kafka consumptions orange and MongoDB accesses blue.
 
 `--c4 DIR` writes a runnable LikeC4 project in `DIR`: `architecture.c4`, the
 LikeC4 configuration, `package.json`, `.gitignore` and a README. It declares

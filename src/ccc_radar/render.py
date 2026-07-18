@@ -966,6 +966,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
     <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
     <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
+    <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
     <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
     <label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label>
     <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">&rarr;</button>
@@ -981,8 +982,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
     <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
     <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
-    <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Sortant</div>
-    <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Entrant Kafka</div>
+    <div class="legend-row"><span class="legend-line" style="background:#7c3aed"></span>Appel HTTP</div>
+    <div class="legend-row"><span class="legend-line" style="background:#0f766e"></span>Publication Kafka</div>
+    <div class="legend-row"><span class="legend-line" style="background:#d97706"></span>Consommation Kafka</div>
+    <div class="legend-row"><span class="legend-line" style="background:#2563eb"></span>Acces MongoDB</div>
   </div>
   <div id="details">Selectionnez un noeud pour isoler ses relations et afficher ses APIs.</div>
   <div id="graph" aria-label="Graphe des interactions"></div>
@@ -1041,7 +1044,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
       size: 1.2,
-      color: link.direction === "incoming" ? "#d97706" : link.direction === "data_access" ? "#2563eb" : "#0f766e",
+      color: link.kind === "rest" ? "#7c3aed" : link.direction === "incoming" ? "#d97706" : link.direction === "data_access" ? "#2563eb" : "#0f766e",
       kind: link.kind,
       type: "arrow",
     }));
@@ -1053,8 +1056,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     // exist before creating the renderer.
     const relationHttp = document.getElementById("relation-http");
     const relationKafka = document.getElementById("relation-kafka");
+    const relationMongodb = document.getElementById("relation-mongodb");
     function isVisibleRelation(kind) {
-      return (kind !== "rest" || relationHttp.checked) && (kind !== "kafka" || relationKafka.checked);
+      return (kind !== "rest" || relationHttp.checked)
+        && (kind !== "kafka" || relationKafka.checked)
+        && (kind !== "mongodb" || relationMongodb.checked);
     }
     const NODE_VERTEX_SHADER = `
       attribute vec2 a_position;
@@ -1201,6 +1207,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       labelRenderedSizeThreshold: 8,
       nodeReducer: (node, data) => {
         if (data.type === "kafka_topic" && !relationKafka.checked) return { ...data, hidden: true };
+        if (data.type === "mongodb_collection" && !relationMongodb.checked) return { ...data, hidden: true };
         if (!selectedId || relatedNodes.has(node)) return data;
         return { ...data, color: "#d8e0ea", label: "" };
       },
@@ -1461,7 +1468,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
-    [relationHttp, relationKafka].forEach(control => control.addEventListener("change", reset));
+    [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
       if (event.key === "Enter") showShortestPath();
@@ -1472,6 +1479,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const node = graphData.nodes.find(
         item => item.name.toLocaleLowerCase().includes(query)
           && (item.kind !== "kafka_topic" || relationKafka.checked)
+          && (item.kind !== "mongodb_collection" || relationMongodb.checked)
       );
       if (node) selectNode(node.id); else if (!query) reset();
     });
