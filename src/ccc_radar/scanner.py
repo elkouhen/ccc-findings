@@ -1454,123 +1454,44 @@ def _infer_resttemplate_exchange_endpoints(
 def _infer_configured_api_client_endpoints(
     repo_root: Path, rel_path: str
 ) -> list[MessageEndpoint]:
-    """Infère les appels aux interfaces créées par `create*ClientApi`.
+    """Émet une dépendance par constante ``DOMAIN_*`` d'une configuration REST.
 
-    Ces interfaces générées ne passent pas forcément par les règles Semgrep
-    dédiées à RestTemplate/WebClient. Leur méthode HTTP et leur route sont
-    récupérées plus tard sur le microservice hôte ; l'appel local est donc
-    volontairement `ANY <dynamic>` à ce stade, mais porte le domaine résolu.
-
-    Émet aussi un endpoint par déclaration `@Bean` d'une configuration
-    `Rest*Config*` : la bean déclare seule, et de façon non ambiguë, le
-    microservice cible (domaine passé à `create*ClientApi`). Cela garantit la dépendance A→B même
-    quand aucun site d'appel ne permet de résoudre le type de l'API — voir
-    `_configured_api_client_bean_endpoints`.
+    La convention strategy1 ne dépend ni du nom de factory ni de la forme du
+    bean : toute constante majuscule avec underscore présente dans une classe
+    ``Rest*Config*`` désigne le microservice homologue en kebab-case.
     """
     parsed = java_parser.parse_java(str(repo_root), rel_path)
     if parsed is None:
         return []
     source, root = parsed
-    if not _rest_configuration_client_domains(str(repo_root), rel_path):
-        return []
-
     endpoints: dict[str, MessageEndpoint] = {}
-    for bean_endpoint in _configured_api_client_bean_endpoints(repo_root, rel_path, source, root):
-        endpoints[bean_endpoint.id] = bean_endpoint
-    for invocation in java_parser.walk(root):
-        if invocation.type != "method_invocation":
-            continue
-        receiver, method_name, _ = java_parser.invocation_parts(invocation, source)
-        if receiver is None or method_name in {"equals", "getClass", "hashCode", "toString"}:
-            continue
-        snippet = java_parser.node_text(source, invocation)
-        domain = _rest_configuration_domain_hint(repo_root, rel_path, snippet)
-        if domain is None:
-            continue
-        endpoint = _build_endpoint(
-            repo_root,
-            rel_path,
-            invocation.start_point.row + 1,
-            invocation.end_point.row + 1,
-            "call",
-            "rest",
-            "ANY <dynamic>",
-            "configured-api-client",
-            f"{snippet}\ncccr-api-domain:{domain}",
-            topic_dynamic=True,
-        )
-        endpoints[endpoint.id] = endpoint
-        _trace_rest_client(
-            "rest_client.search.call_detected",
-            microservice=_rest_client_microservice_name(
-                _rest_configuration_module_root(repo_root, rel_path)
-            ),
-            path=rel_path,
-            line=invocation.start_point.row + 1,
-            method=method_name,
-            domain=domain,
-        )
-    return list(endpoints.values())
-
-
-def _configured_api_client_bean_endpoints(
-    repo_root: Path, rel_path: str, source: bytes, root
-) -> list[MessageEndpoint]:
-    """Une déclaration `@Bean` de configuration `Rest*Config*` vaut preuve de dépendance.
-
-    Chaque bean `create*ClientApi(DOMAINE, Api.class)` déclare, sans
-    ambiguïté, le microservice cible (le domaine). On émet donc un endpoint
-    d'appel `ANY <dynamic>` marqué du domaine pour chaque bean non ambigu :
-    la dépendance A→B sera émise par le graphe de dépendances même si aucun
-    site d'appel ne permet de résoudre le type de l'API consommée.
-
-    La déduplication dans `infer_framework_endpoints` retire ensuite les beans
-    déjà couverts par un appel résolu, afin de ne pas surcharger le graphe
-    d'interactions d'arêtes A→B redondantes.
-    """
-    endpoints: list[MessageEndpoint] = []
-    microservice = _rest_client_microservice_name(
-        _rest_configuration_module_root(repo_root, rel_path)
-    )
     for type_node in java_parser.type_declarations(root):
         if not _is_rest_client_configuration(
             java_parser.declaration_name(type_node, source)
         ):
             continue
-        for method_node in java_parser.walk(type_node):
-            if method_node.type != "method_declaration":
-                continue
-            if not any(
-                java_parser.annotation_name(annotation, source) == "Bean"
-                for annotation in java_parser.annotations_of(method_node)
-            ):
-                continue
-            domain = _bean_api_domain(method_node, source, microservice)
-            if domain is None:
-                continue
-            bean_snippet = java_parser.node_text(source, method_node)
-            endpoints.append(
-                _build_endpoint(
-                    repo_root,
-                    rel_path,
-                    method_node.start_point.row + 1,
-                    method_node.end_point.row + 1,
-                    "call",
-                    "rest",
-                    "ANY <dynamic>",
-                    "configured-api-client-bean",
-                    f"{bean_snippet}\ncccr-api-domain:{domain}",
-                    topic_dynamic=True,
-                )
+        configuration = java_parser.node_text(source, type_node)
+        for domain, line in _rest_configuration_domains(type_node, source):
+            endpoint = _build_endpoint(
+                repo_root,
+                rel_path,
+                line,
+                line,
+                "call",
+                "rest",
+                "ANY <dynamic>",
+                "configured-api-client-configuration",
+                f"{configuration}\ncccr-api-domain:{domain}",
+                topic_dynamic=True,
             )
+            endpoints[endpoint.id] = endpoint
             _trace_rest_client(
-                "rest_client.search.bean_dependency",
-                microservice=microservice,
+                "rest_client.search.configuration_dependency",
                 path=rel_path,
-                line=method_node.start_point.row + 1,
+                line=line,
                 domain=domain,
             )
-    return endpoints
+    return list(endpoints.values())
 
 
 def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
@@ -2164,7 +2085,17 @@ def infer_kafka_endpoints(repo_root: Path, files: list[str] | None = None) -> li
     return list(endpoints.values())
 
 
-def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -> list[MessageEndpoint]:
+def infer_framework_endpoints(
+    repo_root: Path,
+    files: list[str] | None = None,
+    *,
+    configured_api_client_strategy1: bool = False,
+) -> list[MessageEndpoint]:
+    """Infère les endpoints des frameworks connus.
+
+    Les conventions applicatives de constantes majuscules avec underscore des
+    classes ``Rest*Config*`` ne sont actives qu'avec ``strategy1``.
+    """
     if files is None:
         candidate_files = [
             path.relative_to(repo_root).as_posix() for path in repo_root.rglob("*") if path.is_file()
@@ -2180,9 +2111,13 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_spring_data_rest_endpoints(repo_root, rel_path)
                 + _infer_swagger_endpoint(repo_root, rel_path)
                 + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
-                + _infer_configured_api_client_endpoints(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_routes(repo_root, rel_path)
                 + _infer_spring_webflux_routes(repo_root, rel_path)
+                + (
+                    _infer_configured_api_client_endpoints(repo_root, rel_path)
+                    if configured_api_client_strategy1
+                    else []
+                )
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith("pom.xml"):
@@ -2195,48 +2130,7 @@ def infer_framework_endpoints(repo_root: Path, files: list[str] | None = None) -
                 + _infer_openapi_endpoints(repo_root, rel_path)
             ):
                 inferred[endpoint.id] = endpoint
-    _drop_bean_endpoints_covered_by_resolved_calls(inferred)
     return list(inferred.values())
-
-
-_CONFIGURED_DOMAIN_MARKER_RE = re.compile(r"cccr-api-domain:([a-z0-9][a-z0-9-]*)", re.IGNORECASE)
-
-
-def _configured_domain_marker(snippet: str) -> str | None:
-    """Domaine tamponné `cccr-api-domain:` dans un snippet, normalisé en
-    minuscules. Reflète `graph.configured_api_client_domain` sans importer le
-    graphe ici."""
-    match = _CONFIGURED_DOMAIN_MARKER_RE.search(snippet)
-    return match.group(1).lower() if match is not None else None
-
-
-def _drop_bean_endpoints_covered_by_resolved_calls(
-    endpoints: dict[str, MessageEndpoint],
-) -> None:
-    """Retire les endpoints « bean » qu'un appel résolu couvre déjà.
-
-    Un bean `_configured_api_client_bean_endpoints` ne doit combler que les
-    domaines qu'aucun site d'appel résolu (Semgrep ou invocation typée) ne
-    prouve : sinon le graphe d'interactions dupliquerait les arêtes A→B. La
-    dépendance, elle, est idempotente (une seule arête A→B par domaine).
-    """
-    covered: dict[str | None, set[str]] = {}
-    for endpoint in endpoints.values():
-        if endpoint.framework == "configured-api-client-bean":
-            continue
-        if endpoint.system != "rest" or endpoint.role != "call":
-            continue
-        domain = _configured_domain_marker(endpoint.snippet)
-        if domain is not None:
-            covered.setdefault(endpoint.module, set()).add(domain)
-    redundant = [
-        identifier
-        for identifier, endpoint in endpoints.items()
-        if endpoint.framework == "configured-api-client-bean"
-        and _configured_domain_marker(endpoint.snippet) in covered.get(endpoint.module, set())
-    ]
-    for identifier in redundant:
-        del endpoints[identifier]
 
 
 _STRATEGY1_PRODUCER_RE = re.compile(r"\bgetTopics\s*\(\s*\)\s*\.\s*get([A-Z]\w*)\s*\(\s*\)")
@@ -2594,11 +2488,23 @@ def _resolve_value_annotated_variable(
 # le graphe puisse restreindre la cible, sans prétendre résoudre une URL.
 _REST_CLIENT_CONFIGURATION_RE = re.compile(r"^Rest.*Config.*$")
 _CONFIGURED_API_CLIENT_FACTORY_RE = re.compile(r"^create.*ClientApi$")
+_REST_CONFIGURATION_DOMAIN_RE = re.compile(r"\b[A-Z][A-Z0-9]*_[A-Z0-9_]*\b")
 
 
 def _is_rest_client_configuration(class_name: str) -> bool:
     """Whether a Java configuration name follows the ``Rest*Config*`` convention."""
     return bool(_REST_CLIENT_CONFIGURATION_RE.fullmatch(class_name))
+
+
+def _rest_configuration_domains(type_node, source: bytes) -> list[tuple[str, int]]:
+    """Retourne les constantes majuscules avec underscore d'une configuration REST."""
+    configuration = java_parser.node_text(source, type_node)
+    first_line = type_node.start_point.row + 1
+    domains = {
+        (match.group(0).lower().replace("_", "-"), first_line + configuration[:match.start()].count("\n"))
+        for match in _REST_CONFIGURATION_DOMAIN_RE.finditer(configuration)
+    }
+    return sorted(domains)
 
 
 def _is_configured_api_client_factory(method_name: str) -> bool:
@@ -3097,29 +3003,6 @@ def parse_semgrep_endpoints(raw: str, repo_root: Path) -> list[MessageEndpoint]:
             ) from exc
 
         snippet = _read_snippet(repo_root, path, start_line, end_line)
-        configuration_domain = _rest_configuration_domain_hint(repo_root, path, snippet)
-        if configuration_domain is not None:
-            # Marque d'évidence interne, consommée par `graph._rest_target_service_hint`.
-            # Le code d'appel original reste intact pour les autres extracteurs.
-            snippet = f"{snippet}\ncccr-api-domain:{configuration_domain}"
-            _trace(
-                "rest_client.endpoint.domain_attached",
-                microservice=_rest_client_microservice_name(
-                    _rest_configuration_module_root(repo_root, path)
-                ),
-                path=path,
-                line=start_line,
-                domain=configuration_domain,
-            )
-            _trace_rest_client(
-                "rest_client.search.domain_attached",
-                microservice=_rest_client_microservice_name(
-                    _rest_configuration_module_root(repo_root, path)
-                ),
-                path=path,
-                line=start_line,
-                domain=configuration_domain,
-            )
         framework = metadata.get("framework")
         is_restclient = False
 
@@ -3221,15 +3104,22 @@ def run_semgrep(
 
 
 def run_semgrep_endpoints(
-    repo_root: Path, config: Config, files: list[str] | None = None
+    repo_root: Path,
+    config: Config,
+    files: list[str] | None = None,
+    *,
+    configured_api_client_strategy1: bool = False,
 ) -> list[MessageEndpoint]:
     """Comme `run_semgrep`, mais pour les règles d'inventaire d'endpoints
     (BACKLOG-10 K11) — pas de filtre `min_severity` : ce ne sont pas des
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
-    discover_rest_api_client_configurations(repo_root)
     raw = invoke_semgrep_raw(repo_root, config, files)
     endpoints = parse_semgrep_endpoints(raw, repo_root)
-    endpoints.extend(infer_framework_endpoints(repo_root, files))
+    endpoints.extend(
+        infer_framework_endpoints(
+            repo_root, files, configured_api_client_strategy1=configured_api_client_strategy1
+        )
+    )
     endpoints.extend(infer_kafka_endpoints(repo_root, files))
     endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, files))
     return endpoints

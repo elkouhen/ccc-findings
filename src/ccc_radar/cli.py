@@ -954,7 +954,7 @@ def index_cmd(
     topic_strategy: Literal["default", "strategy1"] = typer.Option(
         "default",
         "--topic-strategy",
-        help="Stratégie de détection Kafka : default ou strategy1 (conventions getTopics/KafkaListener).",
+        help="Stratégie de conventions : default ou strategy1 (Kafka getTopics/KafkaListener et constantes REST en majuscules).",
     ),
     disable: list[str] = typer.Option(
         None,

@@ -117,7 +117,8 @@ parameters and Kafka client generics; an unknown type is left empty rather
 than inferred from a topic name or serializer configuration.
 
 For projects that centralize their Kafka configuration in a `getTopics()`
-object, use the opt-in `strategy1` extractor:
+object, or HTTP client domains in `Rest*Config*` classes,
+use the opt-in `strategy1` extractor:
 
 ```bash
 cccr index --topic-strategy strategy1
@@ -125,7 +126,10 @@ cccr index --topic-strategy strategy1
 
 It normalizes a producer call `getTopics().getAbcDefGhiJkl()` and a
 `@KafkaListener` placeholder `${kafka.topics.abc_def_ghi_jkl.name}` to the
-physical topic `ABC_DEF_GHI_JKL`. Changing the strategy triggers a full
+physical topic `ABC_DEF_GHI_JKL`; it also creates configured HTTP-client
+relations from every uppercase constant containing an underscore in those REST
+configuration classes.
+Changing the strategy triggers a full
 inventory refresh. `strategy1` is available with the default `manual` engine,
 not with the experimental `cocoindex` engine.
 

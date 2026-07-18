@@ -5,7 +5,6 @@ import pytest
 from ccc_radar.config import Config
 from ccc_radar.scanner import (
     SemgrepError,
-    discover_rest_api_client_configurations,
     infer_framework_endpoints,
     parse_semgrep_endpoints,
     run_semgrep_endpoints,
@@ -332,10 +331,8 @@ def test_restclient_concatenation_preserves_path_variable_and_framework(tmp_path
     assert endpoints[0].topic_dynamic is True
 
 
-def test_api_client_uses_domain_from_rest_configuration_bean(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Un client injecté hérite de `DOMAIN_*` passé à `createInternalClientApi`."""
+def test_regular_semgrep_call_does_not_infer_a_configured_client_domain(tmp_path: Path) -> None:
+    """La stratégie simplifiée ne relie plus les sites d'appel aux beans REST."""
     config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
     config.parent.mkdir(parents=True)
     config.write_text(
@@ -368,22 +365,13 @@ def test_api_client_uses_domain_from_rest_configuration_bean(
     }]}
     """
 
-    monkeypatch.setenv("CCCR_TRACE_REST_CLIENTS", "1")
-    discover_rest_api_client_configurations(tmp_path)
     endpoint = parse_semgrep_endpoints(raw, tmp_path)[0]
-    trace = capsys.readouterr().err
 
     assert endpoint.topic == "GET <dynamic>"
-    assert "cccr-api-domain:domain-annuaire" in endpoint.snippet
-    assert "stage=rest_client.search.module" in trace
-    assert "stage=rest_client.search.bean" in trace
-    assert "stage=rest_client.search.helper" in trace
-    assert "stage=rest_client.search.match" in trace
-    assert "microservice=" in trace
-    assert "stage=rest_client.search.workspace_module" in trace
+    assert "cccr-api-domain:" not in endpoint.snippet
 
 
-def test_configured_api_client_invocation_is_inferred_without_semgrep(tmp_path: Path) -> None:
+def test_rest_configuration_domains_are_inferred_only_in_strategy1(tmp_path: Path) -> None:
     config = tmp_path / "src" / "main" / "java" / "RestConfiguration.java"
     config.parent.mkdir(parents=True)
     config.write_text(
@@ -405,23 +393,24 @@ def test_configured_api_client_invocation_is_inferred_without_semgrep(tmp_path: 
         "  Object get() { return annuaireApi.getDirectory(); }\n"
         "}\n"
     )
-    rel = client.relative_to(tmp_path).as_posix()
+    rel = config.relative_to(tmp_path).as_posix()
 
-    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+    assert infer_framework_endpoints(tmp_path, files=[rel]) == []
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel], configured_api_client_strategy1=True
+    )
 
     assert len(endpoints) == 1
-    assert endpoints[0].framework == "configured-api-client"
+    assert endpoints[0].framework == "configured-api-client-configuration"
     assert endpoints[0].topic == "ANY <dynamic>"
     assert endpoints[0].topic_dynamic is True
     assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
 
 
-def test_configured_api_client_bean_declares_dependency_without_resolved_call(
+def test_rest_configuration_domain_declares_dependency_without_a_bean(
     tmp_path: Path,
 ) -> None:
-    """Un @Bean createInternalClientApi seul (sans site d'appel résolu) émet un
-    endpoint porteur du domaine : la dépendance A→B en découlera même si le type
-    de l'API consommée reste indéterminé."""
+    """Toute constante DOMAIN_* d'une configuration REST émet la dépendance."""
     (tmp_path / "pom.xml").write_text(
         "<project><artifactId>caller-service</artifactId><version>1</version></project>"
     )
@@ -439,24 +428,22 @@ def test_configured_api_client_bean_declares_dependency_without_resolved_call(
     )
     rel = config.relative_to(tmp_path).as_posix()
 
-    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel], configured_api_client_strategy1=True
+    )
 
     assert len(endpoints) == 1
-    bean = endpoints[0]
-    assert bean.framework == "configured-api-client-bean"
-    assert bean.topic == "ANY <dynamic>"
-    assert bean.module == "caller-service"
-    assert "cccr-api-domain:domain-annuaire" in bean.snippet
+    configuration = endpoints[0]
+    assert configuration.framework == "configured-api-client-configuration"
+    assert configuration.topic == "ANY <dynamic>"
+    assert configuration.module == "caller-service"
+    assert "cccr-api-domain:domain-annuaire" in configuration.snippet
 
 
-def test_configured_api_client_supports_rest_config_and_create_client_api_conventions(
+def test_rest_configuration_collects_each_domain_constant(
     tmp_path: Path,
 ) -> None:
-    """Les conventions `Rest*Config*` et `create*ClientApi` restent liées.
-
-    Le nom peut varier des deux côtés sans perdre le domaine du service cible.
-    Une classe qui ne suit pas la convention de configuration reste ignorée.
-    """
+    """La factory est ignorée : seules la classe REST et ses DOMAIN_* comptent."""
     (tmp_path / "pom.xml").write_text(
         "<project><artifactId>caller-service</artifactId><version>1</version></project>"
     )
@@ -468,27 +455,31 @@ def test_configured_api_client_supports_rest_config_and_create_client_api_conven
         "  WebClientHelper webClientHelper;\n"
         "  @Bean\n"
         "  AnnuaireApi annuaireApi() {\n"
-        "    return webClientHelper.createExternalClientApi(ApiDomains.DOMAIN_ANNUAIRE, AnnuaireApi.class);\n"
+        "    return webClientHelper.createExternalClientApi(ApiDomains.ANNUAIRE_PARTNER, AnnuaireApi.class);\n"
         "  }\n"
         "  @Bean\n"
         "  AnnuaireApi ignoredFactory() {\n"
-        "    return webClientHelper.createExternalApi(ApiDomains.DOMAIN_IGNORED, AnnuaireApi.class);\n"
+        "    return webClientHelper.createExternalApi(ApiDomains.IGNORED_PARTNER, AnnuaireApi.class);\n"
         "  }\n"
         "}\n"
         "class RestUtility {\n"
         "  @Bean\n"
         "  AnnuaireApi ignored() {\n"
-        "    return webClientHelper.createInternalClientApi(ApiDomains.DOMAIN_IGNORED, AnnuaireApi.class);\n"
+        "    return webClientHelper.createInternalClientApi(ApiDomains.IGNORED_PARTNER, AnnuaireApi.class);\n"
         "  }\n"
         "}\n"
     )
     rel = config.relative_to(tmp_path).as_posix()
 
-    endpoints = infer_framework_endpoints(tmp_path, files=[rel])
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel], configured_api_client_strategy1=True
+    )
 
-    assert len(endpoints) == 1
-    assert endpoints[0].framework == "configured-api-client-bean"
-    assert "cccr-api-domain:domain-annuaire" in endpoints[0].snippet
+    assert len(endpoints) == 2
+    assert {endpoint.framework for endpoint in endpoints} == {"configured-api-client-configuration"}
+    assert {"cccr-api-domain:annuaire-partner", "cccr-api-domain:ignored-partner"} == {
+        endpoint.snippet.rsplit("\n", 1)[-1] for endpoint in endpoints
+    }
 
     client = tmp_path / "src" / "main" / "java" / "Caller.java"
     client.write_text(
@@ -499,16 +490,16 @@ def test_configured_api_client_supports_rest_config_and_create_client_api_conven
         "}\n"
     )
 
-    calls = infer_framework_endpoints(tmp_path, files=[client.relative_to(tmp_path).as_posix()])
+    calls = infer_framework_endpoints(
+        tmp_path,
+        files=[client.relative_to(tmp_path).as_posix()],
+        configured_api_client_strategy1=True,
+    )
 
-    assert len(calls) == 1
-    assert calls[0].framework == "configured-api-client"
-    assert "cccr-api-domain:domain-annuaire" in calls[0].snippet
+    assert calls == []
 
 
-def test_configured_api_client_bean_dropped_when_invocation_resolves(tmp_path: Path) -> None:
-    """Quand un appel résolu couvre déjà le domaine, l'endpoint « bean » est
-    retiré pour éviter des arêtes A→B redondantes dans le graphe d'interactions."""
+def test_rest_configuration_emits_one_fact_independent_of_client_invocations(tmp_path: Path) -> None:
     (tmp_path / "pom.xml").write_text(
         "<project><artifactId>caller-service</artifactId><version>1</version></project>"
     )
@@ -534,11 +525,10 @@ def test_configured_api_client_bean_dropped_when_invocation_resolves(tmp_path: P
         "}\n"
     )
 
-    endpoints = infer_framework_endpoints(tmp_path)
+    endpoints = infer_framework_endpoints(tmp_path, configured_api_client_strategy1=True)
 
-    frameworks = {endpoint.framework for endpoint in endpoints}
-    assert "configured-api-client" in frameworks
-    assert "configured-api-client-bean" not in frameworks
+    assert len(endpoints) == 1
+    assert endpoints[0].framework == "configured-api-client-configuration"
 
 
 def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_path: Path) -> None:

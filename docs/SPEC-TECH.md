@@ -479,13 +479,13 @@ concerned files. Covered cases:
   targets constrain the graph edge to the intended service;
 - WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)`:
   infer exposed `serve/rest` routes;
-- Configured generated API clients: each `@Bean` in a class named
-  `Rest*Config*` that calls a factory named `create*ClientApi` produces a
-  `configured-api-client-bean` call fact carrying its logical service domain.
-  The domain may be supplied directly (`DOMAIN_FOO`) or through
-  `getUriPath(..., DOMAIN_FOO.getKey())`; both normalize to `domain-foo`.
-  This fact preserves the A→B dependency even if no invocation of the
-  generated interface can be statically resolved;
+- Configured generated API clients: with `--topic-strategy strategy1`, each
+  uppercase constant containing an underscore in a class named `Rest*Config*`
+  produces a `configured-api-client-configuration` call fact to its kebab-case
+  form. The
+  factory, bean declaration and generated-interface invocation are deliberately
+  ignored. This fact preserves the A→B dependency without resolving a route or
+  client type;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/
   `.yaml`: endpoint `GET /actuator/**`.
 These endpoints reuse the same `MessageEndpoint` model as Semgrep matches, but

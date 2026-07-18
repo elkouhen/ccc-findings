@@ -130,7 +130,9 @@ def test_rest_configuration_bean_links_to_the_normalized_host_microservice(tmp_p
     )
     rel_path = config.relative_to(tmp_path).as_posix()
 
-    endpoints = infer_framework_endpoints(tmp_path, files=[rel_path])
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel_path], configured_api_client_strategy1=True
+    )
     result = build_dependency_graph(
         {"caller-service": endpoints},
         {"domain-annuaire": _module("domain-annuaire")},
@@ -161,7 +163,9 @@ def test_rest_configuration_bean_resolves_domain_key_in_uri_path(tmp_path: Path)
     )
     rel_path = config.relative_to(tmp_path).as_posix()
 
-    endpoints = infer_framework_endpoints(tmp_path, files=[rel_path])
+    endpoints = infer_framework_endpoints(
+        tmp_path, files=[rel_path], configured_api_client_strategy1=True
+    )
     result = build_dependency_graph(
         {"caller-service": endpoints},
         {"domain-annuaire": _module("domain-annuaire")},

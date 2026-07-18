@@ -118,9 +118,12 @@ empty; it is never inferred from a topic name or serializer configuration.
   `cccr index` implicitly forces a full repo re-scan even without modified
   files, to refresh the REST/Kafka inventory before rewriting
   `meta.endpoint_inventory_signature`.
-- `--topic-strategy strategy1` is an opt-in Kafka convention extractor for the
+- `--topic-strategy strategy1` is an opt-in convention extractor for the
   manual engine. It maps `getTopics().getAbcDefGhiJkl()` and
   `${kafka.topics.abc_def_ghi_jkl.name}` to physical topic `ABC_DEF_GHI_JKL`.
+  It also activates configured HTTP-client dependencies: every uppercase
+  constant containing an underscore found in a `Rest*Config*` class declares a
+  dependency to its kebab-case form.
   It replaces the standard Kafka extraction at the same source location and a
   strategy change forces a full inventory refresh. It is rejected with
   `--engine cocoindex`.

@@ -18,7 +18,6 @@ from ccc_radar.relations import build_architecture_relations
 from ccc_radar.scanner import (
     SEVERITY_ORDER,
     clear_analysis_caches,
-    discover_rest_api_client_configurations,
     infer_framework_endpoints,
     infer_kafka_endpoints,
     infer_kafka_topic_strategy1_endpoints,
@@ -414,7 +413,6 @@ def index_repo(
                 for f in parse_semgrep_json(raw, repo_root)
                 if SEVERITY_ORDER.index(f.severity) >= min_index
             ]
-            discover_rest_api_client_configurations(repo_root)
             endpoints = parse_semgrep_endpoints(raw, repo_root)
         else:
             _report_progress(
@@ -422,7 +420,13 @@ def index_repo(
                 "→ Indexation : Semgrep désactivé, findings conservés ; endpoints recalculés localement.",
             )
         _trace("endpoint_inference.begin")
-        endpoints.extend(infer_framework_endpoints(repo_root, changed))
+        endpoints.extend(
+            infer_framework_endpoints(
+                repo_root,
+                changed,
+                configured_api_client_strategy1=topic_strategy == "strategy1",
+            )
+        )
         endpoints.extend(infer_kafka_endpoints(repo_root, changed))
         endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, changed))
         endpoints.extend(infer_json_kafka_flow_graph_endpoints(repo_root, changed))

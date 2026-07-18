@@ -200,6 +200,30 @@ class EventAdapter {
     }
 
 
+def test_index_repo_strategy1_enables_rest_configuration_domain_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src" / "main" / "java" / "RestPartnerConfig.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "class RestPartnerConfig {\n"
+        "  Object client() { return ANNUAIRE_PARTNER; }\n"
+        "}\n"
+    )
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", lambda *_args, **_kwargs: [])
+
+    with Store(tmp_path) as store:
+        index_repo(tmp_path, make_config(), store, FakeEmbedder())
+        assert store.all_endpoints() == []
+        index_repo(tmp_path, make_config(), store, FakeEmbedder(), topic_strategy="strategy1")
+        endpoints = store.all_endpoints()
+
+    assert [(endpoint.framework, endpoint.snippet.rsplit("\n", 1)[-1]) for endpoint in endpoints] == [
+        ("configured-api-client-configuration", "cccr-api-domain:annuaire-partner")
+    ]
+
+
 def test_index_repo_can_disable_only_module_architecture_enrichment(
     repo_copy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
