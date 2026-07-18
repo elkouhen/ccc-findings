@@ -357,7 +357,7 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
     assert [link["direction"] for link in graph_data["links"]] == ["outgoing", "outgoing", "incoming"]
 
 
-def test_render_graph_html_colors_complexity_from_findings() -> None:
+def test_render_graph_html_ranks_complexity_independently_from_findings() -> None:
     endpoints_by_service = _fixture()
     findings = [
         Finding("finding-1", "rule-1", "ERROR", "Failure", "a/Client.java", 1, 1, "", None, [], [], "service-a"),
@@ -374,12 +374,12 @@ def test_render_graph_html_colors_complexity_from_findings() -> None:
 
     assert service["complexity"] == {
         "score": 2,
-        "level": "low",
+        "level": "medium",
         "relations": 2,
         "findings": 2,
         "severity_counts": {"ERROR": 2, "WARNING": 0, "INFO": 0},
     }
-    assert service["color"] == "#2563eb"
+    assert service["color"] == "#d97706"
     assert "Complexite elevee" in document
     assert 'type: "arrow"' in document
     assert 'type: node.kind,' in document
@@ -387,6 +387,29 @@ def test_render_graph_html_colors_complexity_from_findings() -> None:
     assert "MICROSERVICE_FRAGMENT_SHADER" in document
     assert "KAFKA_TOPIC_FRAGMENT_SHADER" in document
     assert "MONGODB_COLLECTION_FRAGMENT_SHADER" in document
+
+
+def test_complexity_levels_split_all_nodes_into_balanced_terciles() -> None:
+    levels = render_module._complexity_levels(
+        {
+            "microservice:orders": 8,
+            "microservice:payments": 4,
+            "kafka_topic:orders.created": 6,
+            "kafka_topic:payments.completed": 2,
+            "mongodb_collection:orders:orders": 5,
+            "mongodb_collection:payments:payments": 1,
+            "external_api:billing": 3,
+            "external_api:catalog": 7,
+        }
+    )
+
+    assert {level: list(levels.values()).count(level) for level in ("low", "medium", "high")} == {
+        "low": 2,
+        "medium": 3,
+        "high": 3,
+    }
+    assert levels["mongodb_collection:payments:payments"] == "low"
+    assert levels["microservice:orders"] == "high"
 
 
 def test_render_graph_drawio_uses_distinct_readable_styles() -> None:

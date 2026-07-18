@@ -1306,8 +1306,8 @@ The generated site is written to `dist/`.
 ## Read the graph
 
 - Shapes: component for a microservice, queue for a Kafka topic, cylinder for a MongoDB collection, and browser for an external HTTP API.
-- Node colors: blue for a low complexity score (0-3), amber for medium (4-6), red from 7.
-- The score is the number of direct relations. Findings remain visible in details but do not affect the color.
+- Node colors split every node into three equally sized complexity groups: blue for the lowest third, amber for the middle third and red for the highest third.
+- The score is the number of direct HTTP, Kafka and MongoDB relations. Findings remain visible in details but do not affect the color.
 - Outbound calls and publications are green; Kafka consumptions are orange; MongoDB reads and writes are blue and teal.
 - Kafka relation labels include statically inferred Java payload types. Microservice descriptions list detected OpenAPI contracts.
 """

@@ -371,8 +371,10 @@ microservices or Kafka topics. The
 generated document persists the current node selection or path in its URL
 fragment, so a browser refresh restores it, embeds graph data locally and loads Sigma.js from its CDN
 when opened. Its legend is also collapsible. Microservices are hexagons, Kafka topics circles and MongoDB
-collections squares; a blue, orange or red border reflects the node's number
-of direct relations.
+collections squares; a blue, orange or red border reflects the node's relative
+complexity. Every node is ranked by its number of direct HTTP, Kafka and
+MongoDB relations, then split into three groups of equal size as far as
+possible (lowest, middle and highest third).
 
 The HTML legend distinguishes relationship protocols: HTTP calls are purple,
 Kafka publications green, Kafka consumptions orange and MongoDB accesses blue.

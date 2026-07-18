@@ -611,6 +611,7 @@ def render_graph_html(
     for source, target in complexity_relations:
         relation_counts[source] += 1
         relation_counts[target] += 1
+    complexity_levels = _complexity_levels(relation_counts)
     severities = ("ERROR", "WARNING", "INFO")
     for node in nodes:
         findings = (
@@ -623,7 +624,7 @@ def render_graph_html(
             for severity in severities
         }
         score = relation_counts[node["id"]]
-        level = "high" if score >= 7 else "medium" if score >= 4 else "low"
+        level = complexity_levels[node["id"]]
         node["complexity"] = {
             "score": score,
             "level": level,
@@ -667,6 +668,30 @@ _MONGO_WRITE_OPERATIONS = frozenset({
 })
 
 
+def _complexity_levels(relation_counts: dict[str, int]) -> dict[str, str]:
+    """Répartit les nœuds en trois tiers de complexité de tailles équilibrées.
+
+    Le score est le degré du nœud dans le graphe de dépendances : HTTP,
+    Kafka et MongoDB sont donc tous pris en compte. Les égalités de score sont
+    départagées par l'identifiant afin que l'export reste déterministe.
+    """
+    ranked_nodes = sorted(relation_counts, key=lambda node_id: (relation_counts[node_id], node_id))
+    size, remainder = divmod(len(ranked_nodes), 3)
+    group_sizes = [size, size, size]
+    # Les éventuels nœuds restants vont aux groupes les plus complexes, pour
+    # conserver des tiers dont les tailles ne diffèrent jamais de plus d'un.
+    for index in range(remainder):
+        group_sizes[2 - index] += 1
+
+    levels: dict[str, str] = {}
+    offset = 0
+    for level, group_size in zip(("low", "medium", "high"), group_sizes):
+        for node_id in ranked_nodes[offset:offset + group_size]:
+            levels[node_id] = level
+        offset += group_size
+    return levels
+
+
 def _likec4_complexity(
     service_ids: dict[str, str],
     topic_ids: dict[str, str],
@@ -683,6 +708,7 @@ def _likec4_complexity(
     for _, source, target, _ in relations:
         relation_counts[source] += 1
         relation_counts[target] += 1
+    complexity_levels = _complexity_levels(relation_counts)
 
     severities = ("ERROR", "WARNING", "INFO")
     details: dict[str, tuple[str, str]] = {}
@@ -693,7 +719,7 @@ def _likec4_complexity(
             for severity in severities
         }
         score = relation_counts[service_id]
-        color = "complexity_high" if score >= 7 else "complexity_medium" if score >= 4 else "complexity_low"
+        color = f"complexity_{complexity_levels[service_id]}"
         finding_summary = ", ".join(
             f"{severity}={count}" for severity, count in severity_counts.items() if count
         ) or "none"
@@ -704,7 +730,7 @@ def _likec4_complexity(
         )
     for node_id in (*topic_ids.values(), *collection_ids.values(), *external_api_ids.values()):
         score = relation_counts[node_id]
-        color = "complexity_high" if score >= 7 else "complexity_medium" if score >= 4 else "complexity_low"
+        color = f"complexity_{complexity_levels[node_id]}"
         details[node_id] = (color, f"Complexity score {score}: {score} relations")
     return details
 
@@ -1004,9 +1030,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
   <details class="legend" aria-label="Legende du graphe">
     <summary>Legende</summary>
     <div class="legend-content">
-      <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible</div>
-      <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne</div>
-      <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#2563eb"></span>Complexite faible (tiers inferieur)</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#d97706"></span>Complexite moyenne (tiers central)</div>
+      <div class="legend-row"><span class="legend-mark" style="background:#dc2626"></span>Complexite elevee (tiers superieur)</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%)"></span>Microservice</div>
       <div class="legend-row"><span class="legend-mark" style="background:#64748b"></span>Topic Kafka</div>
       <div class="legend-row"><span class="legend-mark" style="border-radius:1px;background:#64748b"></span>Collection MongoDB</div>
