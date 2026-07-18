@@ -373,7 +373,8 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "APIs REST consommees" in document
     assert "function contractsForPublishedRestResource(node, resource)" in document
     assert "Ouvrir le contrat OpenAPI ${contract.path}" in document
-    assert 'REST · ${resource} · ${contract.spec ? "Swagger UI" : "Contrat indisponible"}' in document
+    assert 'Contrat OpenAPI · ${contract.path}' in document
+    assert '${source.name} · Contrat OpenAPI · ${contract.path}' in document
     assert "API de ${nodeDataById.get(link.target).name}" in document
     assert "Topics Kafka" in document
     assert "Contrats de messages" in document

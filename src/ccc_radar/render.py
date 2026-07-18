@@ -2724,28 +2724,51 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const kafkaPublications = edges.filter(link => link.kind === "kafka" && link.source === id);
         const kafkaConsumptions = edges.filter(link => link.kind === "kafka" && link.target === id);
         const mongoCollections = edges.filter(link => link.kind === "mongodb" && link.source === id);
-        const publishedApis = node.resources.flatMap(resource => {
-          const contracts = contractsForPublishedRestResource(node, resource);
-          if (!contracts.length) {
-            return [{
+        const openApiContracts = node.openapi_contracts || [];
+        const publishedApis = [
+          ...openApiContracts.map(contract => ({
+            label: `${contract.spec ? "Contrat OpenAPI" : "Contrat OpenAPI indisponible"} · ${contract.path}`,
+            title: `Ouvrir le contrat OpenAPI ${contract.path}`,
+            action: () => openOpenApiContract(contract),
+          })),
+          ...node.resources
+            .filter(resource => !contractsForPublishedRestResource(node, resource).length)
+            .map(resource => ({
               label: `REST · ${resource}`,
               title: "Mettre en evidence les consommateurs de cette API REST",
               action: () => focusPublishedRestResource(id, resource),
-            }];
-          }
-          return contracts.map(contract => ({
-            label: `REST · ${resource} · ${contract.spec ? "Swagger UI" : "Contrat indisponible"}`,
-            title: `Ouvrir le contrat OpenAPI ${contract.path}`,
-            action: () => openOpenApiContract(contract),
-          }));
-        });
+            })),
+        ];
         const exposesGroup = createDetailsGroup("Expose");
         appendActionList("APIs publiees", publishedApis, exposesGroup);
-        appendRelationList("Consommateurs REST detectes", httpClients, id, link => {
+        const restConsumers = [];
+        const seenRestConsumers = new Set();
+        httpClients.forEach(link => {
           const source = nodeDataById.get(link.source);
-          const resource = restResourceLabel(link, node);
-          return resource ? `${source.name} · ${resource}` : `${source.name} · contrat non indexe`;
-        }, exposesGroup);
+          const contracts = contractsForPublishedRestResource(node, restResourceLabel(link, node));
+          if (!contracts.length) {
+            const key = `${link.source}::unindexed`;
+            if (seenRestConsumers.has(key)) return;
+            seenRestConsumers.add(key);
+            restConsumers.push({
+              label: `${source.name} · contrat non indexe`,
+              title: "Selectionner ce consommateur dans le graphe",
+              action: () => selectNode(link.source),
+            });
+            return;
+          }
+          contracts.forEach(contract => {
+            const key = `${link.source}::${contract.path}`;
+            if (seenRestConsumers.has(key)) return;
+            seenRestConsumers.add(key);
+            restConsumers.push({
+              label: `${source.name} · Contrat OpenAPI · ${contract.path}`,
+              title: `Ouvrir le contrat OpenAPI ${contract.path}`,
+              action: () => openOpenApiContract(contract),
+            });
+          });
+        });
+        appendActionList("Consommateurs REST detectes", restConsumers, exposesGroup);
         discardEmptyDetailsGroup(exposesGroup);
         const consumesGroup = createDetailsGroup("Consomme");
         appendRelationList("APIs REST consommees", httpCalls, id, link => (
