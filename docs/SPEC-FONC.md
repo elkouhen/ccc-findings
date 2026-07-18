@@ -123,10 +123,11 @@ empty; it is never inferred from a topic name or serializer configuration.
   `${kafka.topics.abc_def_ghi_jkl.name}` to physical topic `ABC_DEF_GHI_JKL`.
   It also activates configured HTTP-client dependencies: every uppercase
   constant containing an underscore found in a `Rest*Config*` class declares a
-  dependency to its kebab-case form. For a Maven OpenAPI generator configured
-  with `inputSpecRootDirectory`, every local contract in that directory is
-  parsed as publication evidence; generated `XxxApi` interfaces are not used
-  to infer the API.
+  dependency to its kebab-case form. A service declaration
+  `src/main/resources/openapi/<api>.rest` attributes publication to that
+  service: the contract named `<api>` and configured by `inputSpec` or
+  `inputSpecRootDirectory` in a `model-*` module is parsed; generated `XxxApi`
+  interfaces are not used to infer the API.
   It replaces the standard Kafka extraction at the same source location and a
   strategy change forces a full inventory refresh. It is rejected with
   `--engine cocoindex`.

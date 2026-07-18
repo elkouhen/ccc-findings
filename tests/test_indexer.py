@@ -227,13 +227,24 @@ def test_index_repo_strategy1_enables_rest_configuration_domain_dependencies(
 def test_index_repo_strategy1_indexes_rest_contract_as_service_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    service = tmp_path / "orders-service"
+    service = tmp_path / "domain-orders"
     (service / "src" / "main" / "resources" / "openapi").mkdir(parents=True)
     (service / "pom.xml").write_text(
-        "<project><artifactId>orders-service</artifactId><version>1</version></project>"
+        "<project><artifactId>domain-orders</artifactId><version>1</version></project>"
     )
     (service / "src" / "main" / "resources" / "openapi" / "orders.rest").write_text(
+        "publication orders\n"
+    )
+    model = tmp_path / "model-orders"
+    (model / "src" / "main" / "openapi").mkdir(parents=True)
+    (model / "src" / "main" / "openapi" / "orders.yaml").write_text(
         "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+    )
+    (model / "pom.xml").write_text(
+        "<project><artifactId>model-orders</artifactId><version>1</version><build><plugins>"
+        "<plugin><artifactId>openapi-generator-maven-plugin</artifactId><configuration>"
+        "<inputSpec>${project.basedir}/src/main/openapi/orders.yaml</inputSpec>"
+        "</configuration></plugin></plugins></build></project>"
     )
     monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
 
@@ -242,7 +253,7 @@ def test_index_repo_strategy1_indexes_rest_contract_as_service_publication(
         endpoints = store.all_endpoints()
 
     assert {(endpoint.module, endpoint.role, endpoint.system, endpoint.topic, endpoint.framework) for endpoint in endpoints} == {
-        ("orders-service", "serve", "rest", "GET /orders", "openapi")
+        ("domain-orders", "serve", "rest", "GET /orders", "openapi")
     }
 
 

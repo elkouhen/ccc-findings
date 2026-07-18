@@ -129,9 +129,10 @@ It normalizes a producer call `getTopics().getAbcDefGhiJkl()` and a
 physical topic `ABC_DEF_GHI_JKL`; it also creates configured HTTP-client
 relations from every uppercase constant containing an underscore in those REST
 configuration classes. A Maven OpenAPI generator configured with
-`inputSpecRootDirectory` also publishes the operations declared by every
-contract in that local directory, without relying on generated `XxxApi` Java
-interfaces.
+`inputSpecRootDirectory` (or `inputSpec`) is resolved through a service
+declaration `src/main/resources/openapi/<api>.rest`: the service publishes the
+operations of the contract `<api>.yaml` (or equivalent extension) configured
+in a `model-*` module, without relying on generated `XxxApi` Java interfaces.
 Changing the strategy triggers a full
 inventory refresh. `strategy1` is available with the default `manual` engine,
 not with the experimental `cocoindex` engine.

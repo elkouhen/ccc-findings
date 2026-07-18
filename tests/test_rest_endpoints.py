@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ccc_radar.config import Config
+from ccc_radar.graph import build_graph
 from ccc_radar.scanner import (
     SemgrepError,
     infer_framework_endpoints,
@@ -245,21 +246,28 @@ def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_pat
     }
 
 
-def test_strategy1_openapi_rest_contract_in_microservice_resources_publishes_api(
+def test_strategy1_openapi_declaration_publishes_model_contract_from_single_input_spec(
     tmp_path: Path,
 ) -> None:
-    """Strategy 1 attributes a service's ``openapi/*.rest`` contract to it.
-
-    The generated interfaces may live in a separate ``model-*`` module, so the
-    contract in the service itself is the authoritative publication evidence.
-    """
-    contract = tmp_path / "src" / "main" / "resources" / "openapi" / "orders.rest"
+    service = tmp_path / "domain-annuaire"
+    declaration = service / "src" / "main" / "resources" / "openapi" / "annuaire.rest"
+    declaration.parent.mkdir(parents=True)
+    declaration.write_text("publication annuaire\n")
+    (service / "pom.xml").write_text("<project><artifactId>domain-annuaire</artifactId></project>")
+    model = tmp_path / "model-shared-contracts"
+    contract = model / "src" / "main" / "openapi" / "annuaire.yaml"
     contract.parent.mkdir(parents=True)
     contract.write_text(
-        "openapi: 3.0.0\npaths:\n  /orders:\n    get:\n      responses: {}\n"
+        "openapi: 3.0.0\npaths:\n  /directory:\n    get:\n      responses: {}\n"
         "    post:\n      responses: {}\n"
     )
-    rel_path = contract.relative_to(tmp_path).as_posix()
+    (model / "pom.xml").write_text(
+        "<project><artifactId>model-shared-contracts</artifactId><build><plugins><plugin>"
+        "<artifactId>openapi-generator-maven-plugin</artifactId><configuration>"
+        "<inputSpec>${project.basedir}/src/main/openapi/annuaire.yaml</inputSpec>"
+        "</configuration></plugin></plugins></build></project>"
+    )
+    rel_path = declaration.relative_to(tmp_path).as_posix()
 
     assert infer_framework_endpoints(tmp_path, files=[rel_path]) == []
 
@@ -267,10 +275,47 @@ def test_strategy1_openapi_rest_contract_in_microservice_resources_publishes_api
         tmp_path, files=[rel_path], configured_api_client_strategy1=True
     )
 
-    assert {(endpoint.role, endpoint.topic, endpoint.framework, endpoint.path) for endpoint in endpoints} == {
-        ("serve", "GET /orders", "openapi", rel_path),
-        ("serve", "POST /orders", "openapi", rel_path),
+    assert {(endpoint.role, endpoint.topic, endpoint.framework, endpoint.path, endpoint.module) for endpoint in endpoints} == {
+        ("serve", "GET /directory", "openapi", rel_path, "domain-annuaire"),
+        ("serve", "POST /directory", "openapi", rel_path, "domain-annuaire"),
     }
+    assert all("cccr-openapi-contract:model-shared-contracts/src/main/openapi/annuaire.yaml" in endpoint.snippet for endpoint in endpoints)
+
+
+def test_strategy1_configured_client_consumes_api_published_through_model_contract(
+    tmp_path: Path,
+) -> None:
+    publisher = tmp_path / "domain-annuaire"
+    declaration = publisher / "src" / "main" / "resources" / "openapi" / "annuaire.rest"
+    declaration.parent.mkdir(parents=True)
+    declaration.write_text("publication annuaire\n")
+    (publisher / "pom.xml").write_text("<project><artifactId>domain-annuaire</artifactId></project>")
+    model = tmp_path / "model-annuaire"
+    contract = model / "src" / "main" / "openapi" / "annuaire.yaml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("openapi: 3.0.0\npaths:\n  /directory:\n    get:\n      responses: {}\n")
+    (model / "pom.xml").write_text(
+        "<project><artifactId>model-annuaire</artifactId><build><plugins><plugin>"
+        "<artifactId>openapi-generator-maven-plugin</artifactId><configuration>"
+        "<inputSpec>${project.basedir}/src/main/openapi/annuaire.yaml</inputSpec>"
+        "</configuration></plugin></plugins></build></project>"
+    )
+    caller = tmp_path / "caller-service"
+    config = caller / "src" / "main" / "java" / "RestAnnuaireConfig.java"
+    config.parent.mkdir(parents=True)
+    config.write_text("class RestAnnuaireConfig { Object api = DOMAIN_ANNUAIRE; }\n")
+    (caller / "pom.xml").write_text("<project><artifactId>caller-service</artifactId></project>")
+
+    endpoints = infer_framework_endpoints(tmp_path, configured_api_client_strategy1=True)
+    endpoints_by_service = {
+        service: [endpoint for endpoint in endpoints if endpoint.module == service]
+        for service in ("caller-service", "domain-annuaire")
+    }
+    edges = build_graph(endpoints_by_service)
+
+    assert [(edge.from_service, edge.to_service, edge.from_endpoint.topic, edge.to_endpoint.topic) for edge in edges] == [
+        ("caller-service", "domain-annuaire", "GET /directory", "GET /directory")
+    ]
 
 
 def test_openapi_generator_pom_points_to_authoritative_contract_for_rest_controller(tmp_path: Path) -> None:
@@ -308,21 +353,27 @@ def test_openapi_generator_pom_points_to_authoritative_contract_for_rest_control
     }
 
 
-def test_strategy1_openapi_generator_parses_every_contract_in_input_spec_root_directory(
+def test_strategy1_openapi_generator_selects_named_contract_in_input_spec_root_directory(
     tmp_path: Path,
 ) -> None:
-    """A generated ``XxxApi`` interface is not needed to identify publication."""
-    specs = tmp_path / "src" / "main" / "resources" / "openapi"
+    """A declaration selects its named contract from a ``model-*`` directory."""
+    service = tmp_path / "domain-annuaire"
+    declaration = service / "src" / "main" / "resources" / "openapi" / "annuaire.rest"
+    declaration.parent.mkdir(parents=True)
+    declaration.write_text("publication annuaire\n")
+    (service / "pom.xml").write_text("<project><artifactId>domain-annuaire</artifactId></project>")
+    model = tmp_path / "model-annuaire"
+    specs = model / "src" / "main" / "resources" / "openapi"
     specs.mkdir(parents=True)
-    (specs / "annuaire.rest").write_text(
+    (specs / "annuaire.yaml").write_text(
         "openapi: 3.0.0\npaths:\n  /annuaire:\n    get:\n      responses: {}\n"
     )
     (specs / "billing.yaml").write_text(
         "openapi: 3.0.0\npaths:\n  /billing:\n    post:\n      responses: {}\n"
     )
-    (tmp_path / "pom.xml").write_text(
+    (model / "pom.xml").write_text(
         "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
-        "<modelVersion>4.0.0</modelVersion><artifactId>gateway</artifactId>"
+        "<modelVersion>4.0.0</modelVersion><artifactId>model-annuaire</artifactId>"
         "<build><plugins><plugin><groupId>org.openapitools</groupId>"
         "<artifactId>openapi-generator-maven-plugin</artifactId>"
         "<configuration><inputSpecRootDirectory>"
@@ -331,15 +382,15 @@ def test_strategy1_openapi_generator_parses_every_contract_in_input_spec_root_di
         "</plugin></plugins></build></project>"
     )
 
-    assert infer_framework_endpoints(tmp_path, files=["pom.xml"]) == []
+    declaration_path = declaration.relative_to(tmp_path).as_posix()
+    assert infer_framework_endpoints(tmp_path, files=[declaration_path]) == []
 
     endpoints = infer_framework_endpoints(
-        tmp_path, files=["pom.xml"], configured_api_client_strategy1=True
+        tmp_path, files=[declaration_path], configured_api_client_strategy1=True
     )
 
     assert {(endpoint.topic, endpoint.path, endpoint.framework) for endpoint in endpoints} == {
-        ("GET /annuaire", "src/main/resources/openapi/annuaire.rest", "openapi"),
-        ("POST /billing", "src/main/resources/openapi/billing.yaml", "openapi"),
+        ("GET /annuaire", declaration_path, "openapi"),
     }
 
 

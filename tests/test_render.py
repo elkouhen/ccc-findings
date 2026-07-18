@@ -455,6 +455,7 @@ def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
                 "GET /directory",
                 "src/main/resources/openapi/annuaire.rest",
                 framework="openapi",
+                snippet="cccr-openapi-contract:model-annuaire/src/main/openapi/annuaire.yaml",
             )
         ]
     }
@@ -464,10 +465,10 @@ def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
     )
     service = next(node for node in graph_data["nodes"] if node["id"] == "microservice:annuaire")
 
-    assert service["openapi_files"] == ["src/main/resources/openapi/annuaire.rest"]
+    assert service["openapi_files"] == ["model-annuaire/src/main/openapi/annuaire.yaml"]
     assert service["openapi_contracts"] == [
         {
-            "path": "src/main/resources/openapi/annuaire.rest",
+            "path": "model-annuaire/src/main/openapi/annuaire.yaml",
             "resources": ["GET /directory"],
         }
     ]

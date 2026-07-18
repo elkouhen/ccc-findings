@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -1210,15 +1211,13 @@ def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpo
 
 
 @lru_cache(maxsize=64)
-def _openapi_generator_contract_paths(
-    repo_root_str: str, *, configured_api_client_strategy1: bool = False
-) -> tuple[str, ...]:
+def _openapi_generator_contract_paths(repo_root_str: str) -> tuple[str, ...]:
     repo_root = Path(repo_root_str)
     contracts: set[str] = set()
     for pom_path in sorted(repo_root.rglob("pom.xml")):
         try:
             module_dir = pom_path.parent
-            if not configured_api_client_strategy1 and not _has_rest_controllers(module_dir, set()):
+            if not _has_rest_controllers(module_dir, set()):
                 continue
             for module_relative in maven_module.detect_openapi_generator_input_specs(pom_path):
                 contracts.add((module_dir / module_relative).relative_to(repo_root).as_posix())
@@ -1227,8 +1226,8 @@ def _openapi_generator_contract_paths(
     return tuple(sorted(contracts))
 
 
-def _is_strategy1_openapi_rest_path(rel_path: str) -> bool:
-    """Recognize the ``src/main/resources/openapi/*.rest`` convention."""
+def _is_strategy1_openapi_declaration_path(rel_path: str) -> bool:
+    """Recognize a Strategy1 microservice API publication declaration."""
     path = Path(rel_path)
     parts = path.parts
     return path.suffix.casefold() == ".rest" and any(
@@ -1237,27 +1236,19 @@ def _is_strategy1_openapi_rest_path(rel_path: str) -> bool:
     )
 
 
-def _is_openapi_contract_path(
-    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
-) -> bool:
+def _is_openapi_contract_path(repo_root: Path, rel_path: str) -> bool:
     path = repo_root / rel_path
     return path.name in {
         "openapi.yaml", "openapi.yml", "openapi.json",
         "swagger.yaml", "swagger.yml", "swagger.json",
-    } or rel_path in _openapi_generator_contract_paths(
-        str(repo_root), configured_api_client_strategy1=configured_api_client_strategy1
-    ) or (
-        configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)
-    )
+    } or rel_path in _openapi_generator_contract_paths(str(repo_root))
 
 
-def _infer_openapi_generator_endpoints(
-    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
-) -> list[MessageEndpoint]:
+def _infer_openapi_generator_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
     path = repo_root / rel_path
     if path.name != "pom.xml":
         return []
-    if not configured_api_client_strategy1 and not _has_rest_controllers(path.parent, set()):
+    if not _has_rest_controllers(path.parent, set()):
         return []
     endpoints: list[MessageEndpoint] = []
     for module_relative in maven_module.detect_openapi_generator_input_specs(path):
@@ -1265,18 +1256,12 @@ def _infer_openapi_generator_endpoints(
             contract_rel_path = (path.parent / module_relative).relative_to(repo_root).as_posix()
         except ValueError:
             continue
-        endpoints.extend(
-            _infer_openapi_endpoints(
-                repo_root,
-                contract_rel_path,
-                configured_api_client_strategy1=configured_api_client_strategy1,
-            )
-        )
+        endpoints.extend(_infer_openapi_endpoints(repo_root, contract_rel_path))
     return endpoints
 
 
 def _infer_openapi_endpoints(
-    repo_root: Path, rel_path: str, *, configured_api_client_strategy1: bool = False
+    repo_root: Path, rel_path: str, *, force_contract: bool = False
 ) -> list[MessageEndpoint]:
     """Inventory literal operations declared by a production OpenAPI contract.
 
@@ -1288,9 +1273,7 @@ def _infer_openapi_endpoints(
     the route to an implementation method that does not declare it.
     """
     path = repo_root / rel_path
-    if not _is_openapi_contract_path(
-        repo_root, rel_path, configured_api_client_strategy1=configured_api_client_strategy1
-    ):
+    if not force_contract and not _is_openapi_contract_path(repo_root, rel_path):
         return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1320,6 +1303,69 @@ def _infer_openapi_endpoints(
                 _build_endpoint(
                     repo_root, rel_path, method_line, method_line, "serve", "rest",
                     f"{method.upper()} {route}", "openapi", snippet,
+                )
+            )
+    return endpoints
+
+
+def _strategy1_model_openapi_contracts(repo_root: Path, api_name: str) -> tuple[str, ...]:
+    """Find the ``<api>.yaml``-style contract configured by a ``model-*`` module."""
+    contracts: set[str] = set()
+    for pom_path in sorted(repo_root.rglob("pom.xml")):
+        try:
+            artifact_id, _, _ = maven_module.parse_pom(pom_path)
+            module_names = {pom_path.parent.name.casefold()}
+            if artifact_id:
+                module_names.add(artifact_id.casefold())
+            if not any(name.startswith("model-") for name in module_names):
+                continue
+            for module_relative in maven_module.detect_openapi_generator_input_specs(pom_path):
+                contract_name = Path(module_relative).stem.casefold().replace("_", "-")
+                if contract_name != api_name:
+                    continue
+                contracts.add((pom_path.parent / module_relative).relative_to(repo_root).as_posix())
+        except (OSError, ValueError):
+            continue
+    return tuple(sorted(contracts))
+
+
+def _infer_strategy1_declared_openapi_publications(
+    repo_root: Path, declaration_rel_path: str
+) -> list[MessageEndpoint]:
+    """Attribute a ``*.rest`` declaration to its contract in a ``model-*`` module.
+
+    A Strategy1 declaration is deliberately not parsed as OpenAPI.  It tells
+    us which microservice publishes the contract with the same base name in a
+    ``model-*`` Maven module. Endpoints keep the declaration path so their
+    lifecycle follows the publishing service during incremental indexing.
+    """
+    api_name = Path(declaration_rel_path).stem.casefold().replace("_", "-")
+    publisher_module = _module_for_path(repo_root, declaration_rel_path)
+    endpoints: list[MessageEndpoint] = []
+    for contract_rel_path in _strategy1_model_openapi_contracts(repo_root, api_name):
+        for contract_endpoint in _infer_openapi_endpoints(
+            repo_root, contract_rel_path, force_contract=True
+        ):
+            endpoints.append(
+                replace(
+                    contract_endpoint,
+                    id=compute_endpoint_id(
+                        contract_endpoint.role,
+                        contract_endpoint.topic,
+                        declaration_rel_path,
+                        1,
+                        1,
+                    ),
+                    path=declaration_rel_path,
+                    start_line=1,
+                    end_line=1,
+                    snippet=(
+                        f"Publication OpenAPI declaree par {declaration_rel_path}\n"
+                        f"cccr-openapi-contract:{contract_rel_path}\n"
+                        f"{contract_endpoint.snippet}"
+                    ),
+                    module=publisher_module,
+                    qualified_name=None,
                 )
             )
     return endpoints
@@ -2151,24 +2197,17 @@ def infer_framework_endpoints(
             ):
                 inferred[endpoint.id] = endpoint
         elif rel_path.endswith("pom.xml"):
-            for endpoint in _infer_openapi_generator_endpoints(
-                repo_root,
-                rel_path,
-                configured_api_client_strategy1=configured_api_client_strategy1,
-            ):
+            for endpoint in _infer_openapi_generator_endpoints(repo_root, rel_path):
                 inferred[endpoint.id] = endpoint
-        elif rel_path.endswith((".properties", ".yml", ".yaml")) or (
-            configured_api_client_strategy1 and _is_strategy1_openapi_rest_path(rel_path)
-        ):
+        elif rel_path.endswith((".properties", ".yml", ".yaml")):
             for endpoint in (
                 _infer_actuator_endpoint(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_yaml_routes(repo_root, rel_path)
-                + _infer_openapi_endpoints(
-                    repo_root,
-                    rel_path,
-                    configured_api_client_strategy1=configured_api_client_strategy1,
-                )
+                + _infer_openapi_endpoints(repo_root, rel_path)
             ):
+                inferred[endpoint.id] = endpoint
+        elif configured_api_client_strategy1 and _is_strategy1_openapi_declaration_path(rel_path):
+            for endpoint in _infer_strategy1_declared_openapi_publications(repo_root, rel_path):
                 inferred[endpoint.id] = endpoint
     return list(inferred.values())
 

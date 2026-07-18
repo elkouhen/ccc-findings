@@ -343,6 +343,12 @@ def index_repo(
         full = True
     if store.get_meta("topic_strategy") != topic_strategy:
         full = True
+    # Strategy1 resolves publication declarations in runtime services against
+    # contracts configured in separate model-* modules.  A change to either
+    # side may alter the other side's endpoints, so partial replacement cannot
+    # safely preserve this cross-module inventory.
+    if topic_strategy == "strategy1":
+        full = True
     analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
     if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
         full = True

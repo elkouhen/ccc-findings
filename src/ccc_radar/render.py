@@ -597,7 +597,7 @@ def render_graph_html(
                 and endpoint.role == "serve"
                 and endpoint.framework == "openapi"
             ):
-                contract_resources.setdefault(endpoint.path, set()).add(endpoint.topic)
+                contract_resources.setdefault(_openapi_contract_evidence_path(endpoint), set()).add(endpoint.topic)
         event_apis = sorted(
             {
                 f"Kafka · {endpoint.topic}{f' <{endpoint.message_type}>' if endpoint.message_type else ''}"
@@ -2644,6 +2644,14 @@ def _rest_resources_served(endpoints: list[MessageEndpoint]) -> list[str]:
             if endpoint.system == "rest" and endpoint.role == "serve"
         }
     )
+
+
+def _openapi_contract_evidence_path(endpoint: MessageEndpoint) -> str:
+    """Return the physical contract path carried by a Strategy1 declaration."""
+    for line in endpoint.snippet.splitlines():
+        if line.startswith("cccr-openapi-contract:"):
+            return line.removeprefix("cccr-openapi-contract:")
+    return endpoint.path
 
 
 def _mongodb_collection_nodes(

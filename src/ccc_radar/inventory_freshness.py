@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v14-semgrep-endpoints-default"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v15-strategy1-model-openapi"
 
 
 def current_endpoint_inventory_signature() -> str:

@@ -489,10 +489,11 @@ concerned files. Covered cases:
   factory, bean declaration and generated-interface invocation are deliberately
   ignored. This fact preserves the A→B dependency without resolving a route or
   client type;
-- Maven OpenAPI generator directories: with `--topic-strategy strategy1`,
-  `inputSpecRootDirectory` contributes every local file in the configured
-  directory as a potential OpenAPI contract. Its declared operations become
-  `serve/rest` endpoints; no generated `XxxApi` Java interface is inspected;
+- Maven OpenAPI model modules: with `--topic-strategy strategy1`, a service
+  declaration `src/main/resources/openapi/<api>.rest` resolves the contract
+  named `<api>` and declared by `inputSpec` or `inputSpecRootDirectory` in a
+  `model-*` module. Its operations become `serve/rest` endpoints of the
+  declaring service; no generated `XxxApi` Java interface is inspected;
 - `management.endpoints.web.exposure.include=*` in `.properties`/`.yml`/
   `.yaml`: endpoint `GET /actuator/**`.
 These endpoints reuse the same `MessageEndpoint` model as Semgrep matches, but
