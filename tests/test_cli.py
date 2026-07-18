@@ -860,6 +860,13 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "nodesByNormalizedName" in document
     assert "function shortestPath(sourceId, targetId)" in document
     assert "function shortestPathThrough(stops)" in document
+    assert 'id="show-simple-paths"' in document
+    assert "function allSimplePaths(sourceId, targetId" in document
+    assert "const MAX_SIMPLE_PATH_DEPTH = 8;" in document
+    assert "const MAX_SIMPLE_PATHS = 8;" in document
+    assert "const MAX_SIMPLE_PATH_EXPLORATIONS = 2000;" in document
+    assert "Chemins simples disponibles" in document
+    assert "function renderSimplePathChoices(paths, limited)" in document
     assert "Chemin le plus court" in document
     assert "Chemin avec noeuds intermediaires" in document
     assert "Parcours" in document

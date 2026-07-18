@@ -1009,7 +1009,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
     .path-actions { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
     .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 6px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
-    #show-path { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
+    #show-path, #show-simple-paths { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
+    #show-simple-paths { height: 30px; color: #1d4f91; border-color: #c7d8f3; background: #f8fbff; }
+    .simple-paths { display: grid; gap: 7px; }
+    .simple-paths-summary { margin: 0; color: #52616b; font-size: 12px; line-height: 1.4; }
+    .simple-paths-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .simple-path-choice { width: 100% !important; height: auto !important; min-height: 38px; padding: 8px 10px !important; color: #1d4f91 !important; border-color: #dbeafe !important; background: #f8fbff !important; font-size: 12px !important; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+    .simple-path-choice:hover, .simple-path-choice:focus-visible { border-color: #93c5fd !important; background: #eff6ff !important; outline: none; }
     .path-history { gap: 10px; }
     .path-history-header { padding: 2px 2px 6px; }
     .path-history-kicker { margin: 0 0 2px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
@@ -1088,7 +1094,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <div class="path-row">
           <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
           <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">Afficher</button>
-          <div class="path-actions"><label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label></div>
+          <div class="path-actions">
+            <button id="show-simple-paths" type="button" aria-label="Lister les chemins simples entre les deux microservices" title="Lister les chemins simples entre les deux microservices">Chemins simples</button>
+            <label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label>
+          </div>
         </div>
       </details>
     </div>
@@ -1372,6 +1381,9 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
     const pathStops = [];
     const analyzedPaths = [];
+    const MAX_SIMPLE_PATH_DEPTH = 8;
+    const MAX_SIMPLE_PATHS = 8;
+    const MAX_SIMPLE_PATH_EXPLORATIONS = 2000;
     const nodesByNormalizedName = new Map();
     function normalizeNodeName(name) {
       return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
@@ -1600,6 +1612,51 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       }
       return path;
     }
+    function allSimplePaths(sourceId, targetId, maxDepth = MAX_SIMPLE_PATH_DEPTH, maxPaths = MAX_SIMPLE_PATHS, maxExplorations = MAX_SIMPLE_PATH_EXPLORATIONS) {
+      const outgoing = new Map();
+      graphData.links.forEach((link, index) => {
+        if (!isVisibleRelation(link.kind)) return;
+        if (!outgoing.has(link.source)) outgoing.set(link.source, []);
+        outgoing.get(link.source).push({ target: link.target, edge: `edge-${index}`, link });
+      });
+      outgoing.forEach((steps, source) => {
+        const firstStepByTarget = new Map();
+        steps.sort((left, right) => (
+          nodeDataById.get(left.target).name.localeCompare(nodeDataById.get(right.target).name)
+        )).forEach(step => {
+          if (!firstStepByTarget.has(step.target)) firstStepByTarget.set(step.target, step);
+        });
+        outgoing.set(source, [...firstStepByTarget.values()]);
+      });
+      const paths = [];
+      const queue = [{ nodes: [sourceId], edges: [] }];
+      let explorations = 0;
+      for (let cursor = 0; cursor < queue.length && paths.length < maxPaths; cursor += 1) {
+        const candidate = queue[cursor];
+        if (candidate.edges.length >= maxDepth) continue;
+        const current = candidate.nodes[candidate.nodes.length - 1];
+        for (const step of outgoing.get(current) || []) {
+          if (candidate.nodes.includes(step.target)) continue;
+          explorations += 1;
+          if (explorations > maxExplorations) return { paths, limited: true };
+          const nextNodes = [...candidate.nodes, step.target];
+          const nextEdges = [...candidate.edges, step];
+          if (step.target === targetId) {
+            paths.push({ nodes: nextNodes, edges: nextEdges });
+            continue;
+          }
+          queue.push({ nodes: nextNodes, edges: nextEdges });
+        }
+      }
+      return {
+        paths: paths.sort((left, right) => left.nodes.length - right.nodes.length || (
+          left.nodes.map(id => nodeDataById.get(id).name).join("\\u0000").localeCompare(
+            right.nodes.map(id => nodeDataById.get(id).name).join("\\u0000")
+          )
+        )),
+        limited: paths.length >= maxPaths,
+      };
+    }
     function parsePathQuery() {
       const names = pathQuery.value.split("->").map(name => name.trim()).filter(Boolean);
       if (names.length < 2) return { error: "Saisissez au moins un service source et un service cible separes par ->." };
@@ -1677,6 +1734,43 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       overview.append(overviewTitle, overviewList);
       details.append(overview);
     }
+    function showPath(path, stops = path.nodes) {
+      pathStops.splice(0, pathStops.length, ...stops);
+      renderPathQuery();
+      selectedId = path.nodes[0];
+      relatedNodes = new Set(path.nodes);
+      relatedEdges = new Set(path.edges.map(step => step.edge));
+      setPathMicroserviceOrder(path);
+      rememberAnalyzedPath(pathStops);
+      renderer.refresh();
+      renderPathDetails(path);
+      renderer.getCamera().animatedReset({ duration: 220 });
+      persistState();
+    }
+    function renderSimplePathChoices(paths, limited) {
+      details.replaceChildren();
+      const section = document.createElement("section");
+      section.className = "details-section simple-paths";
+      const title = document.createElement("h2");
+      title.textContent = "Chemins simples disponibles";
+      const summary = document.createElement("p");
+      summary.className = "simple-paths-summary";
+      summary.textContent = `${paths.length} chemin${paths.length > 1 ? "s" : ""} propose${paths.length > 1 ? "s" : ""}, sans repeter de noeud, sur au plus ${MAX_SIMPLE_PATH_DEPTH} relations.${limited ? ` Recherche limitee a ${MAX_SIMPLE_PATHS} chemins et ${MAX_SIMPLE_PATH_EXPLORATIONS} explorations.` : ""}`;
+      const list = document.createElement("ol");
+      list.className = "simple-paths-list";
+      paths.forEach((path, index) => {
+        const item = document.createElement("li");
+        const choice = document.createElement("button");
+        choice.type = "button";
+        choice.className = "simple-path-choice";
+        choice.textContent = `${index + 1}. ${path.nodes.map(id => nodeDataById.get(id).name).join(" → ")}`;
+        choice.addEventListener("click", () => showPath(path));
+        item.append(choice);
+        list.append(item);
+      });
+      section.append(title, summary, list);
+      details.append(section);
+    }
     function showShortestPath() {
       const parsed = parsePathQuery();
       if (parsed.error) {
@@ -1688,7 +1782,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         return;
       }
       const stops = parsed.stops;
-      pathStops.splice(0, pathStops.length, ...stops);
       const path = shortestPathThrough(stops);
       if (path === null) {
         selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
@@ -1697,14 +1790,32 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         persistState();
         return;
       }
-      selectedId = stops[0];
-      relatedNodes = new Set(path.nodes);
-      relatedEdges = new Set(path.edges.map(step => step.edge));
-      setPathMicroserviceOrder(path);
-      rememberAnalyzedPath(pathStops);
+      showPath(path, stops);
+    }
+    function showSimplePaths() {
+      const parsed = parsePathQuery();
+      if (parsed.error) {
+        selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
+        renderer.refresh();
+        setDetailsEmpty(parsed.error);
+        pathStops.splice(0, pathStops.length);
+        persistState();
+        return;
+      }
+      if (parsed.stops.length !== 2) {
+        setDetailsEmpty("Les chemins simples se recherchent entre un microservice source et un microservice cible, sans noeud intermediaire impose.");
+        return;
+      }
+      const simplePaths = allSimplePaths(parsed.stops[0], parsed.stops[1]);
+      selectedId = null; relatedNodes = null; relatedEdges = null; pathMicroserviceOrder = new Map();
+      pathStops.splice(0, pathStops.length);
       renderer.refresh();
-      renderPathDetails(path);
-      renderer.getCamera().animatedReset({ duration: 220 });
+      if (!simplePaths.paths.length) {
+        setDetailsEmpty(`Aucun chemin simple oriente, de ${nodeDataById.get(parsed.stops[0]).name} vers ${nodeDataById.get(parsed.stops[1]).name}, dans les limites de recherche.`);
+        persistState();
+        return;
+      }
+      renderSimplePathChoices(simplePaths.paths, simplePaths.limited);
       persistState();
     }
     function renderDetails(id) {
@@ -1843,6 +1954,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
+    document.getElementById("show-simple-paths").addEventListener("click", showSimplePaths);
     graphTab.addEventListener("click", () => setToolbarTab("graph"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
