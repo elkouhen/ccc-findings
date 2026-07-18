@@ -338,6 +338,16 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'scoreBadge.className = `detail-badge complexity ${complexity.level}`' in document
     assert "function setDetailsEmpty(message)" in document
     assert '<details class="path-controls">' in document
+    assert 'id="graph-tab"' in document
+    assert 'id="paths-tab"' in document
+    assert 'id="analyzed-paths"' in document
+    assert "function renderAnalyzedPaths()" in document
+    assert "function rememberAnalyzedPath(stops)" in document
+    assert "function replayAnalyzedPath(stops)" in document
+    assert "function persistAnalyzedPaths()" in document
+    assert "localStorage.setItem(pathHistoryStorageKey" in document
+    assert "Reanalyser ce chemin" in document
+    assert "Supprimer ce chemin analyse" in document
     assert '<details class="legend"' in document
     assert '.toolbar input:not([type="checkbox"])' in document
     assert "Appel HTTP" in document

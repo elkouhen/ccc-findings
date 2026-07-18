@@ -971,6 +971,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .toolbar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .toolbar strong { color: #172033; font-size: 15px; white-space: nowrap; }
     .toolbar input:not([type="checkbox"]) { height: 34px; padding: 0 10px; border: 1px solid #b9c5d6; border-radius: 6px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
+    .toolbar-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #edf2f7; }
+    .toolbar-tab { flex: 1; height: 30px !important; width: auto !important; padding: 0 9px; border: 0 !important; border-radius: 6px !important; color: #52616b !important; background: transparent !important; font-size: 12px !important; font-weight: 700; }
+    .toolbar-tab:hover { background: rgba(255, 255, 255, .65) !important; }
+    .toolbar-tab.is-active { color: #1d4f91 !important; background: #fff !important; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
+    .toolbar-panel { display: grid; gap: 10px; }
+    .toolbar-panel[hidden] { display: none; }
     #search, #path-query { width: 100%; }
     .graph-actions { display: flex; gap: 4px; }
     .toolbar button { width: 34px; height: 34px; border: 1px solid #b9c5d6; border-radius: 6px; color: #315f9b; background: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
@@ -986,6 +992,12 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .path-actions { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
     .path-lock { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid #cdd7e5; border-radius: 6px; color: #315f9b; background: #fff; font-size: 12px; white-space: nowrap; cursor: pointer; }
     #show-path { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; }
+    .path-history { display: grid; gap: 8px; }
+    .path-history-empty { margin: 0; color: #64748b; font-size: 12px; }
+    .path-history-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .path-history-item { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 5px; }
+    .path-history-replay { width: auto !important; min-width: 0; height: auto !important; min-height: 34px; padding: 7px 9px; color: #1d4f91 !important; background: #f8fafc !important; font-size: 12px !important; text-align: left; overflow-wrap: anywhere; }
+    .path-history-delete { width: 30px !important; height: 34px !important; color: #a53f3f !important; font-size: 16px !important; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(68vh, 560px); overflow: auto; border: 1px solid #d7dee9; border-radius: 14px; background: rgba(255, 255, 255, .97); color: #475569; font-size: 13px; line-height: 1.45; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
     .details-header { padding: 16px; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #f8fafc, #eef5ff); }
     .details-header.is-low { border-left: 4px solid #2563eb; }
@@ -1027,21 +1039,32 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <button id="reset" type="button" aria-label="Reinitialiser la selection" title="Reinitialiser">x</button>
       </div>
     </div>
-    <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
-    <fieldset class="relation-filters">
-      <legend>Relations affichees</legend>
-      <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
-      <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
-      <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
-    </fieldset>
-    <details class="path-controls">
-      <summary>Explorer un chemin</summary>
-      <div class="path-row">
-        <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
-        <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">Afficher</button>
-        <div class="path-actions"><label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label></div>
-      </div>
-    </details>
+    <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
+      <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Graphe</button>
+      <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Chemins analyses</button>
+    </div>
+    <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">
+      <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
+      <fieldset class="relation-filters">
+        <legend>Relations affichees</legend>
+        <label class="relation-filter" title="Afficher les appels HTTP"><input id="relation-http" type="checkbox" checked aria-label="Afficher les relations HTTP">HTTP</label>
+        <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
+        <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
+      </fieldset>
+      <details class="path-controls">
+        <summary>Explorer un chemin</summary>
+        <div class="path-row">
+          <input id="path-query" type="text" placeholder="service-a -> topic-1 -> service-b" autocomplete="off" aria-label="Chemin avec des noms de services ou topics">
+          <button id="show-path" type="button" aria-label="Afficher le plus court chemin" title="Afficher le plus court chemin">Afficher</button>
+          <div class="path-actions"><label class="path-lock" title="Conserver le chemin lors de la selection d'un noeud"><input id="path-lock" type="checkbox" aria-label="Verrouiller le chemin">Verrouiller</label></div>
+        </div>
+      </details>
+    </div>
+    <div id="paths-panel" class="toolbar-panel path-history" role="tabpanel" aria-labelledby="paths-tab" hidden>
+      <p class="path-history-empty">Les chemins analyses sont conserves dans ce navigateur.</p>
+      <ul id="analyzed-paths" class="path-history-list" aria-label="Chemins analyses"></ul>
+      <p id="analyzed-paths-empty" class="path-history-empty">Aucun chemin analyse pour le moment.</p>
+    </div>
   </div>
   <details class="legend" aria-label="Legende du graphe">
     <summary>Legende</summary>
@@ -1290,7 +1313,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const search = document.getElementById("search");
     const pathQuery = document.getElementById("path-query");
     const pathLock = document.getElementById("path-lock");
+    const graphTab = document.getElementById("graph-tab");
+    const pathsTab = document.getElementById("paths-tab");
+    const graphPanel = document.getElementById("graph-panel");
+    const pathsPanel = document.getElementById("paths-panel");
+    const analyzedPathsList = document.getElementById("analyzed-paths");
+    const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
     const pathStops = [];
+    const analyzedPaths = [];
     const nodesByNormalizedName = new Map();
     function normalizeNodeName(name) {
       return name.trim().replace(/\\s+/g, " ").toLocaleLowerCase();
@@ -1299,6 +1329,96 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const key = normalizeNodeName(node.name);
       nodesByNormalizedName.set(key, [...(nodesByNormalizedName.get(key) || []), node]);
     });
+    const pathHistoryStorageKey = (() => {
+      const signature = [
+        ...graphData.nodes.map(node => node.id),
+        ...graphData.links.map(link => `${link.source}->${link.target}:${link.kind}`),
+      ].sort().join("|");
+      let hash = 2166136261;
+      for (let index = 0; index < signature.length; index += 1) {
+        hash = Math.imul(hash ^ signature.charCodeAt(index), 16777619);
+      }
+      return `cccr:analyzed-paths:${hash >>> 0}`;
+    })();
+
+    function isValidPathStops(stops) {
+      if (!Array.isArray(stops) || stops.length < 2 || new Set(stops).size !== stops.length) return false;
+      if (!stops.every(id => nodeDataById.has(id))) return false;
+      const source = nodeDataById.get(stops[0]);
+      const target = nodeDataById.get(stops[stops.length - 1]);
+      return source.kind === "microservice"
+        && target.kind === "microservice"
+        && stops.slice(1, -1).every(id => ["microservice", "kafka_topic"].includes(nodeDataById.get(id).kind));
+    }
+    function loadAnalyzedPaths() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(pathHistoryStorageKey) || "[]");
+        if (!Array.isArray(stored)) return;
+        stored.filter(isValidPathStops).slice(0, 30).forEach(stops => analyzedPaths.push(stops));
+      } catch (_error) {
+        // The export remains usable when browser storage is unavailable or stale.
+      }
+    }
+    function persistAnalyzedPaths() {
+      try {
+        localStorage.setItem(pathHistoryStorageKey, JSON.stringify(analyzedPaths));
+      } catch (_error) {
+        // Saving the optional history must never prevent graph exploration.
+      }
+    }
+    function setToolbarTab(tab) {
+      const showingPaths = tab === "paths";
+      graphTab.classList.toggle("is-active", !showingPaths);
+      graphTab.setAttribute("aria-selected", String(!showingPaths));
+      pathsTab.classList.toggle("is-active", showingPaths);
+      pathsTab.setAttribute("aria-selected", String(showingPaths));
+      graphPanel.hidden = showingPaths;
+      pathsPanel.hidden = !showingPaths;
+    }
+    function renderAnalyzedPaths() {
+      analyzedPathsList.replaceChildren();
+      analyzedPathsEmpty.hidden = analyzedPaths.length > 0;
+      analyzedPaths.forEach((stops, index) => {
+        const item = document.createElement("li");
+        item.className = "path-history-item";
+        const replay = document.createElement("button");
+        replay.className = "path-history-replay";
+        replay.type = "button";
+        replay.textContent = stops.map(id => nodeDataById.get(id).name).join(" -> ");
+        replay.title = "Reanalyser ce chemin";
+        replay.addEventListener("click", () => replayAnalyzedPath(stops));
+        const remove = document.createElement("button");
+        remove.className = "path-history-delete";
+        remove.type = "button";
+        remove.textContent = "×";
+        remove.title = "Supprimer ce chemin analyse";
+        remove.setAttribute("aria-label", `Supprimer le chemin ${replay.textContent}`);
+        remove.addEventListener("click", () => {
+          analyzedPaths.splice(index, 1);
+          persistAnalyzedPaths();
+          renderAnalyzedPaths();
+        });
+        item.append(replay, remove);
+        analyzedPathsList.append(item);
+      });
+    }
+    function rememberAnalyzedPath(stops) {
+      const path = [...stops];
+      const key = path.join("|");
+      const existingIndex = analyzedPaths.findIndex(item => item.join("|") === key);
+      if (existingIndex >= 0) analyzedPaths.splice(existingIndex, 1);
+      analyzedPaths.unshift(path);
+      analyzedPaths.splice(30);
+      persistAnalyzedPaths();
+      renderAnalyzedPaths();
+    }
+    function replayAnalyzedPath(stops) {
+      pathStops.splice(0, pathStops.length, ...stops);
+      renderPathQuery();
+      setToolbarTab("graph");
+      showShortestPath();
+    }
+    loadAnalyzedPaths();
 
     function appendList(title, values) {
       if (!values.length) return;
@@ -1504,6 +1624,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       selectedId = stops[0];
       relatedNodes = new Set(path.nodes);
       relatedEdges = new Set(path.edges.map(step => step.edge));
+      rememberAnalyzedPath(pathStops);
       renderer.refresh();
       renderPathDetails(path);
       renderer.getCamera().animatedReset({ duration: 220 });
@@ -1638,11 +1759,14 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     document.getElementById("fit-view").addEventListener("click", () => renderer.getCamera().animatedReset({ duration: 220 }));
     document.getElementById("reset").addEventListener("click", reset);
     document.getElementById("show-path").addEventListener("click", showShortestPath);
+    graphTab.addEventListener("click", () => setToolbarTab("graph"));
+    pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", reset));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
       if (event.key === "Enter") showShortestPath();
     });
+    renderAnalyzedPaths();
     restoreState();
     search.addEventListener("input", event => {
       const query = event.target.value.trim().toLocaleLowerCase();

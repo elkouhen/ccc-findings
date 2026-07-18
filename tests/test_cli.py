@@ -844,6 +844,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert 'link.source === id ? "vers"' not in document
     assert 'id="path-query"' in document
     assert 'id="path-lock"' in document
+    assert 'id="paths-tab"' in document
+    assert 'id="analyzed-paths"' in document
+    assert "function rememberAnalyzedPath(stops)" in document
+    assert "function replayAnalyzedPath(stops)" in document
     assert 'placeholder="service-a -> topic-1 -> service-b"' in document
     assert "function parsePathQuery()" in document
     assert "nodesByNormalizedName" in document
