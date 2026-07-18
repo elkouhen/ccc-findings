@@ -320,17 +320,15 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "new Sigma(network" in document
     assert "new graphology.MultiDirectedGraph" in document
     assert "for (let iteration = 0; iteration < 720; iteration += 1)" in document
-    assert 'id="layout-flow"' in document
-    assert 'id="layout-force"' in document
-    assert "function sugiyamaPositions(nodes, links)" in document
-    assert "Tarjan condenses cycles before layering the resulting DAG" in document
-    assert "const flowPositions = sugiyamaPositions(graphData.nodes, graphData.links);" in document
-    assert "function applyLayout(layout, persist = true)" in document
-    assert 'params.set("layout", "force")' in document
-    assert "APIs HTTP exposees" in document
-    assert "Services HTTP consommes" in document
-    assert "Clients HTTP detectes" in document
-    assert "Evenements Kafka publies" in document
+    assert 'id="layout-flow"' not in document
+    assert 'id="layout-force"' not in document
+    assert "function sugiyamaPositions(nodes, links)" not in document
+    assert "function applyLayout(layout, persist = true)" not in document
+    assert "APIs publiees" in document
+    assert "APIs consommees" in document
+    assert "Consommateurs REST detectes" in document
+    assert "REST · ${resource}" in document
+    assert "Kafka · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
     assert "function appendRelationList(title, links, currentId, labelForLink)" in document
     assert "renderer.getCamera().animatedZoom" in document
@@ -400,6 +398,8 @@ def test_render_graph_html_renders_rest_and_kafka_relations() -> None:
 
     assert [link["kind"] for link in graph_data["links"]] == ["rest", "kafka", "kafka"]
     assert [link["direction"] for link in graph_data["links"]] == ["outgoing", "outgoing", "incoming"]
+    assert graph_data["links"][1]["published_message_types"] == ["OrderCreated"]
+    assert graph_data["links"][2]["consumed_message_types"] == ["OrderCreated"]
 
 
 def test_render_graph_html_keeps_complexity_architecture_only() -> None:

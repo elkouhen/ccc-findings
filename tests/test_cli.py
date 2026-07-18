@@ -832,10 +832,11 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "HTTP · ${source.name} appelle ${target.name}" in document
     assert "MongoDB · ${source.name} stocke dans ${target.name}" in document
     assert "Kafka · ${source.name} publie" in document
-    assert "Services HTTP consommes" in document
-    assert "Clients HTTP detectes" in document
-    assert "Evenements Kafka publies" in document
-    assert "Evenements Kafka consommes" in document
+    assert "APIs publiees" in document
+    assert "APIs consommees" in document
+    assert "Consommateurs REST detectes" in document
+    assert "REST · ${resource}" in document
+    assert "Kafka · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
     assert "Relations visibles : ${edges.length}" in document
     assert "contrat non indexe" in document
@@ -844,10 +845,10 @@ def test_graph_html_writes_interactive_sigma_document(
     assert 'link.source === id ? "vers"' not in document
     assert 'id="path-query"' in document
     assert 'id="path-lock"' in document
-    assert 'id="layout-flow"' in document
-    assert 'id="layout-force"' in document
-    assert "function sugiyamaPositions(nodes, links)" in document
-    assert "function applyLayout(layout, persist = true)" in document
+    assert 'id="layout-flow"' not in document
+    assert 'id="layout-force"' not in document
+    assert "function sugiyamaPositions(nodes, links)" not in document
+    assert "function applyLayout(layout, persist = true)" not in document
     assert 'id="paths-tab"' in document
     assert 'id="analyzed-paths"' in document
     assert "function rememberAnalyzedPath(stops)" in document
