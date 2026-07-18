@@ -834,9 +834,9 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Kafka · ${source.name} publie" in document
     assert "APIs publiees" in document
     assert "APIs REST consommees" in document
-    assert "Contrats HTTP consommes" in document
-    assert "const seenHttpContracts = new Set();" in document
-    assert "Ouvrir le contrat OpenAPI de l'API consommee" in document
+    assert "function contractsForPublishedRestResource(node, resource)" in document
+    assert "Ouvrir le contrat OpenAPI ${contract.path}" in document
+    assert 'REST · ${resource} · ${contract.spec ? "Swagger UI" : "Contrat indisponible"}' in document
     assert "Topics Kafka" in document
     assert "Contrats de messages" in document
     assert "Consommateurs REST detectes" in document

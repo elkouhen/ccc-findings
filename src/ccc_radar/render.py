@@ -2412,6 +2412,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       if (link.label === `${target.name}: API`) return "";
       return link.label.startsWith(servicePrefix) ? link.label.slice(servicePrefix.length) : link.label;
     }
+    function contractsForPublishedRestResource(node, resource) {
+      const contracts = node.openapi_contracts || [];
+      const matchingContracts = contracts.filter(contract => (
+        (contract.resources || []).includes(resource)
+      ));
+      return matchingContracts.length || contracts.length === 1
+        ? (matchingContracts.length ? matchingContracts : contracts)
+        : [];
+    }
     function relationText(link) {
       const source = nodeDataById.get(link.source);
       const target = nodeDataById.get(link.target);
@@ -2715,29 +2724,23 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const kafkaPublications = edges.filter(link => link.kind === "kafka" && link.source === id);
         const kafkaConsumptions = edges.filter(link => link.kind === "kafka" && link.target === id);
         const mongoCollections = edges.filter(link => link.kind === "mongodb" && link.source === id);
-        const publishedApis = node.resources.map(resource => ({
-            label: `REST · ${resource}`,
-            title: "Mettre en evidence les consommateurs de cette API REST",
-            action: () => focusPublishedRestResource(id, resource),
+        const publishedApis = node.resources.flatMap(resource => {
+          const contracts = contractsForPublishedRestResource(node, resource);
+          if (!contracts.length) {
+            return [{
+              label: `REST · ${resource}`,
+              title: "Mettre en evidence les consommateurs de cette API REST",
+              action: () => focusPublishedRestResource(id, resource),
+            }];
+          }
+          return contracts.map(contract => ({
+            label: `REST · ${resource} · ${contract.spec ? "Swagger UI" : "Contrat indisponible"}`,
+            title: `Ouvrir le contrat OpenAPI ${contract.path}`,
+            action: () => openOpenApiContract(contract),
           }));
+        });
         const exposesGroup = createDetailsGroup("Expose");
         appendActionList("APIs publiees", publishedApis, exposesGroup);
-        appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).flatMap(contract => [
-          ...(contract.spec ? [{
-            label: `Swagger UI · ${contract.path}`,
-            title: "Ouvrir la specification OpenAPI",
-            action: () => openOpenApiContract(contract),
-          }] : [{
-            label: `Specification indisponible · ${contract.path}`,
-            title: "Le fichier OpenAPI n'est pas accessible dans cet export",
-            action: () => focusOpenApiContract(id, contract),
-          }]),
-          {
-            label: `Consommateurs · ${contract.path}`,
-            title: "Mettre en evidence les consommateurs de ce contrat OpenAPI",
-            action: () => focusOpenApiContract(id, contract),
-          },
-        ]), exposesGroup);
         appendRelationList("Consommateurs REST detectes", httpClients, id, link => {
           const source = nodeDataById.get(link.source);
           const resource = restResourceLabel(link, node);
@@ -2748,27 +2751,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         appendRelationList("APIs REST consommees", httpCalls, id, link => (
           `API de ${nodeDataById.get(link.target).name}`
         ), consumesGroup);
-        const httpContracts = [];
-        const seenHttpContracts = new Set();
-        httpCalls.forEach(link => {
-          const provider = nodeDataById.get(link.target);
-          const resource = restResourceLabel(link, provider);
-          const contracts = provider.openapi_contracts || [];
-          const matchingContracts = resource
-            ? contracts.filter(contract => (contract.resources || []).includes(resource))
-            : contracts;
-          (matchingContracts.length ? matchingContracts : contracts).forEach(contract => {
-            const key = `${link.target}::${contract.path}`;
-            if (seenHttpContracts.has(key)) return;
-            seenHttpContracts.add(key);
-            httpContracts.push({
-              label: `${contract.spec ? "Swagger UI" : "Contrat indisponible"} · ${provider.name} · ${contract.path}`,
-              title: "Ouvrir le contrat OpenAPI de l'API consommee",
-              action: () => openOpenApiContract(contract),
-            });
-          });
-        });
-        appendActionList("Contrats HTTP consommes", httpContracts, consumesGroup);
         discardEmptyDetailsGroup(consumesGroup);
         const dataGroup = createDetailsGroup("Donnees et evenements");
         const kafkaTopics = [
@@ -2850,17 +2832,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const target = nodeDataById.get(id);
       focusNodeRelations(id, (link, _source, targetId) => (
         link.kind === "rest" && targetId === id && restResourceLabel(link, target) === resource
-      ));
-    }
-    function focusOpenApiContract(id, contract) {
-      const resources = new Set(contract.resources || []);
-      if (!resources.size) {
-        selectNode(id);
-        return;
-      }
-      const target = nodeDataById.get(id);
-      focusNodeRelations(id, (link, _source, targetId) => (
-        link.kind === "rest" && targetId === id && resources.has(restResourceLabel(link, target))
       ));
     }
     function selectNode(id) {
