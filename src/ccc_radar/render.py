@@ -1227,6 +1227,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .toolbar-tab { flex: 1; height: 30px !important; width: auto !important; padding: 0 9px; border: 0 !important; border-radius: 6px !important; color: #52616b !important; background: transparent !important; font-size: 12px !important; font-weight: 700; }
     .toolbar-tab:hover { background: rgba(255, 255, 255, .65) !important; }
     .toolbar-tab.is-active { color: #1d4f91 !important; background: #fff !important; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
+    .toolbar-tab-reference { flex-basis: 100%; }
     .toolbar-panel { display: grid; gap: 10px; }
     .toolbar-panel[hidden] { display: none; }
     #search, #path-query { width: 100%; }
@@ -1286,6 +1287,19 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .indexing-issue.info .indexing-issue-severity { color: #1d4f91; background: #dbeafe; }
     .indexing-issue-message { margin: 5px 0 0; color: #475569; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
     .indexing-issue-location { display: block; margin-top: 5px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow-wrap: anywhere; }
+    .references-view { gap: 12px; }
+    .references-header { padding: 2px 2px 5px; }
+    .references-kicker { margin: 0 0 2px; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+    .references-title { margin: 0; color: #172033; font-size: 15px; }
+    .references-description, .references-empty { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.4; }
+    .references-section { display: grid; gap: 7px; }
+    .references-section h3 { margin: 0; color: #59708d; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .references-list { display: grid; gap: 7px; max-height: 220px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+    .reference-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid #e2e8f0; border-radius: 7px; background: #f8fafc; }
+    .reference-title { color: #334155; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+    .reference-meta { margin-top: 2px; color: #64748b; font-size: 10px; overflow-wrap: anywhere; }
+    .reference-action { width: auto !important; height: 29px !important; padding: 0 8px !important; color: #1d4f91 !important; border-color: #bfdbfe !important; background: #eff6ff !important; font-size: 11px !important; font-weight: 700; white-space: nowrap; }
+    .reference-action:disabled { color: #94a3b8 !important; border-color: #e2e8f0 !important; background: #f8fafc !important; cursor: not-allowed; }
     #details { position: fixed; z-index: 2; right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(68vh, 560px); overflow: auto; border: 1px solid #d7dee9; border-radius: 14px; background: rgba(255, 255, 255, .97); color: #475569; font-size: 13px; line-height: 1.45; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); }
     .details-header { padding: 16px; border-bottom: 1px solid #e2e8f0; background: linear-gradient(135deg, #f8fafc, #eef5ff); }
     .details-header.is-low { border-left: 4px solid #2563eb; }
@@ -1368,6 +1382,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Build</button>
       <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Qualité</button>
       <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Parcours</button>
+      <button id="references-tab" class="toolbar-tab toolbar-tab-reference" type="button" role="tab" aria-selected="false" aria-controls="references-panel">Contrats et messages</button>
     </div>
     <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">
       <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
@@ -1408,7 +1423,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div id="dependencies-panel" class="toolbar-panel dependency-view" role="tabpanel" aria-labelledby="dependencies-tab" hidden>
       <p class="dependency-view-kicker">Structure de build</p>
       <h2>Arbre des dépendances</h2>
-      <p>Les liens Maven et Gradle partent du module qui dépend vers le module requis. La disposition rapproche les modules liés sans imposer de couches. Les interactions HTTP, Kafka et MongoDB restent dans la vue Graphe.</p>
+      <p>Disposition Sugiyama : les modules sont rangés par niveaux de dépendance. Un lien part du module dépendant, à gauche, vers le module requis, à droite. Les interactions HTTP, Kafka et MongoDB restent dans la vue Interactions.</p>
     </div>
     <div id="issues-panel" class="toolbar-panel indexing-issues" role="tabpanel" aria-labelledby="issues-tab" hidden>
       <div class="indexing-issues-header">
@@ -1427,6 +1442,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       </div>
       <ul id="analyzed-paths" class="path-history-list" aria-label="Chemins analyses"></ul>
       <p id="analyzed-paths-empty" class="path-history-empty">Aucun chemin analyse pour le moment.</p>
+    </div>
+    <div id="references-panel" class="toolbar-panel references-view" role="tabpanel" aria-labelledby="references-tab" hidden>
+      <div class="references-header">
+        <p class="references-kicker">Documentation et événements</p>
+        <h2 class="references-title">Contrats et messages</h2>
+        <p class="references-description">Ouvrez une spécification dans Swagger UI ou inspectez les classes Java échangées via Kafka.</p>
+      </div>
+      <section class="references-section"><h3>Contrats OpenAPI</h3><ul id="openapi-references" class="references-list"></ul><p id="openapi-references-empty" class="references-empty">Aucun contrat OpenAPI détecté.</p></section>
+      <section class="references-section"><h3>DTO Kafka</h3><ul id="dto-references" class="references-list"></ul><p id="dto-references-empty" class="references-empty">Aucun DTO Kafka détecté.</p></section>
     </div>
   </div>
   <details class="legend" aria-label="Legende du graphe">
@@ -1511,6 +1535,65 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     function dependencyGraphData() {
       return graphData.build_dependencies || { nodes: [], links: [] };
+    }
+    function buildHierarchyPositions(nodes, links) {
+      // Sugiyama starts by condensing cycles. The resulting component graph is
+      // acyclic and can therefore be assigned stable dependency layers.
+      const adjacency = new Map(nodes.map(node => [node.id, []]));
+      links.forEach(link => adjacency.get(link.source)?.push(link.target));
+      const indexes = new Map(), lowlinks = new Map(), stack = [], onStack = new Set(), components = [];
+      let nextIndex = 0;
+      function visit(nodeId) {
+        indexes.set(nodeId, nextIndex); lowlinks.set(nodeId, nextIndex); nextIndex += 1;
+        stack.push(nodeId); onStack.add(nodeId);
+        for (const targetId of adjacency.get(nodeId) || []) {
+          if (!indexes.has(targetId)) {
+            visit(targetId);
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), lowlinks.get(targetId)));
+          } else if (onStack.has(targetId)) {
+            lowlinks.set(nodeId, Math.min(lowlinks.get(nodeId), indexes.get(targetId)));
+          }
+        }
+        if (lowlinks.get(nodeId) !== indexes.get(nodeId)) return;
+        const component = [];
+        for (;;) {
+          const member = stack.pop(); onStack.delete(member); component.push(member);
+          if (member === nodeId) break;
+        }
+        components.push(component.sort());
+      }
+      nodes.map(node => node.id).sort().forEach(nodeId => { if (!indexes.has(nodeId)) visit(nodeId); });
+      const componentByNode = new Map();
+      components.forEach((component, index) => component.forEach(nodeId => componentByNode.set(nodeId, index)));
+      const successors = components.map(() => new Set());
+      const indegrees = components.map(() => 0);
+      links.forEach(link => {
+        const source = componentByNode.get(link.source), target = componentByNode.get(link.target);
+        if (source === target || successors[source].has(target)) return;
+        successors[source].add(target); indegrees[target] += 1;
+      });
+      const levels = components.map(() => 0);
+      const queue = components.map((_component, index) => index).filter(index => indegrees[index] === 0).sort((a, b) => a - b);
+      for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const component = queue[cursor];
+        [...successors[component]].sort((a, b) => a - b).forEach(target => {
+          levels[target] = Math.max(levels[target], levels[component] + 1);
+          indegrees[target] -= 1;
+          if (indegrees[target] === 0) queue.push(target);
+        });
+      }
+      const layers = new Map();
+      components.forEach((component, index) => {
+        const level = levels[index];
+        layers.set(level, [...(layers.get(level) || []), ...component]);
+      });
+      const positions = new Map();
+      [...layers.entries()].sort(([left], [right]) => left - right).forEach(([level, nodeIds]) => {
+        nodeIds.sort();
+        const center = (nodeIds.length - 1) / 2;
+        nodeIds.forEach((nodeId, row) => positions.set(nodeId, { x: level * 2.8, y: row - center }));
+      });
+      return positions;
     }
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
@@ -1728,22 +1811,25 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const dependenciesTab = document.getElementById("dependencies-tab");
     const issuesTab = document.getElementById("issues-tab");
     const pathsTab = document.getElementById("paths-tab");
+    const referencesTab = document.getElementById("references-tab");
     const graphPanel = document.getElementById("graph-panel");
     const dependenciesPanel = document.getElementById("dependencies-panel");
     const issuesPanel = document.getElementById("issues-panel");
     const pathsPanel = document.getElementById("paths-panel");
+    const referencesPanel = document.getElementById("references-panel");
     const graphCanvas = document.getElementById("graph");
     const dependencyCanvas = document.getElementById("dependency-graph");
     function ensureDependencyRenderer() {
       if (dependencyRenderer !== null) return dependencyRenderer;
       const dependencyData = dependencyGraphData();
+      const dependencyPositions = buildHierarchyPositions(dependencyData.nodes, dependencyData.links);
       const dependencyNetwork = new graphology.MultiDirectedGraph();
-      dependencyData.nodes.forEach((node, index) => {
-        const angle = (Math.PI * 2 * index) / Math.max(1, dependencyData.nodes.length);
+      dependencyData.nodes.forEach(node => {
+        const position = dependencyPositions.get(node.id) || { x: 0, y: 0 };
         dependencyNetwork.addNode(node.id, {
           label: node.name,
-          x: Math.cos(angle),
-          y: Math.sin(angle),
+          x: position.x,
+          y: position.y,
           size: node.size,
           color: node.color,
           type: "build_module",
@@ -1765,18 +1851,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         labelGridCellSize: 110,
         labelRenderedSizeThreshold: 8,
       });
-      layoutLibraries.then(libraries => {
-        if (libraries === null || dependencyNetwork.order === 0) return;
-        libraries.forceAtlas2.assign(dependencyNetwork, {
-          iterations: Math.min(160, Math.max(60, dependencyNetwork.order * 3)),
-          settings: { adjustSizes: true, gravity: 1.2, scalingRatio: 10, slowDown: 2 },
-        });
-        libraries.noverlap.assign(dependencyNetwork, {
-          maxIterations: 120,
-          settings: { expansion: 1.1, gridSize: 20, margin: 4, ratio: 1.3, speed: 3 },
-        });
-        dependencyRenderer?.refresh();
-      });
       dependencyRenderer.on("clickNode", ({ node }) => selectDependencyModule(node));
       dependencyRenderer.on("clickStage", reset);
       return dependencyRenderer;
@@ -1784,6 +1858,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const indexingIssuesList = document.getElementById("indexing-issues");
     const indexingIssuesEmpty = document.getElementById("indexing-issues-empty");
     const indexingIssues = graphData.indexing_issues || [];
+    const openApiReferencesList = document.getElementById("openapi-references");
+    const openApiReferencesEmpty = document.getElementById("openapi-references-empty");
+    const dtoReferencesList = document.getElementById("dto-references");
+    const dtoReferencesEmpty = document.getElementById("dto-references-empty");
     const analyzedPathsList = document.getElementById("analyzed-paths");
     const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
     const layoutStatus = document.getElementById("layout-status");
@@ -1911,6 +1989,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       const showingDependencies = tab === "dependencies";
       const showingIssues = tab === "issues";
       const showingPaths = tab === "paths";
+      const showingReferences = tab === "references";
       graphTab.classList.toggle("is-active", showingGraph);
       graphTab.setAttribute("aria-selected", String(showingGraph));
       dependenciesTab.classList.toggle("is-active", showingDependencies);
@@ -1919,10 +1998,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       issuesTab.setAttribute("aria-selected", String(showingIssues));
       pathsTab.classList.toggle("is-active", showingPaths);
       pathsTab.setAttribute("aria-selected", String(showingPaths));
+      referencesTab.classList.toggle("is-active", showingReferences);
+      referencesTab.setAttribute("aria-selected", String(showingReferences));
       graphPanel.hidden = !showingGraph;
       dependenciesPanel.hidden = !showingDependencies;
       issuesPanel.hidden = !showingIssues;
       pathsPanel.hidden = !showingPaths;
+      referencesPanel.hidden = !showingReferences;
       graphCanvas.hidden = showingDependencies;
       dependencyCanvas.hidden = !showingDependencies;
       if (showingDependencies) {
@@ -2002,6 +2084,57 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         }
         indexingIssuesList.append(item);
       });
+    }
+    function referenceItem(title, meta, actionLabel, action, disabled = false) {
+      const item = document.createElement("li");
+      item.className = "reference-item";
+      const text = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "reference-title";
+      name.textContent = title;
+      const details = document.createElement("div");
+      details.className = "reference-meta";
+      details.textContent = meta;
+      text.append(name, details);
+      const button = document.createElement("button");
+      button.className = "reference-action";
+      button.type = "button";
+      button.textContent = actionLabel;
+      button.disabled = disabled;
+      if (!disabled) button.addEventListener("click", action);
+      item.append(text, button);
+      return item;
+    }
+    function renderReferences() {
+      openApiReferencesList.replaceChildren();
+      const contracts = graphData.nodes.flatMap(node => (
+        node.kind === "microservice"
+          ? (node.openapi_contracts || []).map(contract => ({ service: node.name, contract }))
+          : []
+      ));
+      openApiReferencesEmpty.hidden = contracts.length > 0;
+      contracts.forEach(({ service, contract }) => {
+        openApiReferencesList.append(referenceItem(
+          contract.path,
+          `${service} · ${contract.resources?.length || 0} ressource(s)`,
+          contract.spec ? "Swagger UI" : "Indisponible",
+          () => openOpenApiContract(contract),
+          !contract.spec,
+        ));
+      });
+      dtoReferencesList.replaceChildren();
+      const dtos = graphData.kafka_dtos || [];
+      dtoReferencesEmpty.hidden = dtos.length > 0;
+      dtos.forEach(dto => {
+        const exchangeCount = (dto.producers?.length || 0) + (dto.consumers?.length || 0);
+        dtoReferencesList.append(referenceItem(
+          dto.name,
+          `${dto.fields?.length || 0} champ(s) · ${dto.topics?.length || 0} topic(s) · ${exchangeCount} liaison(s)`,
+          "Inspecter",
+          () => openDtoInspector(dto.name),
+        ));
+      });
+      referencesTab.textContent = `Contrats et messages (${contracts.length + dtos.length})`;
     }
     function renderAnalyzedPaths() {
       pathsTab.textContent = `Parcours (${analyzedPaths.length})`;
@@ -2771,6 +2904,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     dependenciesTab.addEventListener("click", () => setToolbarTab("dependencies"));
     issuesTab.addEventListener("click", () => setToolbarTab("issues"));
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
+    referencesTab.addEventListener("click", () => setToolbarTab("references"));
     filterPresetButtons.forEach(button => button.addEventListener("click", () => applyRelationPreset(button.dataset.preset)));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", () => {
       setActiveRelationPreset(null);
@@ -2783,6 +2917,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     renderIndexingIssues();
     renderAnalyzedPaths();
+    renderReferences();
     restoreState();
     applyLayout("forceatlas2-noverlap");
     search.addEventListener("input", event => {

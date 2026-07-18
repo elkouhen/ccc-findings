@@ -363,6 +363,8 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="dependency-graph"' in document
     assert "function dependencyGraphData()" in document
     assert "function sugiyamaPositions(nodes, links)" not in document
+    assert "function buildHierarchyPositions(nodes, links)" in document
+    assert "const dependencyPositions = buildHierarchyPositions(dependencyData.nodes, dependencyData.links);" in document
     assert "function ensureDependencyRenderer()" in document
     assert "let dependencyRenderer = null;" in document
     assert "dependencyRenderer = new Sigma(dependencyNetwork" in document
@@ -560,6 +562,11 @@ def test_render_graph_html_embeds_openapi_and_kafka_dto_inspectors(tmp_path: Pat
     assert "swagger-ui-bundle.js" in document
     assert "function openOpenApiContract(contract)" in document
     assert "function openDtoInspector(dtoName)" in document
+    assert 'id="references-tab"' in document
+    assert 'id="references-panel"' in document
+    assert 'id="openapi-references"' in document
+    assert 'id="dto-references"' in document
+    assert "function renderReferences()" in document
 
 
 def test_render_graph_html_keeps_openapi_contract_evidence_navigable() -> None:
