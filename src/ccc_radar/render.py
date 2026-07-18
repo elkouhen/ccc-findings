@@ -1230,11 +1230,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     .toolbar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .toolbar strong { color: #172033; font-size: 15px; white-space: nowrap; }
     .toolbar input:not([type="checkbox"]) { height: 34px; padding: 0 10px; border: 1px solid #b9c5d6; border-radius: 6px; color: #172033; background: #fff; font: inherit; font-size: 13px; }
-    .toolbar-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #edf2f7; }
-    .toolbar-tab { flex: 1; height: 30px !important; width: auto !important; padding: 0 9px; border: 0 !important; border-radius: 6px !important; color: #52616b !important; background: transparent !important; font-size: 12px !important; font-weight: 700; }
+    .toolbar-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 8px; background: #edf2f7; }
+    .toolbar-tab { min-width: 0; height: 30px !important; width: auto !important; padding: 0 7px; overflow: hidden; border: 0 !important; border-radius: 6px !important; color: #52616b !important; background: transparent !important; font-size: 11px !important; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
     .toolbar-tab:hover { background: rgba(255, 255, 255, .65) !important; }
     .toolbar-tab.is-active { color: #1d4f91 !important; background: #fff !important; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
-    .toolbar-tab-reference { flex-basis: 100%; }
     .toolbar-panel { display: grid; gap: 10px; }
     .toolbar-panel[hidden] { display: none; }
     #search, #path-query { width: 100%; }
@@ -1386,10 +1385,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     </div>
     <div class="toolbar-tabs" role="tablist" aria-label="Outils du graphe">
       <button id="graph-tab" class="toolbar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="graph-panel">Interactions</button>
+      <button id="references-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="references-panel" title="Contrats OpenAPI et DTO Kafka">Contrats &amp; DTO</button>
+      <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Parcours</button>
       <button id="dependencies-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="dependencies-panel" title="Dépendances Maven et Gradle entre modules">Build</button>
       <button id="issues-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="issues-panel" title="Problemes d'indexation">Qualité</button>
-      <button id="paths-tab" class="toolbar-tab" type="button" role="tab" aria-selected="false" aria-controls="paths-panel">Parcours</button>
-      <button id="references-tab" class="toolbar-tab toolbar-tab-reference" type="button" role="tab" aria-selected="false" aria-controls="references-panel">Contrats et messages</button>
     </div>
     <div id="graph-panel" class="toolbar-panel" role="tabpanel" aria-labelledby="graph-tab">
       <input id="search" type="search" placeholder="Rechercher un noeud" autocomplete="off" aria-label="Rechercher un noeud">
@@ -1435,7 +1434,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div id="issues-panel" class="toolbar-panel indexing-issues" role="tabpanel" aria-labelledby="issues-tab" hidden>
       <div class="indexing-issues-header">
         <p class="indexing-issues-kicker">Qualite de l'inventaire</p>
-        <h2 class="indexing-issues-title">Problemes d'indexation</h2>
+        <h2 id="indexing-issues-title" class="indexing-issues-title">Problemes d'indexation</h2>
         <p class="indexing-issues-description">Corrigez ces points pour rendre le graphe plus complet et plus fiable.</p>
       </div>
       <ul id="indexing-issues" class="indexing-issues-list" aria-label="Problemes d'indexation"></ul>
@@ -1444,7 +1443,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div id="paths-panel" class="toolbar-panel path-history" role="tabpanel" aria-labelledby="paths-tab" hidden>
       <div class="path-history-header">
         <p class="path-history-kicker">Navigation architecture</p>
-        <h2 class="path-history-title">Chemins analyses</h2>
+        <h2 id="path-history-title" class="path-history-title">Chemins analyses</h2>
         <p class="path-history-description">Rejouez un parcours ou retirez-le de cette liste locale.</p>
       </div>
       <ul id="analyzed-paths" class="path-history-list" aria-label="Chemins analyses"></ul>
@@ -1453,7 +1452,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     <div id="references-panel" class="toolbar-panel references-view" role="tabpanel" aria-labelledby="references-tab" hidden>
       <div class="references-header">
         <p class="references-kicker">Documentation et événements</p>
-        <h2 class="references-title">Contrats et messages</h2>
+        <h2 id="references-title" class="references-title">Contrats et messages</h2>
         <p class="references-description">Ouvrez une spécification dans Swagger UI ou inspectez les classes Java échangées via Kafka.</p>
       </div>
       <section class="references-section"><h3>Contrats OpenAPI</h3><ul id="openapi-references" class="references-list"></ul><p id="openapi-references-empty" class="references-empty">Aucun contrat OpenAPI détecté.</p></section>
@@ -1864,13 +1863,16 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     const indexingIssuesList = document.getElementById("indexing-issues");
     const indexingIssuesEmpty = document.getElementById("indexing-issues-empty");
+    const indexingIssuesTitle = document.getElementById("indexing-issues-title");
     const indexingIssues = graphData.indexing_issues || [];
     const openApiReferencesList = document.getElementById("openapi-references");
     const openApiReferencesEmpty = document.getElementById("openapi-references-empty");
     const dtoReferencesList = document.getElementById("dto-references");
     const dtoReferencesEmpty = document.getElementById("dto-references-empty");
+    const referencesTitle = document.getElementById("references-title");
     const analyzedPathsList = document.getElementById("analyzed-paths");
     const analyzedPathsEmpty = document.getElementById("analyzed-paths-empty");
+    const pathHistoryTitle = document.getElementById("path-history-title");
     const layoutStatus = document.getElementById("layout-status");
     const layoutButtons = new Map([
       ["forceatlas2", document.getElementById("layout-forceatlas2")],
@@ -2064,7 +2066,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       reset();
     }
     function renderIndexingIssues() {
-      issuesTab.textContent = `Qualité (${indexingIssues.length})`;
+      indexingIssuesTitle.textContent = `Problemes d'indexation (${indexingIssues.length})`;
       indexingIssuesList.replaceChildren();
       indexingIssuesEmpty.hidden = indexingIssues.length > 0;
       indexingIssues.forEach(issue => {
@@ -2141,10 +2143,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
           () => openDtoInspector(dto.name),
         ));
       });
-      referencesTab.textContent = `Contrats et messages (${contracts.length + dtos.length})`;
+      referencesTitle.textContent = `Contrats et messages (${contracts.length + dtos.length})`;
     }
     function renderAnalyzedPaths() {
-      pathsTab.textContent = `Parcours (${analyzedPaths.length})`;
+      pathHistoryTitle.textContent = `Chemins analyses (${analyzedPaths.length})`;
       analyzedPathsList.replaceChildren();
       analyzedPathsEmpty.hidden = analyzedPaths.length > 0;
       analyzedPaths.forEach((stops, index) => {
@@ -2713,22 +2715,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         const kafkaPublications = edges.filter(link => link.kind === "kafka" && link.source === id);
         const kafkaConsumptions = edges.filter(link => link.kind === "kafka" && link.target === id);
         const mongoCollections = edges.filter(link => link.kind === "mongodb" && link.source === id);
-        const publishedApis = [
-          ...node.resources.map(resource => ({
+        const publishedApis = node.resources.map(resource => ({
             label: `REST · ${resource}`,
             title: "Mettre en evidence les consommateurs de cette API REST",
             action: () => focusPublishedRestResource(id, resource),
-          })),
-          ...kafkaPublications.map(link => {
-            const topic = nodeDataById.get(link.target);
-            const types = link.published_message_types || [];
-            return {
-              label: types.length ? `Kafka · ${topic.name} <${types.join(", ")}>` : `Kafka · ${topic.name}`,
-              title: "Naviguer vers le topic Kafka",
-              action: () => selectNode(link.target),
-            };
-          }),
-        ];
+          }));
         const exposesGroup = createDetailsGroup("Expose");
         appendActionList("APIs publiees", publishedApis, exposesGroup);
         appendActionList("Contrats OpenAPI detectes", (node.openapi_contracts || []).flatMap(contract => [
@@ -2757,21 +2748,56 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         appendRelationList("APIs REST consommees", httpCalls, id, link => (
           `API de ${nodeDataById.get(link.target).name}`
         ), consumesGroup);
+        const httpContracts = [];
+        const seenHttpContracts = new Set();
+        httpCalls.forEach(link => {
+          const provider = nodeDataById.get(link.target);
+          const resource = restResourceLabel(link, provider);
+          const contracts = provider.openapi_contracts || [];
+          const matchingContracts = resource
+            ? contracts.filter(contract => (contract.resources || []).includes(resource))
+            : contracts;
+          (matchingContracts.length ? matchingContracts : contracts).forEach(contract => {
+            const key = `${link.target}::${contract.path}`;
+            if (seenHttpContracts.has(key)) return;
+            seenHttpContracts.add(key);
+            httpContracts.push({
+              label: `${contract.spec ? "Swagger UI" : "Contrat indisponible"} · ${provider.name} · ${contract.path}`,
+              title: "Ouvrir le contrat OpenAPI de l'API consommee",
+              action: () => openOpenApiContract(contract),
+            });
+          });
+        });
+        appendActionList("Contrats HTTP consommes", httpContracts, consumesGroup);
         discardEmptyDetailsGroup(consumesGroup);
         const dataGroup = createDetailsGroup("Donnees et evenements");
+        const kafkaTopics = [
+          ...kafkaPublications.map(link => ({
+            topicId: link.target,
+            direction: "Publie",
+          })),
+          ...kafkaConsumptions.map(link => ({
+            topicId: link.source,
+            direction: "Consomme",
+          })),
+        ];
+        appendActionList("Topics Kafka", kafkaTopics.map(({ topicId, direction }) => {
+          const topic = nodeDataById.get(topicId);
+          return {
+            label: `${direction} · ${topic.name}`,
+            title: "Naviguer vers le topic Kafka",
+            action: () => selectNode(topicId),
+          };
+        }), dataGroup);
         const dtoNames = (graphData.kafka_dtos || [])
           .filter(dto => (dto.producers || []).includes(node.name) || (dto.consumers || []).includes(node.name))
           .map(dto => dto.name)
           .sort();
-        appendActionList("Classes DTO Kafka", dtoNames.map(dto => ({
-          label: dto,
+        appendActionList("Contrats de messages", dtoNames.map(dto => ({
+          label: `DTO · ${dto}`,
           title: "Afficher les champs et les relations Kafka de ce DTO",
           action: () => openDtoInspector(dto),
         })), dataGroup);
-        appendRelationList("Evenements Kafka consommes", kafkaConsumptions, id, link => {
-          const topic = nodeDataById.get(link.source);
-          return `Evenement ${topic.name}`;
-        }, dataGroup);
         appendRelationList("Collections MongoDB utilisees", mongoCollections, id, link => (
           nodeDataById.get(link.target).name
         ), dataGroup);

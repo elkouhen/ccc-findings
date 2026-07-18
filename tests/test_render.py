@@ -371,14 +371,18 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert "function applyLayout(layout, persist = true)" not in document
     assert "APIs publiees" in document
     assert "APIs REST consommees" in document
+    assert "Contrats HTTP consommes" in document
+    assert "const seenHttpContracts = new Set();" in document
+    assert "Ouvrir le contrat OpenAPI de l'API consommee" in document
     assert "API de ${nodeDataById.get(link.target).name}" in document
-    assert "Evenements Kafka consommes" in document
+    assert "Topics Kafka" in document
+    assert "Contrats de messages" in document
     assert "Consommateurs REST detectes" in document
     assert "function appendActionList(title, entries, container = details)" in document
     assert "function focusPublishedRestResource(id, resource)" in document
     assert "function focusOpenApiContract(id, contract)" in document
     assert "REST · ${resource}" in document
-    assert "Kafka · ${topic.name}" in document
+    assert "${direction} · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
     assert "function appendRelationList(title, links, currentId, labelForLink, container = details)" in document
     assert "Interactions" in document

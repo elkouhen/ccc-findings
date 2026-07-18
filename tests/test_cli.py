@@ -834,10 +834,14 @@ def test_graph_html_writes_interactive_sigma_document(
     assert "Kafka · ${source.name} publie" in document
     assert "APIs publiees" in document
     assert "APIs REST consommees" in document
-    assert "Evenements Kafka consommes" in document
+    assert "Contrats HTTP consommes" in document
+    assert "const seenHttpContracts = new Set();" in document
+    assert "Ouvrir le contrat OpenAPI de l'API consommee" in document
+    assert "Topics Kafka" in document
+    assert "Contrats de messages" in document
     assert "Consommateurs REST detectes" in document
     assert "REST · ${resource}" in document
-    assert "Kafka · ${topic.name}" in document
+    assert "${direction} · ${topic.name}" in document
     assert "Collections MongoDB utilisees" in document
     assert "Relations indexees : ${indexedEdges.length}" in document
     assert "Affichees : ${edges.length}" in document
