@@ -1413,8 +1413,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       });
       return positions;
     }
-    const dependencyData = dependencyGraphData(graphData.nodes, graphData.links);
-    const dependencyPositions = sugiyamaPositions(dependencyData.nodes, dependencyData.links);
     const network = new graphology.MultiDirectedGraph();
     layoutNodes.forEach(node => network.addNode(node.id, {
       label: node.name,
@@ -1431,27 +1429,6 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       kind: link.kind,
       type: "arrow",
     }));
-    const dependencyNetwork = new graphology.MultiDirectedGraph();
-    dependencyData.nodes.forEach(node => {
-      const position = dependencyPositions.get(node.id) || { x: 0, y: 0 };
-      dependencyNetwork.addNode(node.id, {
-        label: node.name,
-        x: position.x,
-        y: position.y,
-        size: node.size,
-        color: node.color,
-        type: "microservice",
-      });
-    });
-    dependencyData.links.forEach((link, index) => dependencyNetwork.addEdgeWithKey(
-      `dependency-edge-${index}`, link.source, link.target, {
-        label: link.label,
-        size: 1.5,
-        color: relationColor(link),
-        kind: link.kind,
-        type: "arrow",
-      }
-    ));
     const initialNodePositions = new Map();
     network.forEachNode((node, attributes) => {
       initialNodePositions.set(node, { x: attributes.x, y: attributes.y });
@@ -1637,18 +1614,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         return { ...data, color: "#e5eaf0", size: .35 };
       },
     });
-    const dependencyRenderer = new Sigma(dependencyNetwork, document.getElementById("dependency-graph"), {
-      nodeProgramClasses: {
-        microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
-      },
-      renderEdgeLabels: false,
-      labelDensity: .12,
-      labelGridCellSize: 110,
-      labelRenderedSizeThreshold: 8,
-      edgeReducer: (_edge, data) => (
-        isVisibleRelation(data.kind) ? data : { ...data, hidden: true }
-      ),
-    });
+    let dependencyRenderer = null;
     const details = document.getElementById("details");
     const search = document.getElementById("search");
     const pathQuery = document.getElementById("path-query");
@@ -1663,6 +1629,45 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const pathsPanel = document.getElementById("paths-panel");
     const graphCanvas = document.getElementById("graph");
     const dependencyCanvas = document.getElementById("dependency-graph");
+    function ensureDependencyRenderer() {
+      if (dependencyRenderer !== null) return dependencyRenderer;
+      const dependencyData = dependencyGraphData(graphData.nodes, graphData.links);
+      const dependencyPositions = sugiyamaPositions(dependencyData.nodes, dependencyData.links);
+      const dependencyNetwork = new graphology.MultiDirectedGraph();
+      dependencyData.nodes.forEach(node => {
+        const position = dependencyPositions.get(node.id) || { x: 0, y: 0 };
+        dependencyNetwork.addNode(node.id, {
+          label: node.name,
+          x: position.x,
+          y: position.y,
+          size: node.size,
+          color: node.color,
+          type: "microservice",
+        });
+      });
+      dependencyData.links.forEach((link, index) => dependencyNetwork.addEdgeWithKey(
+        `dependency-edge-${index}`, link.source, link.target, {
+          label: link.label,
+          size: 1.5,
+          color: relationColor(link),
+          kind: link.kind,
+          type: "arrow",
+        }
+      ));
+      dependencyRenderer = new Sigma(dependencyNetwork, dependencyCanvas, {
+        nodeProgramClasses: { microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER) },
+        renderEdgeLabels: false,
+        labelDensity: .12,
+        labelGridCellSize: 110,
+        labelRenderedSizeThreshold: 8,
+        edgeReducer: (_edge, data) => (
+          isVisibleRelation(data.kind) ? data : { ...data, hidden: true }
+        ),
+      });
+      dependencyRenderer.on("clickNode", ({ node }) => selectNode(node));
+      dependencyRenderer.on("clickStage", reset);
+      return dependencyRenderer;
+    }
     const indexingIssuesList = document.getElementById("indexing-issues");
     const indexingIssuesEmpty = document.getElementById("indexing-issues-empty");
     const indexingIssues = graphData.indexing_issues || [];
@@ -1808,9 +1813,10 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       graphCanvas.hidden = showingDependencies;
       dependencyCanvas.hidden = !showingDependencies;
       if (showingDependencies) {
+        const activeDependencyRenderer = ensureDependencyRenderer();
         requestAnimationFrame(() => {
-          dependencyRenderer.refresh();
-          dependencyRenderer.getCamera().animatedReset({ duration: 220 });
+          activeDependencyRenderer.refresh();
+          activeDependencyRenderer.getCamera().animatedReset({ duration: 220 });
         });
       }
     }
@@ -2420,10 +2426,8 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     }
     renderer.on("clickNode", ({ node }) => selectNode(node));
     renderer.on("clickStage", reset);
-    dependencyRenderer.on("clickNode", ({ node }) => selectNode(node));
-    dependencyRenderer.on("clickStage", reset);
     function activeRenderer() {
-      return dependencyCanvas.hidden ? renderer : dependencyRenderer;
+      return dependencyCanvas.hidden ? renderer : ensureDependencyRenderer();
     }
     document.getElementById("zoom-in").addEventListener("click", () => activeRenderer().getCamera().animatedZoom({ duration: 180 }));
     document.getElementById("zoom-out").addEventListener("click", () => activeRenderer().getCamera().animatedUnzoom({ duration: 180 }));
@@ -2438,7 +2442,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", () => {
       reset();
-      dependencyRenderer.refresh();
+      dependencyRenderer?.refresh();
     }));
     pathLock.addEventListener("change", persistState);
     pathQuery.addEventListener("keydown", event => {
@@ -2457,7 +2461,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     });
     window.addEventListener("resize", () => {
       renderer.refresh();
-      dependencyRenderer.refresh();
+      dependencyRenderer?.refresh();
     });
   </script>
 </body>

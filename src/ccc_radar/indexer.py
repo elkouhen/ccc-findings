@@ -92,6 +92,33 @@ def _is_test_source(rel_path: str) -> bool:
     )
 
 
+def _is_strategy1_openapi_declaration(rel_path: str) -> bool:
+    path = Path(rel_path)
+    parts = path.parts
+    return path.suffix.casefold() == ".rest" and any(
+        parts[index:index + 4] == ("src", "main", "resources", "openapi")
+        for index in range(max(0, len(parts) - 3))
+    )
+
+
+def _strategy1_requires_full_reindex(
+    changed_or_deleted: set[str], repo_root: Path, modules: list
+) -> bool:
+    """Whether a change can alter service ↔ model OpenAPI attribution."""
+    model_roots = {
+        module.path.resolve().relative_to(repo_root.resolve()).as_posix()
+        for module in modules
+        if module.name.casefold().startswith("model-")
+        and module.path.resolve() != repo_root.resolve()
+    }
+    for rel_path in changed_or_deleted:
+        if rel_path.endswith("pom.xml") or _is_strategy1_openapi_declaration(rel_path):
+            return True
+        if any(rel_path == root or rel_path.startswith(f"{root}/") for root in model_roots):
+            return True
+    return False
+
+
 def _is_git_metadata(rel_path: str) -> bool:
     """Git metadata is never source input, even when config omits `.git/**`.
 
@@ -343,12 +370,6 @@ def index_repo(
         full = True
     if store.get_meta("topic_strategy") != topic_strategy:
         full = True
-    # Strategy1 resolves publication declarations in runtime services against
-    # contracts configured in separate model-* modules.  A change to either
-    # side may alter the other side's endpoints, so partial replacement cannot
-    # safely preserve this cross-module inventory.
-    if topic_strategy == "strategy1":
-        full = True
     analysis_inputs_signature = _analysis_inputs_signature(repo_root, config)
     if store.get_meta("analysis_inputs_signature") != analysis_inputs_signature:
         full = True
@@ -382,6 +403,19 @@ def index_repo(
         }
         changed = sorted(added | modified)
     unchanged = current_paths - set(changed)
+    # Strategy1 resolves service declarations against contracts in model-*
+    # modules. Only a change to that cross-module join requires a full pass;
+    # ordinary Java/configuration changes keep the incremental fast path.
+    if (
+        topic_strategy == "strategy1"
+        and not full
+        and _strategy1_requires_full_reindex(
+            set(changed) | set(deleted), repo_root, discovered_modules
+        )
+    ):
+        full = True
+        changed = sorted(current_paths)
+        unchanged = set()
     _report_progress(
         progress,
         "→ Indexation : delta calculé "

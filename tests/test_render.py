@@ -363,7 +363,9 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="dependency-graph"' in document
     assert "function dependencyGraphData(nodes, links)" in document
     assert "function sugiyamaPositions(nodes, links)" in document
-    assert "const dependencyRenderer = new Sigma(dependencyNetwork" in document
+    assert "function ensureDependencyRenderer()" in document
+    assert "let dependencyRenderer = null;" in document
+    assert "dependencyRenderer = new Sigma(dependencyNetwork" in document
     assert "function applyLayout(layout, persist = true)" not in document
     assert "APIs publiees" in document
     assert "APIs consommees" in document

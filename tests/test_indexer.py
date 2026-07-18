@@ -224,6 +224,22 @@ def test_index_repo_strategy1_enables_rest_configuration_domain_dependencies(
     ]
 
 
+def test_index_repo_strategy1_keeps_incremental_scan_when_model_join_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src" / "main" / "java" / "RestPartnerConfig.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class RestPartnerConfig { Object client = ANNUAIRE_PARTNER; }\n")
+    monkeypatch.setattr("ccc_radar.indexer.invoke_semgrep_raw", lambda *_args, **_kwargs: '{"results": []}')
+    monkeypatch.setattr("ccc_radar.indexer.discover_modules", lambda *_args, **_kwargs: [])
+
+    with Store(tmp_path) as store:
+        index_repo(tmp_path, make_config(), store, FakeEmbedder(), topic_strategy="strategy1")
+        report = index_repo(tmp_path, make_config(), store, FakeEmbedder(), topic_strategy="strategy1")
+
+    assert report.scanned == 0
+
+
 def test_index_repo_strategy1_indexes_rest_contract_as_service_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
