@@ -319,7 +319,7 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
         seen.add(key)
         edges.append(GraphEdge("rest", call_service, domain, call, None))
 
-    # `restApiProperties().getRest().get("partner")` names a microservice
+    # `getRest().get("partner")` names a microservice
     # outside the indexed workspace.  Keep it as a microservice relation (not
     # an untyped external API) so the topology can label the target external.
     for call_service, call in calls:

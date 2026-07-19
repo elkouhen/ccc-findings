@@ -2614,13 +2614,13 @@ def _rest_configuration_domains(type_node, source: bytes) -> list[tuple[str, int
 
 
 def _rest_configuration_external_services(type_node, source: bytes) -> list[tuple[str, int]]:
-    """Return external services referenced through ``restApiProperties``.
+    """Return external services referenced through ``getRest().get(...)``.
 
-    Strategy1 treats ``restApiProperties().getRest().get("partner")`` in a
-    ``Rest*Config*`` class as an explicit HTTP dependency on the external
-    microservice ``partner``.  The AST shape is checked end-to-end so a
-    matching string in a comment, an unrelated ``get`` chain, or another type
-    declaration cannot manufacture an architecture relation.
+    Strategy1 treats ``getRest().get("partner")`` in a ``Rest*Config*`` class
+    as an explicit HTTP dependency on the external microservice ``partner``.
+    The AST shape is checked end-to-end so a matching string in a comment, an
+    unrelated ``get`` chain, or another type declaration cannot manufacture an
+    architecture relation.
     """
     services: set[tuple[str, int]] = set()
     for invocation in java_parser.walk(type_node):
@@ -2635,14 +2635,7 @@ def _rest_configuration_external_services(type_node, source: bytes) -> list[tupl
         if service is None or receiver.type != "method_invocation":
             continue
         rest_receiver, rest_method, rest_arguments = java_parser.invocation_parts(receiver, source)
-        if rest_method != "getRest" or rest_arguments or rest_receiver is None:
-            continue
-        if rest_receiver.type != "method_invocation":
-            continue
-        _properties_receiver, properties_method, properties_arguments = java_parser.invocation_parts(
-            rest_receiver, source
-        )
-        if properties_method != "restApiProperties" or properties_arguments:
+        if rest_method != "getRest" or rest_arguments:
             continue
         services.add((service, invocation.start_point.row + 1))
     return sorted(services)

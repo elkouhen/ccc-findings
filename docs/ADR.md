@@ -1048,7 +1048,7 @@ Maven/Gradle convention `test`/`<prefix>Test`
 
 **Context**: Strategy1 already preserves configured HTTP dependencies declared
 through uppercase domain constants in a `Rest*Config*` class, but some services
-select an HTTP client from `restApiProperties().getRest().get("xxx")`. The
+select an HTTP client from `getRest().get("xxx")`. The
 target is an explicit logical service name, not a route and not merely an
 opaque URL. Reducing it to an `external_api` node loses the fact that the
 dependency is service-to-service; requiring an indexed provider would hide

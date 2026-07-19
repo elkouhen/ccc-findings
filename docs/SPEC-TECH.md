@@ -490,7 +490,7 @@ concerned files. Covered cases:
   ignored. This fact preserves the A→B dependency without resolving a route or
   client type;
 - External configured REST clients: with `--topic-strategy strategy1`, a
-  `restApiProperties().getRest().get("xxx")` invocation inside a
+  `getRest().get("xxx")` invocation inside a
   `Rest*Config*` class produces a
   `configured-external-rest-api-properties` call fact. Its AST evidence carries
   `cccr-external-microservice:xxx`; `graph.build_graph` creates the HTTP edge

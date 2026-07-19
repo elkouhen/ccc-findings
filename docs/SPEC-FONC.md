@@ -124,7 +124,7 @@ empty; it is never inferred from a topic name or serializer configuration.
   It also activates configured HTTP-client dependencies: every uppercase
   constant containing an underscore found in a `Rest*Config*` class declares a
   dependency to its kebab-case form. In the same class,
-  `restApiProperties().getRest().get("xxx")` declares an HTTP call to a new
+  `getRest().get("xxx")` declares an HTTP call to a new
   `xxx` microservice annotated as external. A service declaration
   `src/main/resources/openapi/<api>.rest` attributes publication to that
   service: the contract named `<api>` and configured by `inputSpec` or
