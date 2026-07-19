@@ -466,22 +466,37 @@ Feign declarative bases.
   base URLs live in a dedicated config service.
 
 **Framework inferences outside Semgrep**: `infer_framework_endpoints(repo_root,
-files)` complements Semgrep matches by direct best-effort reading of the
-concerned files. Covered cases:
-- `@RequestMapping(...)` without `method=` on a Java method: create an
-  `serve/rest` endpoint `ANY /path` (same class-prefix merge as above);
+files)` complements Semgrep matches. Java declaration-based inferences use the
+shared Tree-sitter parser, so annotations remain attached to their actual
+declarations across line breaks and comment text cannot be mistaken for code.
+Covered cases:
+- Spring mapping annotations on Java methods (`@GetMapping`, `@PostMapping`,
+  `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, and `@RequestMapping`):
+  create `serve/rest` routes, or `call/rest` routes when their enclosing type
+  bears `@FeignClient`. `@RequestMapping` without `method=` becomes
+  `ANY /path`; its class prefix and `@RequestParam` query names are read from
+  the AST. Feign `url`/`path` bases are resolved through the same property
+  resolver before the method route is joined;
 - `@RepositoryRestResource(path = "...")`: Spring Data REST family
   `GET/POST /path` and `GET/PUT/PATCH/DELETE /path/{id}`;
-- `@EnableSwagger2`: endpoint `GET /swagger-ui.html`;
-- `RestTemplate.exchange(urlExpr, HttpMethod.X, ...)`: `call/rest` endpoint
-  inferred directly from Java source when no Semgrep rule matches it;
+- `@EnableSwagger2`: endpoint `GET /swagger-ui.html`. Repository inheritance,
+  `exported=false`, and Swagger annotations are likewise read from the AST;
+- `RestTemplate` convenience calls (`getForObject`, `getForEntity`,
+  `postForObject`, `postForEntity`, `put`, `delete`) and
+  `exchange(urlExpr, HttpMethod.X, ...)`: `call/rest` endpoints inferred from
+  Tree-sitter invocation nodes. The URL expression is the first AST argument,
+  rather than a capture from a Semgrep snippet;
+- Fluent `WebClient` calls: the verb invocation (`.get()`, `.post()`, etc.)
+  and the following `.uri(...)` are connected through their nested AST
+  receiver chain, including when the chain spans several lines;
 - Spring Cloud Gateway Java `RouteLocatorBuilder.route(...).path(...).method(...).uri(...)`
-  and YAML `spring.cloud.gateway.routes` / `spring.cloud.gateway.server.webflux.routes`:
+  is read from the route lambda AST; YAML `spring.cloud.gateway.routes` /
+  `spring.cloud.gateway.server.webflux.routes` is parsed as YAML:
   infer both the exposed `serve/rest` route and the proxy `call/rest` route;
   YAML `StripPrefix` filters are applied to the outbound path and `lb://` URI
   targets constrain the graph edge to the intended service;
 - WebFlux `RouterFunctions.route(GET("/path"), ...)` / `.andRoute(...)`:
-  infer exposed `serve/rest` routes;
+  infer exposed `serve/rest` routes from the nested predicate invocation AST;
 - Configured generated API clients: with `--topic-strategy strategy1`, each
   uppercase constant containing an underscore in a class named `Rest*Config*`
   produces a `configured-api-client-configuration` call fact to its kebab-case
@@ -542,8 +557,8 @@ own expression) — `end_line` always differs, so there is no id collision
 the snippet to isolate the variable name (after `topics = `, `.send(`, or
 `ProducerRecord(`), then `_resolve_value_annotated_variable(repo_root,
 source_path, var_name)`: search in the **same source file** for a declaration
-`@Value("${key}") ... var_name;` (`_VALUE_FIELD_RE`, regex on the text — no Java
-AST, no cross-file tracking, no inheritance resolution) via
+`@Value("${key}") ... var_name;` (Tree-sitter field declarations — no
+cross-file tracking, no inheritance resolution) via
 `_load_value_annotated_fields` (cached per file, `lru_cache`), then resolve the
 found key like a normal placeholder (`resolve_spring_property`). Variable absent
 from the file's `@Value` fields → `<dynamic>`, as before this task.

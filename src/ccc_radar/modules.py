@@ -121,11 +121,14 @@ def _is_excluded_module(name: str, module_dir: Path, root: Path) -> bool:
         path_parts = module_dir.resolve().relative_to(root.resolve()).parts
     except ValueError:
         path_parts = (module_dir.name,)
+    # A substring match made ordinary artifact names such as ``test-service``
+    # (and pytest's temporary workspace names) disappear from discovery.
+    # Keep explicit test directories excluded, while retaining production
+    # modules whose names merely contain that word.
     test_or_mock = any(
-        marker in value.casefold()
-        for value in (name, *path_parts)
-        for marker in ("test", "mock")
-    )
+        value.casefold() in {"test", "tests"} or "mock" in value.casefold()
+        for value in path_parts
+    ) or "mock" in name.casefold()
     # Maven archetypes are templates rather than runtime applications.  This
     # rule intentionally applies to the declared build name only: an ordinary
     # module may legitimately live under a directory containing this word.

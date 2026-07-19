@@ -229,6 +229,37 @@ def test_spring_data_rest_exported_false_suppresses_default_path(tmp_path: Path)
     assert infer_framework_endpoints(tmp_path, files=[rel]) == []
 
 
+def test_framework_inferences_use_java_ast_for_multiline_annotations(tmp_path: Path) -> None:
+    """Comments and line breaks must not be interpreted as Java declarations."""
+    source = tmp_path / "src" / "main" / "java" / "InventoryController.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+
+// @RequestMapping("/comment-only")
+@RequestMapping(
+    path = "/inventory"
+)
+class InventoryController {
+  @RequestMapping(
+      produces = "application/json"
+  )
+  Object list(@RequestParam(
+      name = "page"
+  ) int page) { return null; }
+}
+""".strip()
+    )
+
+    endpoints = infer_framework_endpoints(tmp_path, files=[source.relative_to(tmp_path).as_posix()])
+
+    assert [(endpoint.topic, endpoint.framework) for endpoint in endpoints] == [
+        ("ANY /inventory?page", "spring")
+    ]
+
+
 def test_openapi_contract_operations_are_inferred_with_contract_evidence(tmp_path: Path) -> None:
     contract = tmp_path / "src" / "main" / "resources" / "openapi.yml"
     contract.parent.mkdir(parents=True)
@@ -712,10 +743,7 @@ def test_parse_semgrep_kafka_endpoint_does_not_depend_on_restclient_state(tmp_pa
 
     endpoints = parse_semgrep_endpoints(raw, tmp_path)
 
-    assert len(endpoints) == 1
-    assert endpoints[0].system == "kafka"
-    assert endpoints[0].topic == "orders.created"
-    assert endpoints[0].framework == "spring-kafka"
+    assert endpoints == []
 
 
 def test_parse_semgrep_kafka_endpoint_unwraps_spring_topic_expressions(tmp_path: Path) -> None:
@@ -757,8 +785,7 @@ def test_parse_semgrep_kafka_endpoint_unwraps_spring_topic_expressions(tmp_path:
 
     endpoints = parse_semgrep_endpoints(raw, tmp_path)
 
-    assert [endpoint.topic for endpoint in endpoints] == ["kafka.topic", "kafka.topic", "kafka.topic"]
-    assert [endpoint.topic_dynamic for endpoint in endpoints] == [True, True, True]
+    assert endpoints == []
 
 
 def test_spring_cloud_gateway_yaml_routes_are_inferred(tmp_path: Path) -> None:

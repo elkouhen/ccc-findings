@@ -484,17 +484,14 @@ _CLASS_DECL_RE = re.compile(
 )
 _MAPPING_ANNOTATION_RE = re.compile(r"@\w+Mapping\s*(?:\(([^)]*)\))?")
 _MAPPING_ANNOTATION_BLOCK_RE = re.compile(r"@\w+Mapping\s*(?:\((.*?)\))?", re.DOTALL)
-_REQUEST_MAPPING_RE = re.compile(r"@RequestMapping\s*(?:\(([^)]*)\))?")
 _REQUEST_MAPPING_BLOCK_RE = re.compile(r"@RequestMapping\s*(?:\((.*?)\))?", re.DOTALL)
 _REQUEST_PARAM_RE = re.compile(
     r"@RequestParam\s*(?:\((.*?)\))?\s+[\w<>\[\], ?]+\s+(\w+)", re.DOTALL
 )
 _NON_PATH_MAPPING_ATTRS = {"method", "produces", "consumes", "headers", "params", "name"}
-_REPOSITORY_REST_RESOURCE_RE = re.compile(r"@RepositoryRestResource\s*(?:\(([^)]*)\))?")
 _FEIGN_CLIENT_RE = re.compile(r"@FeignClient\s*\((.*?)\)", re.DOTALL)
 _NAMED_STRING_ARG_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
 _REST_CLIENT_RECEIVER_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.")
-_ENABLE_SWAGGER2_RE = re.compile(r"@EnableSwagger2\b")
 _OPENAPI_HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _METHOD_DECL_RE = re.compile(
     r"^\s*(?:public|private|protected)?(?:\s+static)?(?:\s+final)?[\w<>\[\], ?]+\s+\w+\s*\([^;]*\)\s*\{?"
@@ -700,53 +697,42 @@ def _class_base_path(repo_root_str: str, source_path: str, start_line: int) -> t
     méthode trouvée à `start_line` — renvoie (préfixe, dynamique) ;
     (`""`, `False`) si aucune classe englobante ou aucun `@RequestMapping`
     de classe (rien à préfixer, pas une valeur inconnue)."""
-    path = Path(repo_root_str) / source_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    parsed = java_parser.parse_java(repo_root_str, source_path)
+    if parsed is None:
         return "", False
-
-    class_line_idx: int | None = None
-    for idx in range(min(start_line - 1, len(lines) - 1), -1, -1):
-        if _CLASS_DECL_RE.match(lines[idx]):
-            class_line_idx = idx
-            break
-    if class_line_idx is None:
-        return "", False
-
-    annotation_block = _annotation_block_before_declaration(lines, class_line_idx)
-    if not annotation_block:
-        return "", False
-
-    request_mapping = _REQUEST_MAPPING_BLOCK_RE.search(annotation_block)
-    if request_mapping is not None:
-        args = request_mapping.group(1) or ""
-        literal, _ = _find_first_literal(args)
-        if literal is not None:
-            return literal, False
-        return "", True  # @RequestMapping de classe présent mais valeur non littérale
-
-    feign_client = _FEIGN_CLIENT_RE.search(annotation_block)
-    if feign_client is not None:
-        args = feign_client.group(1) or ""
-        prefix = ""
-        dynamic = False
-        for key in ("url", "path"):
-            value = _named_string_arg(args, key)
-            if value is None:
-                continue
-            resolved, part_dynamic = _resolve_rest_path_expression(
-                f'"{value}"', Path(repo_root_str), source_path
+    source, root = parsed
+    method = next(
+        (
+            node for node in java_parser.walk(root)
+            if node.type == "method_declaration"
+            and any(
+                ann.start_point.row + 1 <= start_line <= node.end_point.row + 1
+                for ann in java_parser.annotations_of(node)
             )
-            dynamic = dynamic or part_dynamic
-            if resolved == "<dynamic>":
-                continue
-            prefix = _join_rest_paths(prefix, resolved) if prefix else resolved
-        if prefix:
-            return prefix, dynamic
-        if dynamic:
-            return "", True
-
+        ),
+        None,
+    )
+    if method is None:
+        return "", False
+    owner = java_parser.enclosing(
+        method, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration"
+    )
+    if owner is None:
+        return "", False
+    mapping = next(
+        (ann for ann in java_parser.annotations_of(owner)
+         if java_parser.annotation_name(ann, source) == "RequestMapping"),
+        None,
+    )
+    if mapping is not None:
+        return _ast_mapping_value(mapping, source, Path(repo_root_str), source_path)
+    feign = next(
+        (ann for ann in java_parser.annotations_of(owner)
+         if java_parser.annotation_name(ann, source) == "FeignClient"),
+        None,
+    )
+    if feign is not None:
+        return _ast_feign_base(feign, source, Path(repo_root_str), source_path)
     return "", False
 
 
@@ -1019,52 +1005,175 @@ def resolve_spring_property(
 
 
 def _infer_generic_request_mapping_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
-    path = repo_root / rel_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
+    """Infère les annotations de routes Spring et Feign depuis l'AST Java.
 
+    Les anciens parcours ligne par ligne échouaient dès qu'une annotation ou
+    une signature était répartie sur plusieurs lignes, ou qu'un commentaire
+    imitait une annotation. Ici Tree-sitter associe directement l'annotation
+    à sa ``method_declaration``.
+    """
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
+        return []
+    source, root = parsed
     endpoints: list[MessageEndpoint] = []
-    for idx, line in enumerate(lines):
-        match = _REQUEST_MAPPING_RE.search(line)
-        if match is None:
+    for method in java_parser.walk(root):
+        if method.type != "method_declaration":
             continue
-        args = match.group(1) or ""
-        if _mapping_args_have_http_method(args):
-            continue
-        decl_idx = _next_declaration_line(lines, idx + 1)
-        if decl_idx is None or _CLASS_DECL_RE.match(lines[decl_idx]):
-            continue
-        if not _METHOD_DECL_RE.match(lines[decl_idx]):
-            continue
-        snippet = "\n".join(lines[idx : decl_idx + 1])
-        route, dynamic = _extract_rest_path(snippet, repo_root, rel_path, decl_idx + 1)
-        endpoints.append(
-            _build_endpoint(
-                repo_root,
-                rel_path,
-                decl_idx + 1,
-                decl_idx + 1,
-                "serve",
-                "rest",
-                f"ANY {route}",
-                "spring",
-                snippet,
-                topic_dynamic=dynamic,
-            )
+        owner = java_parser.enclosing(
+            method, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration"
         )
+        if owner is None:
+            continue
+        feign = next(
+            (ann for ann in java_parser.annotations_of(owner)
+             if java_parser.annotation_name(ann, source) == "FeignClient"),
+            None,
+        )
+        for annotation in java_parser.annotations_of(method):
+            methods = _ast_mapping_methods(annotation, source)
+            if not methods:
+                continue
+            route, dynamic = _ast_mapping_route(
+                annotation, method, source, repo_root, rel_path, feign
+            )
+            for http_method in methods:
+                endpoints.append(
+                    _build_endpoint(
+                        repo_root, rel_path, annotation.start_point.row + 1,
+                        method.end_point.row + 1,
+                        "call" if feign is not None else "serve", "rest",
+                        f"{http_method} {route}", "feign" if feign is not None else "spring",
+                        java_parser.node_text(source, method), topic_dynamic=dynamic,
+                    )
+                )
     return endpoints
 
 
-_INTERFACE_DECL_RE = re.compile(
-    r"^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?interface\s+(\w+)\b"
-)
-# Capture l'entité (premier argument type) d'un `extends ...Repository<Entity, ...>`.
-_REPO_EXTENDS_ENTITY_RE = re.compile(
-    r"\bextends\b[^{;]*?\b\w*Repository\s*<\s*([\w.<>]+?)\s*,"
-)
-_EXPORTED_FALSE_RE = re.compile(r"exported\s*=\s*false", re.IGNORECASE)
+def _annotation_has_key(annotation, source: bytes, key: str) -> bool:
+    return java_parser.annotation_argument(annotation, source, key=key) is not None
+
+
+def _ast_mapping_value(
+    annotation, source: bytes, repo_root: Path | None = None, rel_path: str | None = None
+) -> tuple[str, bool]:
+    """Return a mapping annotation's explicit path, if it has one.
+
+    An annotation with only non-path attributes has the meaningful empty path
+    (it inherits its class route); an expression that cannot be resolved is
+    dynamic.
+    """
+    value = (
+        java_parser.annotation_argument(annotation, source, key="path")
+        or java_parser.annotation_argument(annotation, source, key="value")
+        or java_parser.annotation_argument(annotation, source)
+    )
+    if value is None:
+        return "", False
+    if value.type != "string_literal":
+        return "", True
+    if repo_root is not None and rel_path is not None:
+        return _resolve_rest_path_expression(
+            java_parser.node_text(source, value), repo_root, rel_path, preserve_dynamic_segments=True
+        )
+    literal = java_parser.string_value(value, source)
+    return literal or "", False
+
+
+def _ast_mapping_methods(annotation, source: bytes) -> list[str]:
+    """HTTP methods represented by a Spring mapping annotation."""
+    name = java_parser.annotation_name(annotation, source)
+    dedicated = {
+        "GetMapping": "GET", "PostMapping": "POST", "PutMapping": "PUT",
+        "DeleteMapping": "DELETE", "PatchMapping": "PATCH",
+    }
+    if name in dedicated:
+        return [dedicated[name]]
+    if name != "RequestMapping":
+        return []
+    value = java_parser.annotation_argument(annotation, source, key="method")
+    if value is None:
+        return ["ANY"]
+    methods: list[str] = []
+    for node in java_parser.walk(value):
+        if node.type in {"identifier", "scoped_identifier", "field_access"}:
+            candidate = java_parser.node_text(source, node).rsplit(".", 1)[-1]
+            if candidate in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}:
+                methods.append(candidate)
+    return list(dict.fromkeys(methods))
+
+
+def _ast_mapping_route(
+    annotation, method, source: bytes, repo_root: Path, rel_path: str, feign=None
+) -> tuple[str, bool]:
+    path, dynamic = _ast_mapping_value(annotation, source, repo_root, rel_path)
+    owner = java_parser.enclosing(
+        method, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration"
+    )
+    prefix, prefix_dynamic = "", False
+    if owner is not None:
+        class_mapping = next(
+            (
+                ann for ann in java_parser.annotations_of(owner)
+                if java_parser.annotation_name(ann, source) == "RequestMapping"
+            ),
+            None,
+        )
+        if class_mapping is not None:
+            prefix, prefix_dynamic = _ast_mapping_value(class_mapping, source, repo_root, rel_path)
+        elif feign is not None:
+            prefix, prefix_dynamic = _ast_feign_base(feign, source, repo_root, rel_path)
+    if dynamic or prefix_dynamic:
+        return "<dynamic>", True
+    route = _join_rest_paths(_normalize_rest_path(prefix), _normalize_rest_path(path))
+    params = _ast_request_param_names(method, source)
+    return _with_query_params(route, params), False
+
+
+def _ast_feign_base(annotation, source: bytes, repo_root: Path, rel_path: str) -> tuple[str, bool]:
+    """Resolve Feign's optional URL/path base without treating ``name`` as a route."""
+    value = (
+        java_parser.annotation_argument(annotation, source, key="url")
+        or java_parser.annotation_argument(annotation, source, key="path")
+    )
+    if value is None:
+        return "", False
+    if value.type != "string_literal":
+        return "", True
+    return _resolve_rest_path_expression(
+        java_parser.node_text(source, value), repo_root, rel_path, preserve_dynamic_segments=True
+    )
+
+
+def _ast_request_param_names(method, source: bytes) -> list[str]:
+    names: list[str] = []
+    params = method.child_by_field_name("parameters")
+    if params is None:
+        return names
+    for parameter in params.children:
+        if parameter.type != "formal_parameter":
+            continue
+        annotation = next(
+            (
+                ann for ann in java_parser.annotations_of(parameter)
+                if java_parser.annotation_name(ann, source) == "RequestParam"
+            ),
+            None,
+        )
+        if annotation is None:
+            continue
+        value = (
+            java_parser.annotation_argument(annotation, source, key="name")
+            or java_parser.annotation_argument(annotation, source, key="value")
+            or java_parser.annotation_argument(annotation, source)
+        )
+        name = java_parser.string_value(value, source)
+        if name is None:
+            name_node = parameter.child_by_field_name("name")
+            name = java_parser.node_text(source, name_node) if name_node is not None else None
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _simple_type_name(qualified: str) -> str:
@@ -1121,45 +1230,41 @@ def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[Me
       C'est le cas d'un `UserRepository extends JpaRepository<User, ...>` sans
       annotation, qu'aucun littéral de chemin ne permettait jusque-là de lier.
     """
-    path = repo_root / rel_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
         return []
-
+    source, root = parsed
     endpoints: list[MessageEndpoint] = []
-    for idx, line in enumerate(lines):
-        if _INTERFACE_DECL_RE.search(line) is None:
+    for declaration in java_parser.type_declarations(root):
+        if declaration.type != "interface_declaration":
             continue
-        entity_match = _REPO_EXTENDS_ENTITY_RE.search("\n".join(lines[idx : idx + 4]))
-        if entity_match is None:
+        entity = _repository_entity_type(declaration, source)
+        if entity is None:
             continue
-        entity = _simple_type_name(entity_match.group(1))
-
-        # `@RepositoryRestResource` la plus proche au-dessus de l'interface.
-        anno_args = ""
-        anno_line = idx
-        for back in range(idx - 1, max(-1, idx - 6), -1):
-            anno = _REPOSITORY_REST_RESOURCE_RE.search(lines[back])
-            if anno:
-                anno_args = anno.group(1) or ""
-                anno_line = back
-                break
-
-        if _EXPORTED_FALSE_RE.search(anno_args):
+        annotation = next(
+            (
+                ann for ann in java_parser.annotations_of(declaration)
+                if java_parser.annotation_name(ann, source) == "RepositoryRestResource"
+            ),
+            None,
+        )
+        exported = java_parser.annotation_argument(annotation, source, key="exported") if annotation else None
+        if exported is not None and java_parser.node_text(source, exported) == "false":
             continue
-
-        rest_path = _named_string_arg(anno_args, "path")
-        if rest_path:
+        rest_path = java_parser.string_value(
+            java_parser.annotation_argument(annotation, source, key="path") if annotation else None,
+            source,
+        )
+        if rest_path is not None:
             base_path = _normalize_rest_path(rest_path)
-            snippet = lines[anno_line].strip()
-            decl_line = anno_line + 1
+            snippet = java_parser.node_text(source, annotation)
+            decl_line = annotation.start_point.row + 1
         else:
             if not _module_has_spring_data_rest(str(repo_root), rel_path):
                 continue
             base_path = "/" + _pluralize(entity.lower())
-            snippet = lines[idx].strip()
-            decl_line = idx + 1
+            snippet = java_parser.node_text(source, declaration)
+            decl_line = declaration.start_point.row + 1
 
         for topic in (
             f"GET {base_path}",
@@ -1185,25 +1290,52 @@ def _infer_spring_data_rest_endpoints(repo_root: Path, rel_path: str) -> list[Me
     return endpoints
 
 
+def _repository_entity_type(declaration, source: bytes) -> str | None:
+    """Entity argument of a Spring Data repository interface, via AST types."""
+    for node in java_parser.walk(declaration):
+        if node.type != "generic_type":
+            continue
+        type_node = next(
+            (child for child in node.children if child.type in {"type_identifier", "scoped_type_identifier"}),
+            None,
+        )
+        type_name = java_parser.node_text(source, type_node) if type_node is not None else ""
+        if not type_name.endswith("Repository"):
+            continue
+        arguments = next((child for child in node.children if child.type == "type_arguments"), None)
+        if arguments is None:
+            continue
+        for child in arguments.children:
+            if child.type not in {"<", ",", ">"}:
+                return _simple_type_name(java_parser.node_text(source, child))
+    return None
+
+
 def _infer_swagger_endpoint(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
-    path = repo_root / rel_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
         return []
-    for idx, line in enumerate(lines):
-        if _ENABLE_SWAGGER2_RE.search(line):
+    source, root = parsed
+    for declaration in java_parser.type_declarations(root):
+        annotation = next(
+            (
+                ann for ann in java_parser.annotations_of(declaration)
+                if java_parser.annotation_name(ann, source) == "EnableSwagger2"
+            ),
+            None,
+        )
+        if annotation is not None:
             return [
                 _build_endpoint(
                     repo_root,
                     rel_path,
-                    idx + 1,
-                    idx + 1,
+                    annotation.start_point.row + 1,
+                    annotation.end_point.row + 1,
                     "serve",
                     "rest",
                     "GET /swagger-ui.html",
                     "swagger-ui",
-                    line.strip(),
+                    java_parser.node_text(source, annotation),
                 )
             ]
     return []
@@ -1479,51 +1611,97 @@ def _extract_resttemplate_path(
 def _infer_resttemplate_exchange_endpoints(
     repo_root: Path, rel_path: str
 ) -> list[MessageEndpoint]:
+    """Infer RestTemplate calls from ``method_invocation`` AST nodes.
+
+    This covers the regular convenience methods as well as ``exchange``. The
+    former used to depend entirely on a Semgrep match; taking their first
+    argument from the invocation node means nested calls and line wrapping no
+    longer affect which expression is considered the URL.
+    """
     if not _file_uses_resttemplate(str(repo_root), rel_path):
         return []
-    path = repo_root / rel_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
         return []
-
+    source, root = parsed
+    direct_methods = {
+        "getForObject": "GET", "getForEntity": "GET",
+        "postForObject": "POST", "postForEntity": "POST",
+        "put": "PUT", "delete": "DELETE",
+    }
     inferred: list[MessageEndpoint] = []
-    idx = 0
-    while idx < len(lines):
-        line = lines[idx]
-        if ".exchange(" not in line:
-            idx += 1
+    for invocation in java_parser.walk(root):
+        if invocation.type != "method_invocation":
             continue
-        block_lines = [line]
-        block_end = idx
-        while block_end + 1 < len(lines):
-            if ");" in lines[block_end]:
-                break
-            block_end += 1
-            block_lines.append(lines[block_end])
-            if ");" in lines[block_end]:
-                break
-        snippet = "\n".join(block_lines)
-        match = _REST_TEMPLATE_EXCHANGE_RE.search(snippet)
-        if match is not None:
-            http_method = match.group(2).split(".")[-1]
-            route, dynamic = _resolve_rest_path_expression(match.group(1), repo_root, rel_path)
-            inferred.append(
-                _build_endpoint(
-                    repo_root,
-                    rel_path,
-                    idx + 1,
-                    block_end + 1,
-                    "call",
-                    "rest",
-                    f"{http_method} {route}",
-                    "resttemplate",
-                    snippet,
-                    topic_dynamic=dynamic,
-                )
+        receiver, method_name, args = java_parser.invocation_parts(invocation, source)
+        if method_name not in {*direct_methods, "exchange"} or receiver is None or not args:
+            continue
+        receiver_name = _invocation_receiver(source, receiver)
+        if receiver_name is None or "resttemplate" not in receiver_name.lower():
+            continue
+        if method_name == "exchange":
+            if len(args) < 2:
+                continue
+            http_method = java_parser.node_text(source, args[1]).rsplit(".", 1)[-1]
+            if http_method not in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}:
+                continue
+        else:
+            http_method = direct_methods[method_name]
+        route, dynamic = _resolve_rest_path_expression(
+            java_parser.node_text(source, args[0]), repo_root, rel_path
+        )
+        inferred.append(
+            _build_endpoint(
+                repo_root, rel_path, invocation.start_point.row + 1,
+                invocation.end_point.row + 1, "call", "rest", f"{http_method} {route}",
+                "resttemplate", java_parser.node_text(source, invocation), topic_dynamic=dynamic,
             )
-        idx = block_end + 1
+        )
     return inferred
+
+
+def _infer_webclient_endpoints(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
+    """Infer fluent WebClient calls by linking ``.uri`` to its AST receiver."""
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
+        return []
+    source, root = parsed
+    if b"WebClient" not in source:
+        return []
+    endpoints: list[MessageEndpoint] = []
+    for invocation in java_parser.walk(root):
+        if invocation.type != "method_invocation":
+            continue
+        receiver, name, args = java_parser.invocation_parts(invocation, source)
+        if name != "uri" or receiver is None or not args:
+            continue
+        verb_call = _webclient_verb_invocation(receiver, source)
+        if verb_call is None:
+            continue
+        http_method, anchor = verb_call
+        route, dynamic = _resolve_rest_path_expression(
+            java_parser.node_text(source, args[0]), repo_root, rel_path,
+            preserve_dynamic_segments=True,
+        )
+        endpoints.append(
+            _build_endpoint(
+                repo_root, rel_path, anchor.start_point.row + 1, invocation.end_point.row + 1,
+                "call", "rest", f"{http_method} {route}", "webclient",
+                java_parser.node_text(source, invocation), topic_dynamic=dynamic,
+            )
+        )
+    return endpoints
+
+
+def _webclient_verb_invocation(node, source: bytes):
+    """Nearest request verb in a fluent receiver chain, with its AST node."""
+    if node.type != "method_invocation":
+        return None
+    receiver, name, _args = java_parser.invocation_parts(node, source)
+    verbs = {"get", "post", "put", "delete", "patch", "head", "options"}
+    if name in verbs:
+        return name.upper(), node
+    return _webclient_verb_invocation(receiver, source) if receiver is not None else None
 
 
 def _infer_configured_api_client_endpoints(
@@ -1590,51 +1768,45 @@ def _infer_configured_api_client_endpoints(
 
 
 def _infer_spring_cloud_gateway_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
-    path = repo_root / rel_path
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
         return []
-
+    source, root = parsed
     inferred: list[MessageEndpoint] = []
-    idx = 0
-    while idx < len(lines):
-        line = lines[idx]
-        if ".route(" not in line:
-            idx += 1
+    for invocation in java_parser.walk(root):
+        if invocation.type != "method_invocation":
             continue
-        block_lines = [line]
-        block_end = idx
-        while block_end + 1 < len(lines):
-            next_line = lines[block_end + 1]
-            if ".route(" in next_line:
-                break
-            block_end += 1
-            block_lines.append(next_line)
-            if ".build()" in next_line:
-                break
-        snippet = "\n".join(block_lines)
-        path_match = _GATEWAY_ROUTE_PATH_RE.search(snippet)
-        method_match = _GATEWAY_ROUTE_METHOD_RE.search(snippet)
-        uri_match = _GATEWAY_ROUTE_URI_RE.search(snippet)
-        if path_match is not None and method_match is not None and uri_match is not None:
-            route = _normalize_rest_path(path_match.group(1))
-            http_method = method_match.group(1) or method_match.group(2)
-            for role in ("serve", "call"):
-                inferred.append(
-                    _build_endpoint(
-                        repo_root,
-                        rel_path,
-                        idx + 1,
-                        block_end + 1,
-                        role,
-                        "rest",
-                        f"{http_method} {route}",
-                        "spring-cloud-gateway",
-                        snippet,
-                    )
+        _receiver, name, args = java_parser.invocation_parts(invocation, source)
+        if name != "route" or not args or args[0].type != "lambda_expression":
+            continue
+        path_value: str | None = None
+        http_method: str | None = None
+        has_uri = False
+        for call in java_parser.walk(args[0]):
+            if call.type != "method_invocation":
+                continue
+            _call_receiver, call_name, call_args = java_parser.invocation_parts(call, source)
+            if call_name == "path" and call_args and call_args[0].type == "string_literal":
+                path_value = java_parser.string_value(call_args[0], source)
+            elif call_name == "method" and call_args:
+                candidate = java_parser.string_value(call_args[0], source)
+                if candidate is None:
+                    candidate = java_parser.node_text(source, call_args[0]).rsplit(".", 1)[-1]
+                if candidate in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}:
+                    http_method = candidate
+            elif call_name == "uri":
+                has_uri = True
+        if path_value is None or http_method is None or not has_uri:
+            continue
+        route = _normalize_rest_path(path_value)
+        for role in ("serve", "call"):
+            inferred.append(
+                _build_endpoint(
+                    repo_root, rel_path, invocation.start_point.row + 1,
+                    invocation.end_point.row + 1, role, "rest", f"{http_method} {route}",
+                    "spring-cloud-gateway", java_parser.node_text(source, invocation),
                 )
-        idx = block_end + 1
+            )
     return inferred
 
 
@@ -1754,32 +1926,33 @@ def _infer_spring_cloud_gateway_yaml_routes(repo_root: Path, rel_path: str) -> l
 
 
 def _infer_spring_webflux_routes(repo_root: Path, rel_path: str) -> list[MessageEndpoint]:
-    path = repo_root / rel_path
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    parsed = java_parser.parse_java(str(repo_root), rel_path)
+    if parsed is None:
         return []
-
+    source, root = parsed
     inferred: list[MessageEndpoint] = []
-    for pattern in (_ROUTER_FUNCTION_ROUTE_RE, _ROUTER_FUNCTION_AND_ROUTE_RE):
-        for match in pattern.finditer(text):
-            http_method = match.group(1)
-            route = _normalize_rest_path(match.group(2))
-            line_no = text.count("\n", 0, match.start()) + 1
-            snippet = text.splitlines()[line_no - 1].strip()
-            inferred.append(
-                _build_endpoint(
-                    repo_root,
-                    rel_path,
-                    line_no,
-                    line_no,
-                    "serve",
-                    "rest",
-                    f"{http_method} {route}",
-                    "spring-webflux",
-                    snippet,
-                )
+    for invocation in java_parser.walk(root):
+        if invocation.type != "method_invocation":
+            continue
+        _receiver, name, args = java_parser.invocation_parts(invocation, source)
+        if name not in {"route", "andRoute"} or not args or args[0].type != "method_invocation":
+            continue
+        _predicate_receiver, predicate, predicate_args = java_parser.invocation_parts(args[0], source)
+        if predicate not in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}:
+            continue
+        if not predicate_args or predicate_args[0].type != "string_literal":
+            continue
+        path = java_parser.string_value(predicate_args[0], source)
+        if path is None:
+            continue
+        inferred.append(
+            _build_endpoint(
+                repo_root, rel_path, invocation.start_point.row + 1,
+                invocation.end_point.row + 1, "serve", "rest",
+                f"{predicate} {_normalize_rest_path(path)}", "spring-webflux",
+                java_parser.node_text(source, invocation),
             )
+        )
     return inferred
 
 
@@ -2206,6 +2379,7 @@ def infer_framework_endpoints(
                 + _infer_spring_data_rest_endpoints(repo_root, rel_path)
                 + _infer_swagger_endpoint(repo_root, rel_path)
                 + _infer_resttemplate_exchange_endpoints(repo_root, rel_path)
+                + _infer_webclient_endpoints(repo_root, rel_path)
                 + _infer_spring_cloud_gateway_routes(repo_root, rel_path)
                 + _infer_spring_webflux_routes(repo_root, rel_path)
                 + (
@@ -3253,11 +3427,20 @@ def run_semgrep_endpoints(
     findings, la sévérité INFO qu'elles portent n'a pas de sens à seuiller."""
     raw = invoke_semgrep_raw(repo_root, config, files)
     endpoints = parse_semgrep_endpoints(raw, repo_root)
-    endpoints.extend(
-        infer_framework_endpoints(
-            repo_root, files, configured_api_client_strategy1=configured_api_client_strategy1
-        )
+    framework_endpoints = infer_framework_endpoints(
+        repo_root, files, configured_api_client_strategy1=configured_api_client_strategy1
     )
+    # Spring/Feign declaration routes and RestTemplate calls are now emitted
+    # from Tree-sitter below. Keep Semgrep for call patterns it still owns
+    # but do not retain duplicate facts.
+    endpoints = [
+        endpoint for endpoint in endpoints
+        if not (
+            endpoint.path.endswith(".java")
+            and endpoint.framework in {"spring", "feign", "resttemplate", "webclient"}
+        )
+    ]
+    endpoints.extend(framework_endpoints)
     endpoints.extend(infer_kafka_endpoints(repo_root, files))
     endpoints.extend(infer_markdown_topic_manifest_endpoints(repo_root, files))
     return endpoints

@@ -129,6 +129,7 @@ def test_index_repo_without_semgrep_still_indexes_local_kafka_endpoints(
     assert report.findings_added == 0
     assert {(endpoint.role, endpoint.system, endpoint.topic) for endpoint in endpoints} == {
         ("consume", "kafka", "orders.created"),
+        ("call", "rest", "POST /charge"),
     }
 
 
@@ -655,10 +656,9 @@ def test_index_repo_populates_endpoints_and_findings_from_the_same_scan(
         endpoints = store.all_endpoints()
         findings = store.all_findings()
 
-    # 1 finding (System.out.println) + 2 endpoints (consume Kafka, call REST)
-    # issus du même scan Semgrep — aucune fuite d'un type vers l'autre.
+    # 1 finding, 1 endpoint Kafka Semgrep et 2 routes REST (Semgrep + AST).
     assert report.findings_added == 1
-    assert report.endpoints_added == 2
+    assert report.endpoints_added == 3
     assert len(findings) == 1
     assert findings[0].rule_id == "rules.custom.system-out-println"
     assert {e.role for e in endpoints} == {"consume", "call"}
