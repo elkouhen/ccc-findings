@@ -8,6 +8,7 @@ from ccc_radar.audit import assess_architecture, render_audit_json
 from ccc_radar.graph import (
     build_graph,
     configured_api_client_domain,
+    external_microservice_name,
     find_outbound_calls_in_consumers,
     graph_edge_rest_resource,
     qualified_rest_resource,
@@ -27,6 +28,7 @@ class DependencyNode(TypedDict):
     kind: str
     name: str
     service: str | None
+    external: bool
 
 
 class DependencyEdge(TypedDict):
@@ -103,9 +105,16 @@ def build_dependency_graph(
     edges: dict[tuple[str, str, str, str], DependencyEdge] = {}
     result_warnings = list(warnings or [])
 
-    def add_node(kind: str, name: str, service: str | None = None) -> str:
+    def add_node(
+        kind: str, name: str, service: str | None = None, *, external: bool = False
+    ) -> str:
         identifier = _node_id(kind, name, service)
-        nodes.setdefault(identifier, {"id": identifier, "kind": kind, "name": name, "service": service})
+        node = nodes.setdefault(
+            identifier,
+            {"id": identifier, "kind": kind, "name": name, "service": service, "external": external},
+        )
+        if external:
+            node["external"] = True
         return identifier
 
     def add_edge(source: str, target: str, kind: str, label: str, confidence: str = "high") -> None:
@@ -166,6 +175,11 @@ def build_dependency_graph(
             configured_domain = configured_api_client_domain(endpoint)
             if configured_domain is not None:
                 configured_clients.setdefault(service, set()).add(configured_domain)
+                continue
+            external_microservice = external_microservice_name(endpoint)
+            if external_microservice is not None:
+                target_id = add_node("microservice", external_microservice, external=True)
+                add_edge(service_id, target_id, "http", qualified_rest_resource(external_microservice, "API"))
                 continue
             if endpoint.id in matched_calls:
                 continue

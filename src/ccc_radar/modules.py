@@ -108,7 +108,7 @@ _OPENAPI_FILENAMES = (
 _MAX_NESTED_MODULE_DEPTH = 5
 
 
-def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
+def _is_excluded_module(name: str, module_dir: Path, root: Path) -> bool:
     """Whether a non-production build module must not be indexed.
 
     Test and mock projects do not describe the production architecture.  Their
@@ -121,20 +121,24 @@ def _is_test_module(name: str, module_dir: Path, root: Path) -> bool:
         path_parts = module_dir.resolve().relative_to(root.resolve()).parts
     except ValueError:
         path_parts = (module_dir.name,)
-    return any(
+    test_or_mock = any(
         marker in value.casefold()
         for value in (name, *path_parts)
         for marker in ("test", "mock")
     )
+    # Maven archetypes are templates rather than runtime applications.  This
+    # rule intentionally applies to the declared build name only: an ordinary
+    # module may legitimately live under a directory containing this word.
+    return test_or_mock or "archteype" in name.casefold()
 
 
-def discover_test_module_paths(root: Path) -> tuple[Path, ...]:
-    """Return build-module roots excluded because they are test artifacts.
+def discover_excluded_module_paths(root: Path) -> tuple[Path, ...]:
+    """Return build-module roots excluded from the production index.
 
-    Module inventory already omits these modules.  The indexer also needs the
-    paths before scanning files: a test artifact can legitimately contain
-    ``src/main`` sources and would otherwise still produce endpoints and
-    findings despite being absent from the module inventory.
+    Module inventory already omits test, mock, and ``archteype`` modules. The
+    indexer also needs their paths before scanning files: an excluded artifact
+    can legitimately contain ``src/main`` sources and would otherwise still
+    produce endpoints and findings despite being absent from the inventory.
     """
     root = root.resolve()
     paths: set[Path] = set()
@@ -145,11 +149,11 @@ def discover_test_module_paths(root: Path) -> tuple[Path, ...]:
         if not _is_module_within_depth(root, module_dir):
             continue
         artifact_id, _, _ = parse_pom(pom_path)
-        if _is_test_module(artifact_id or module_dir.name, module_dir, root):
+        if _is_excluded_module(artifact_id or module_dir.name, module_dir, root):
             paths.add(module_dir)
     for name, module_dir, _version in discover_gradle_modules(root):
         module_dir = module_dir.resolve()
-        if _is_test_module(name, module_dir, root):
+        if _is_excluded_module(name, module_dir, root):
             paths.add(module_dir)
     return tuple(sorted(paths))
 
@@ -689,8 +693,8 @@ def discover_modules(
         artifact_id, _, packaging = parse_pom(pom_path)
         _trace("module.maven.parsed", pom=pom_path, artifact=artifact_id, packaging=packaging)
         module_name = artifact_id or module_dir.name
-        if _is_test_module(module_name, module_dir, root):
-            _trace("module.maven.skipped_test", pom=pom_path, artifact=module_name)
+        if _is_excluded_module(module_name, module_dir, root):
+            _trace("module.maven.skipped", pom=pom_path, artifact=module_name)
             continue
         if use_tree_sitter:
             entrypoint = _starts_application(module_dir)
@@ -720,8 +724,8 @@ def discover_modules(
         module_dir = module_dir.resolve()
         if module_dir in seen_paths:
             continue
-        if _is_test_module(name, module_dir, root):
-            _trace("module.gradle.skipped_test", module=module_dir, name=name)
+        if _is_excluded_module(name, module_dir, root):
+            _trace("module.gradle.skipped", module=module_dir, name=name)
             continue
         has_build_file = any(
             (module_dir / filename).is_file() for filename in ("build.gradle", "build.gradle.kts")

@@ -189,6 +189,34 @@ def test_render_graph_json_returns_note_when_cross_module_data_is_missing() -> N
     assert "topologie inter-services" in rendered["note"]
 
 
+def test_render_graph_json_includes_strategy1_external_microservice() -> None:
+    endpoints_by_service = {
+        "caller-service": [
+            make_endpoint(
+                "call",
+                "ANY <dynamic>",
+                "caller/RestPartnerConfig.java",
+                snippet="cccr-external-microservice:partner-catalog",
+                topic_dynamic=True,
+            )
+        ]
+    }
+
+    rendered = render_graph_json(
+        list(endpoints_by_service),
+        build_graph(endpoints_by_service),
+        [],
+        cross_module_data_available=True,
+    )
+
+    assert rendered["services"] == ["caller-service", "partner-catalog"]
+    assert next(node for node in rendered["nodes"] if node["name"] == "partner-catalog") == {
+        "name": "partner-catalog",
+        "kind": "microservice",
+        "external": True,
+    }
+
+
 def test_render_graph_html_exposes_all_indexing_issues() -> None:
     endpoints_by_service = {
         "orders": [
@@ -274,7 +302,24 @@ def test_graph_renderers_include_mongodb_collections_when_requested() -> None:
 def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> None:
     endpoints_by_service = _fixture()
     endpoints_by_service["service-a"].append(
+        make_endpoint("call", "POST /orders", "a/SecondClient.java", 7, 7)
+    )
+    endpoints_by_service["service-b"].append(
+        make_endpoint("serve", "POST /orders", "b/Controller.java", 20, 20)
+    )
+    endpoints_by_service["service-a"].append(
         make_endpoint("call", "POST /external-orders", "a/ExternalClient.java", 8, 8)
+    )
+    endpoints_by_service["service-a"].append(
+        make_endpoint(
+            "call",
+            "ANY <dynamic>",
+            "a/RestPartnerConfig.java",
+            12,
+            12,
+            snippet="cccr-external-microservice:partner-catalog",
+            topic_dynamic=True,
+        )
     )
     edges = build_graph(endpoints_by_service)
     findings = [
@@ -328,7 +373,11 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "style { color complexity_low }" in document
     assert "2 findings (ERROR=2)" in document
     assert "OpenAPI contracts: src/main/resources/openapi.yaml" in document
-    assert "service_service-a -[http]-> service_service-b 'service-b: GET /orders'" in document
+    assert "service_service-a -[http]-> service_service-b 'HTTP'" in document
+    assert document.count("service_service-a -[http]-> service_service-b") == 1
+    assert "service_partner-catalog = microservice 'partner-catalog'" in document
+    assert "External microservice" in document
+    assert "service_service-a -[http]-> service_partner-catalog 'HTTP'" in document
     assert "service_service-a -[publishes]-> topic_orders_created 'publishes OrderCreated'" in document
     assert "topic_orders_created -[consumes]-> service_service-b 'consumes OrderCreated'" in document
     assert "service_service-a -[calls_external]-> external_api_POST_external-orders 'POST /external-orders'" in document

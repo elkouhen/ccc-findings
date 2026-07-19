@@ -241,6 +241,26 @@ def test_unresolved_configured_client_domain_emits_warning() -> None:
     assert result["summary"]["configured_client_relations"] == 0
 
 
+def test_external_rest_api_properties_client_creates_an_annotated_microservice() -> None:
+    caller = make_endpoint(
+        "call",
+        "ANY <dynamic>",
+        "caller/RestPartnerConfig.java",
+        module="caller-service",
+        snippet="cccr-external-microservice:partner-catalog",
+        topic_dynamic=True,
+    )
+
+    result = build_dependency_graph({"caller-service": [caller]}, {})
+
+    assert (
+        "microservice:caller-service",
+        "microservice:partner-catalog",
+        "partner-catalog: API",
+    ) in {(edge["source"], edge["target"], edge["label"]) for edge in result["edges"]}
+    assert next(node for node in result["nodes"] if node["id"] == "microservice:partner-catalog")["external"] is True
+
+
 def test_multiple_configured_call_sites_collapse_to_single_relation() -> None:
     call_a = make_endpoint(
         "call",

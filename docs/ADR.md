@@ -1039,3 +1039,33 @@ Maven/Gradle convention `test`/`<prefix>Test`
 (`_is_maven_or_gradle_test_source_set`), preserving ADR-34's intent
 (exclude `src/test`, `src/componentTest`, ...) without capturing a generic
 `src/<package>` layout.
+
+---
+
+## ADR-35 — Strategy1 models configured REST property entries as external microservices
+
+**Status**: Accepted.
+
+**Context**: Strategy1 already preserves configured HTTP dependencies declared
+through uppercase domain constants in a `Rest*Config*` class, but some services
+select an HTTP client from `restApiProperties().getRest().get("xxx")`. The
+target is an explicit logical service name, not a route and not merely an
+opaque URL. Reducing it to an `external_api` node loses the fact that the
+dependency is service-to-service; requiring an indexed provider would hide
+real partner dependencies outside the workspace.
+
+**Decision**: the AST-only Strategy1 extractor recognizes that exact fluent
+invocation inside `Rest*Config*` and stores a `MessageEndpoint` call fact with
+the `cccr-external-microservice:xxx` evidence marker. `graph.build_graph`
+creates an HTTP edge to `xxx` even without indexed endpoints. JSON and visual
+exports include `xxx` as a microservice annotated external; the dependency
+graph carries the same annotation. The LikeC4 exporter intentionally collapses
+all HTTP route matches between one caller/callee pair into one `HTTP` relation,
+so resource-level endpoint multiplicity does not clutter a service topology.
+
+**Consequences**: a literal key is required; dynamic map keys, arbitrary
+`get(...)` chains, comments, and non-`Rest*Config*` classes are ignored. The
+edge is static evidence of configuration, never a runtime reachability claim.
+An external name that collides with an indexed service retains the external
+annotation, because the explicit configuration convention is authoritative for
+that call site.

@@ -1529,7 +1529,7 @@ def _infer_resttemplate_exchange_endpoints(
 def _infer_configured_api_client_endpoints(
     repo_root: Path, rel_path: str
 ) -> list[MessageEndpoint]:
-    """Émet une dépendance par constante ``DOMAIN_*`` d'une configuration REST.
+    """Émet les dépendances configurées d'une configuration REST Strategy1.
 
     La convention strategy1 ne dépend ni du nom de factory ni de la forme du
     bean : toute constante majuscule avec underscore présente dans une classe
@@ -1565,6 +1565,26 @@ def _infer_configured_api_client_endpoints(
                 path=rel_path,
                 line=line,
                 domain=domain,
+            )
+        for service, line in _rest_configuration_external_services(type_node, source):
+            endpoint = _build_endpoint(
+                repo_root,
+                rel_path,
+                line,
+                line,
+                "call",
+                "rest",
+                "ANY <dynamic>",
+                "configured-external-rest-api-properties",
+                f"{configuration}\ncccr-external-microservice:{service}",
+                topic_dynamic=True,
+            )
+            endpoints[endpoint.id] = endpoint
+            _trace_rest_client(
+                "rest_client.search.external_configuration_dependency",
+                path=rel_path,
+                line=line,
+                service=service,
             )
     return list(endpoints.values())
 
@@ -2591,6 +2611,41 @@ def _rest_configuration_domains(type_node, source: bytes) -> list[tuple[str, int
         if _is_uppercase_underscore_constant(name := java_parser.node_text(source, node))
     }
     return sorted(domains)
+
+
+def _rest_configuration_external_services(type_node, source: bytes) -> list[tuple[str, int]]:
+    """Return external services referenced through ``restApiProperties``.
+
+    Strategy1 treats ``restApiProperties().getRest().get("partner")`` in a
+    ``Rest*Config*`` class as an explicit HTTP dependency on the external
+    microservice ``partner``.  The AST shape is checked end-to-end so a
+    matching string in a comment, an unrelated ``get`` chain, or another type
+    declaration cannot manufacture an architecture relation.
+    """
+    services: set[tuple[str, int]] = set()
+    for invocation in java_parser.walk(type_node):
+        if invocation.type != "method_invocation":
+            continue
+        if java_parser.enclosing(invocation, "class_declaration", "interface_declaration", "record_declaration", "enum_declaration") != type_node:
+            continue
+        receiver, method_name, arguments = java_parser.invocation_parts(invocation, source)
+        if method_name != "get" or len(arguments) != 1 or receiver is None:
+            continue
+        service = _normalize_api_domain(java_parser.string_value(arguments[0], source) or "")
+        if service is None or receiver.type != "method_invocation":
+            continue
+        rest_receiver, rest_method, rest_arguments = java_parser.invocation_parts(receiver, source)
+        if rest_method != "getRest" or rest_arguments or rest_receiver is None:
+            continue
+        if rest_receiver.type != "method_invocation":
+            continue
+        _properties_receiver, properties_method, properties_arguments = java_parser.invocation_parts(
+            rest_receiver, source
+        )
+        if properties_method != "restApiProperties" or properties_arguments:
+            continue
+        services.add((service, invocation.start_point.row + 1))
+    return sorted(services)
 
 
 def _is_configured_api_client_factory(method_name: str) -> bool:

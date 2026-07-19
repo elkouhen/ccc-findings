@@ -1,4 +1,4 @@
-ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v15-strategy1-model-openapi"
+ENDPOINT_INVENTORY_SIGNATURE = "endpoint-inventory-v16-strategy1-external-rest-api-properties"
 
 
 def current_endpoint_inventory_signature() -> str:

@@ -489,6 +489,13 @@ concerned files. Covered cases:
   factory, bean declaration and generated-interface invocation are deliberately
   ignored. This fact preserves the A→B dependency without resolving a route or
   client type;
+- External configured REST clients: with `--topic-strategy strategy1`, a
+  `restApiProperties().getRest().get("xxx")` invocation inside a
+  `Rest*Config*` class produces a
+  `configured-external-rest-api-properties` call fact. Its AST evidence carries
+  `cccr-external-microservice:xxx`; `graph.build_graph` creates the HTTP edge
+  even though `xxx` has no indexed endpoint, and graph renderers expose it as
+  an external microservice rather than as an untyped external API;
 - Maven OpenAPI model modules: with `--topic-strategy strategy1`, a service
   declaration `src/main/resources/openapi/<api>.rest` resolves the contract
   named `<api>` and declared by `inputSpec` or `inputSpecRootDirectory` in a
@@ -727,7 +734,8 @@ unchanged.
 
 `render_graph_json` exposes the topology for `cccr export microservices --json`;
 `render_graph_text` remains available to programmatic callers. The result has
-`services` (the keys of `endpoints_by_service`), `nodes` (services + Kafka
+`services` (the indexed service keys plus any explicitly inferred external
+service), `nodes` (services + Kafka
 topics), `edges` (every `GraphEdge` returned by `build_graph`, REST or Kafka,
 with both endpoint sites), plus `outbound_calls_in_consumers`.
 

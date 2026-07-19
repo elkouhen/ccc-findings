@@ -16,7 +16,7 @@ from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import (
     discover_module_dependencies,
     discover_modules,
-    discover_test_module_paths,
+    discover_excluded_module_paths,
 )
 from ccc_radar.relations import build_architecture_relations
 from ccc_radar.scanner import (
@@ -392,15 +392,15 @@ def index_repo(
 
     _report_progress(progress, "→ Indexation : inventaire des fichiers du dépôt...")
     _trace("files.begin")
-    excluded_test_module_paths = discover_test_module_paths(repo_root)
+    excluded_module_paths = discover_excluded_module_paths(repo_root)
     current_hashes = _list_repo_files(
         repo_root,
         config,
-        excluded_module_paths=excluded_test_module_paths,
+        excluded_module_paths=excluded_module_paths,
     )
     for rel_path in extra_files or []:
         candidate = repo_root / rel_path
-        if candidate.is_file() and not _is_in_excluded_module(candidate, excluded_test_module_paths):
+        if candidate.is_file() and not _is_in_excluded_module(candidate, excluded_module_paths):
             current_hashes[rel_path] = _sha256_file(candidate)
     previous_hashes = store.get_file_hashes()
     _trace("files.end", current=len(current_hashes), previous=len(previous_hashes))

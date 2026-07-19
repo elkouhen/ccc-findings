@@ -108,6 +108,9 @@ _SERVICE_URL_GETTER_RE = re.compile(r"\.get([A-Z][A-Za-z0-9]*)ServiceUrl\(")
 _SERVICE_URL_HOST_RE = re.compile(r"https?://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
 _LOAD_BALANCED_URI_RE = re.compile(r"lb://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\b", re.IGNORECASE)
 _CONFIGURED_API_DOMAIN_RE = re.compile(r"\bcccr-api-domain:([a-z0-9][a-z0-9-]*)\b", re.IGNORECASE)
+_EXTERNAL_MICROSERVICE_RE = re.compile(
+    r"\bcccr-external-microservice:([a-z0-9][a-z0-9-]*)\b", re.IGNORECASE
+)
 
 
 def _camel_to_kebab(name: str) -> str:
@@ -125,6 +128,21 @@ def configured_api_client_domain(endpoint: MessageEndpoint) -> str | None:
     """
     match = _CONFIGURED_API_DOMAIN_RE.search(endpoint.snippet)
     return match.group(1).lower() if match is not None else None
+
+
+def external_microservice_name(endpoint: MessageEndpoint) -> str | None:
+    """Return the external microservice explicitly named by a Strategy1 call."""
+    match = _EXTERNAL_MICROSERVICE_RE.search(endpoint.snippet)
+    return match.group(1).lower() if match is not None else None
+
+
+def external_microservice_names(edges: list[GraphEdge]) -> set[str]:
+    """Return graph targets that Strategy1 explicitly marks as external."""
+    return {
+        edge.to_service
+        for edge in edges
+        if edge.kind == "rest" and external_microservice_name(edge.from_endpoint) is not None
+    }
 
 
 def _rest_target_service_hint(call: MessageEndpoint) -> str | None:
@@ -300,6 +318,19 @@ def build_graph(endpoints_by_service: dict[str, list[MessageEndpoint]]) -> list[
             continue
         seen.add(key)
         edges.append(GraphEdge("rest", call_service, domain, call, None))
+
+    # `restApiProperties().getRest().get("partner")` names a microservice
+    # outside the indexed workspace.  Keep it as a microservice relation (not
+    # an untyped external API) so the topology can label the target external.
+    for call_service, call in calls:
+        service = external_microservice_name(call)
+        if service is None or call_service == service:
+            continue
+        key = ("rest", call_service, service, "configured-external", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append(GraphEdge("rest", call_service, service, call, None))
 
     for produce_service, produce in produces:
         for consume_service, consume in consumes:

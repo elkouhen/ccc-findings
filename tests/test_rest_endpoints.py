@@ -576,6 +576,34 @@ def test_rest_configuration_domain_declares_dependency_without_a_bean(
     assert "cccr-api-domain:domain-annuaire" in configuration.snippet
 
 
+def test_strategy1_rest_api_properties_declares_an_external_microservice(tmp_path: Path) -> None:
+    (tmp_path / "pom.xml").write_text(
+        "<project><artifactId>caller-service</artifactId><version>1</version></project>"
+    )
+    config = tmp_path / "src" / "main" / "java" / "RestPartnerConfig.java"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "class RestPartnerConfig {\n"
+        "  Object client() { return restApiProperties().getRest().get(\"partner-catalog\"); }\n"
+        "}\n"
+        "class OtherConfig {\n"
+        "  Object ignored() { return restApiProperties().getRest().get(\"ignored\"); }\n"
+        "}\n"
+    )
+
+    endpoints = infer_framework_endpoints(
+        tmp_path,
+        files=[config.relative_to(tmp_path).as_posix()],
+        configured_api_client_strategy1=True,
+    )
+
+    assert len(endpoints) == 1
+    endpoint = endpoints[0]
+    assert endpoint.framework == "configured-external-rest-api-properties"
+    assert endpoint.module == "caller-service"
+    assert "cccr-external-microservice:partner-catalog" in endpoint.snippet
+
+
 def test_rest_configuration_collects_each_domain_constant(
     tmp_path: Path,
 ) -> None:

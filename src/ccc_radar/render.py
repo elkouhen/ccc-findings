@@ -5,14 +5,19 @@ import re
 import subprocess
 from html import escape as html_escape
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import yaml
 from xml.sax.saxutils import quoteattr
 
 from ccc_radar.ccc_bridge import CodeHitWithFindings
 from ccc_radar.flow import FlowResult
-from ccc_radar.graph import GraphEdge, OutboundCallInConsumer, graph_edge_rest_resource
+from ccc_radar.graph import (
+    GraphEdge,
+    OutboundCallInConsumer,
+    external_microservice_names,
+    graph_edge_rest_resource,
+)
 from ccc_radar import java_parser
 from ccc_radar.models import Finding, MessageEndpoint
 from ccc_radar.modules import DiscoveredModule, ModuleDependency
@@ -180,6 +185,7 @@ class GraphSite(TypedDict):
 class GraphNodeInfo(TypedDict):
     name: str
     kind: str  # "microservice" | "kafka_topic"
+    external: NotRequired[bool]
 
 
 class OutboundCallHit(TypedDict):
@@ -237,8 +243,17 @@ def _endpoint_to_site(endpoint: MessageEndpoint) -> GraphSite:
 
 
 def _graph_nodes(services: list[str], edges: list[GraphEdge]) -> list[GraphNodeInfo]:
+    external_services = external_microservice_names(edges)
+    all_services = sorted(set(services) | external_services)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
-    return [GraphNodeInfo(name=service, kind="microservice") for service in services] + [
+    return [
+        GraphNodeInfo(
+            name=service,
+            kind="microservice",
+            **({"external": True} if service in external_services else {}),
+        )
+        for service in all_services
+    ] + [
         GraphNodeInfo(name=topic, kind="kafka_topic") for topic in kafka_topics
     ]
 
@@ -300,6 +315,7 @@ def render_graph_json(
     warnings: list[str] | None = None,
     cross_module_data_available: bool = False,
 ) -> GraphResult:
+    rendered_services = sorted(set(services) | external_microservice_names(edges))
     warning_note = " ".join(f"⚠ {w}" for w in (warnings or []))
     if cross_module_data_available:
         note = warning_note
@@ -308,8 +324,8 @@ def render_graph_json(
     else:
         note = _NO_CROSS_MODULE_DATA_NOTE
     return GraphResult(
-        services=services,
-        nodes=_graph_nodes(services, edges),
+        services=rendered_services,
+        nodes=_graph_nodes(rendered_services, edges),
         edges=_graph_edges(edges),
         outbound_calls_in_consumers=[
             OutboundCallHit(
@@ -393,7 +409,8 @@ def render_graph_drawio(
     route, topic) est échappée XML via `quoteattr` — jamais interpolée brute."""
     node_width = 320
 
-    ordered_services = sorted(endpoints_by_service)
+    external_services = external_microservice_names(edges)
+    ordered_services = sorted(set(endpoints_by_service) | external_services)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
     mongo_collections = _mongodb_collection_nodes(collections_by_service)
     service_resources = {
@@ -424,12 +441,15 @@ def render_graph_drawio(
     cells: list[str] = []
     for node_kind, name in ordered_nodes:
         if node_kind == "microservice":
-            label = _drawio_service_label(name, service_resources[name])
+            label = _drawio_service_label(
+                name, service_resources[name], external=name in external_services
+            )
             width, height = node_dimensions[(node_kind, name)]
             style = (
                 "shape=hexagon;perimeter=hexagonPerimeter;whiteSpace=wrap;html=1;"
-                "fillColor=#eaf2ff;strokeColor=#4f79b5;strokeWidth=2;"
-                "fontColor=#183b66;fontSize=14;fontStyle=1;shadow=1;"
+                f"fillColor={'#f3f4f6' if name in external_services else '#eaf2ff'};"
+                f"strokeColor={'#6b7280' if name in external_services else '#4f79b5'};strokeWidth=2;"
+                f"fontColor={'#374151' if name in external_services else '#183b66'};fontSize=14;fontStyle=1;shadow=1;"
                 "spacingLeft=12;spacingRight=12;"
             )
         elif node_kind == "kafka_topic":
@@ -792,7 +812,8 @@ def render_graph_html(
     data is embedded locally and safely serialized so the generated file
     contains no application data in executable JavaScript.
     """
-    ordered_services = sorted(endpoints_by_service)
+    external_services = external_microservice_names(edges)
+    ordered_services = sorted(set(endpoints_by_service) | external_services)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
     topic_message_types: dict[str, dict[str, set[str]]] = {
         topic: {"produce": set(), "consume": set()} for topic in kafka_topics
@@ -847,6 +868,9 @@ def render_graph_html(
         api_count = len(resources) + len(event_apis)
         if api_count > len(shown_apis):
             shown_apis.append(f"+ {api_count - len(shown_apis)} API")
+        label_lines = [name, *(shown_apis or ["Aucune API publiee"])]
+        if name in external_services:
+            label_lines.append("External")
         nodes.append(
             {
                 "id": f"microservice:{name}",
@@ -866,11 +890,10 @@ def render_graph_html(
                     }
                     for path in openapi_files
                 ],
-                "label": "\n".join([name, *shown_apis])
-                if shown_apis
-                else f"{name}\nAucune API publiee",
+                "label": "\n".join(label_lines),
                 "width": 320,
                 "height": 76 + 18 * max(1, len(shown_apis)),
+                **({"external": True} if name in external_services else {}),
             }
         )
     nodes += [
@@ -1090,7 +1113,8 @@ def render_graph_likec4(
     The source inventory is static, so relations carry protocol semantics but
     never claim to be runtime traces.
     """
-    services = sorted(endpoints_by_service)
+    external_services = external_microservice_names(edges)
+    services = sorted(set(endpoints_by_service) | external_services)
     topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
     collection_nodes = _mongodb_collection_nodes(collections_by_service)
     collection_names = {identity: collection for _service, collection, identity in collection_nodes}
@@ -1140,7 +1164,7 @@ def render_graph_likec4(
                 "http",
                 service_ids[edge.from_service],
                 service_ids[edge.to_service],
-                graph_edge_rest_resource(edge),
+                "HTTP",
             ))
             continue
         topic_id = topic_ids[edge.from_endpoint.topic]
@@ -1284,6 +1308,8 @@ def render_graph_likec4(
             description = f"{description}; Kafka published: {', '.join(produced_messages)}"
         if consumed_messages:
             description = f"{description}; Kafka consumed: {', '.join(consumed_messages)}"
+        if service in external_services:
+            description = f"{description}; External microservice"
         lines.extend(
             [
                 f"    {service_ids[service]} = microservice '{_likec4_string(service)}' {{",
@@ -3317,7 +3343,7 @@ def _drawio_service_height(resources: list[str]) -> int:
     return 82 + 22 * max(1, len(resources))
 
 
-def _drawio_service_label(name: str, resources: list[str]) -> str:
+def _drawio_service_label(name: str, resources: list[str], *, external: bool = False) -> str:
     """HTML label shared by Draw.io service cards.
 
     Resource names come from source code and must be HTML-escaped separately:
@@ -3325,6 +3351,11 @@ def _drawio_service_label(name: str, resources: list[str]) -> str:
     alter the card's label.
     """
     title = html_escape(name)
+    external_label = (
+        '<div style="text-align:center;font-size:10px;color:#4b5563;">External</div>'
+        if external
+        else ""
+    )
     if resources:
         count = f"{len(resources)} ressource{'s' if len(resources) > 1 else ''} exposée{'s' if len(resources) > 1 else ''}"
         rows = "".join(_drawio_resource_row(resource) for resource in resources)
@@ -3337,6 +3368,7 @@ def _drawio_service_label(name: str, resources: list[str]) -> str:
     return (
         '<div style="text-align:left;line-height:1.25;">'
         f'<div style="text-align:center;font-size:14px;color:#183b66;"><b>{title}</b></div>'
+        f"{external_label}"
         '<div style="margin-top:7px;padding:4px 5px;background-color:#dbeafe;'
         'color:#315f9b;font-size:10px;font-weight:bold;border-radius:4px;">'
         f'{count}</div>'
@@ -3491,7 +3523,8 @@ def render_graph_d2(
     REST vont de l'appelant vers l'appelé et les arêtes Kafka sont dépliées
     en production puis consommation. Kafka et les liens vers MongoDB restent
     en pointillé."""
-    ordered_services = sorted(endpoints_by_service)
+    external_services = external_microservice_names(edges)
+    ordered_services = sorted(set(endpoints_by_service) | external_services)
     kafka_topics = sorted({edge.from_endpoint.topic for edge in edges if edge.kind == "kafka"})
     mongo_collections = _mongodb_collection_nodes(collections_by_service)
     service_ids = {name: f"svc_{i}" for i, name in enumerate(ordered_services)}
@@ -3505,15 +3538,15 @@ def render_graph_d2(
     for name in ordered_services:
         node_id = service_ids[name]
         served_resources = _rest_resources_served(endpoints_by_service.get(name, []))
-        label_lines = [f"**{name}**"]
+        label_lines = [f"**{name}**", *(["_External_"] if name in external_services else [])]
         if served_resources:
             label_lines.extend([f"- `{resource}`" for resource in served_resources])
         lines.extend(
             [
                 f"{node_id}: {{",
                 "  shape: hexagon",
-                '  style.fill: "#dae8fc"',
-                '  style.stroke: "#6c8ebf"',
+                f'  style.fill: "{"#f3f4f6" if name in external_services else "#dae8fc"}"',
+                f'  style.stroke: "{"#6b7280" if name in external_services else "#6c8ebf"}"',
             ]
         )
         lines.extend(_d2_markdown_block(label_lines))

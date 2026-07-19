@@ -81,6 +81,19 @@ def test_discover_modules_excludes_maven_and_gradle_mock_projects(tmp_path: Path
     assert [module.name for module in discover_modules(tmp_path)] == ["orders-api"]
 
 
+def test_discover_modules_excludes_maven_and_gradle_archteype_projects(tmp_path: Path) -> None:
+    maven_archteype = tmp_path / "maven-template"
+    gradle_archteype = tmp_path / "gradle-template"
+    production = tmp_path / "orders"
+    for module in (maven_archteype, gradle_archteype, production):
+        module.mkdir()
+    _write_pom(maven_archteype / "pom.xml", "orders-archteype", "1.0.0")
+    (gradle_archteype / "build.gradle").write_text("archivesBaseName = 'payment-ARCHTEYPE'\n")
+    _write_pom(production / "pom.xml", "orders-api", "1.0.0")
+
+    assert [module.name for module in discover_modules(tmp_path)] == ["orders-api"]
+
+
 def test_discover_module_dependencies_keeps_only_local_maven_and_gradle_targets(
     tmp_path: Path,
 ) -> None:

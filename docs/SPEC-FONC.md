@@ -123,7 +123,9 @@ empty; it is never inferred from a topic name or serializer configuration.
   `${kafka.topics.abc_def_ghi_jkl.name}` to physical topic `ABC_DEF_GHI_JKL`.
   It also activates configured HTTP-client dependencies: every uppercase
   constant containing an underscore found in a `Rest*Config*` class declares a
-  dependency to its kebab-case form. A service declaration
+  dependency to its kebab-case form. In the same class,
+  `restApiProperties().getRest().get("xxx")` declares an HTTP call to a new
+  `xxx` microservice annotated as external. A service declaration
   `src/main/resources/openapi/<api>.rest` attributes publication to that
   service: the contract named `<api>` and configured by `inputSpec` or
   `inputSpecRootDirectory` in a `model-*` module is parsed; generated `XxxApi`
@@ -302,6 +304,7 @@ For the inter-service topology, two sources are possible, tried in this order:
 Both sources feed the same algorithm (`graph.build_graph`) and report:
 - **services**: service/module names participating in the inter-service graph;
 - **nodes**: microservices plus Kafka topic nodes used in the rendered topology;
+  an inferred external microservice has `"external": true`;
 - **edges**: REST and Kafka edges with both sites (`from_site` / `to_site`)
   and their topic/route labels;
 - **outbound_calls_in_consumers**: synchronous REST calls detected inside a
@@ -392,7 +395,9 @@ unmatched HTTP calls as external HTTP API elements, appends statically inferred
 Java payload types to Kafka relation labels, distinguishes indexed MongoDB reads
 from writes, and lists detected OpenAPI contracts in microservice descriptions.
 MongoDB collection nodes are scoped by microservice because a collection name
-alone does not establish a shared database. The model is an inferred static
+alone does not establish a shared database. HTTP relations are consolidated to
+one link per caller/callee microservice pair, independent of the number of
+published resources matched between them. The model is an inferred static
 topology, never a runtime trace. No equivalent MCP tool — generated files are
 not agent-consumable results, unlike the JSON returned by `graph`.
 
@@ -538,7 +543,9 @@ Reads the **module inventory materialized by `cccr index`** in the current
 directory, including libraries and aggregators, unlike
 `microservices` which is focused on runtime services. It never re-reads the
 workspace to reconstruct this view; a missing/incompatible index is a blocking
-error.
+error. Test and mock artifacts, and modules whose declared Maven or Gradle
+name contains `archteype` (case-insensitive), are excluded from the inventory
+and their sources are not scanned.
 
 - `cccr modules` lists compact module summaries: Maven artifact or Gradle
   project/archive name, declared version (or `null`), build system,
