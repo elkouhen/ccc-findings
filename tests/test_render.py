@@ -489,6 +489,10 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'id="relation-http"' in document
     assert 'id="relation-kafka"' in document
     assert 'id="relation-mongodb"' in document
+    assert 'id="node-microservice"' in document
+    assert 'id="node-external-microservice"' in document
+    assert 'id="node-kafka-topic"' in document
+    assert 'id="node-mongodb-collection"' in document
     assert 'class="relation-filters"' in document
     assert 'header.className = "details-header"' in document
     assert 'meta.className = "details-meta"' in document
@@ -527,6 +531,9 @@ def test_render_graph_html_embeds_sigma_and_safe_graph_data() -> None:
     assert 'kafkaConsume: "#0072B2"' in document
     assert 'mongodb: "#CC79A7"' in document
     assert "function isVisibleRelation(kind)" in document
+    assert "function isVisibleNode(node)" in document
+    assert 'node.external ? nodeExternalMicroservice.checked : nodeMicroservice.checked' in document
+    assert "!isVisibleNodeId(network.source(edge))" in document
     assert 'kind !== "mongodb" || relationMongodb.checked' in document
     assert 'hidden: true' in document
     assert 'data.type === "kafka_topic" && !relationKafka.checked' not in document

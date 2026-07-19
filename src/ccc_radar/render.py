@@ -1643,6 +1643,13 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         <label class="relation-filter" title="Afficher les publications et consommations Kafka"><input id="relation-kafka" type="checkbox" checked aria-label="Afficher les relations Kafka">Kafka</label>
         <label class="relation-filter" title="Afficher les acces aux collections MongoDB"><input id="relation-mongodb" type="checkbox" checked aria-label="Afficher les relations MongoDB">MongoDB</label>
       </fieldset>
+      <fieldset class="relation-filters">
+        <legend>Ressources affichees</legend>
+        <label class="relation-filter" title="Afficher les microservices indexes"><input id="node-microservice" type="checkbox" checked aria-label="Afficher les microservices">Microservices</label>
+        <label class="relation-filter" title="Afficher les microservices externes"><input id="node-external-microservice" type="checkbox" checked aria-label="Afficher les microservices externes">Externes</label>
+        <label class="relation-filter" title="Afficher les topics Kafka"><input id="node-kafka-topic" type="checkbox" checked aria-label="Afficher les topics Kafka">Topics Kafka</label>
+        <label class="relation-filter" title="Afficher les collections MongoDB"><input id="node-mongodb-collection" type="checkbox" checked aria-label="Afficher les collections MongoDB">MongoDB</label>
+      </fieldset>
       <div class="filter-presets" role="group" aria-label="Vues de relations">
         <button class="filter-preset is-active" type="button" data-preset="all">Toutes</button>
         <button class="filter-preset" type="button" data-preset="http">REST</button>
@@ -1886,11 +1893,25 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const relationHttp = document.getElementById("relation-http");
     const relationKafka = document.getElementById("relation-kafka");
     const relationMongodb = document.getElementById("relation-mongodb");
+    const nodeMicroservice = document.getElementById("node-microservice");
+    const nodeExternalMicroservice = document.getElementById("node-external-microservice");
+    const nodeKafkaTopic = document.getElementById("node-kafka-topic");
+    const nodeMongodbCollection = document.getElementById("node-mongodb-collection");
     function isVisibleRelation(kind) {
       return (kind !== "rest" || relationHttp.checked)
         && (kind !== "kafka" || relationKafka.checked)
         && (kind !== "mongodb" || relationMongodb.checked);
     }
+    function isVisibleNode(node) {
+      if (!node) return false;
+      if (node.kind === "microservice") {
+        return node.external ? nodeExternalMicroservice.checked : nodeMicroservice.checked;
+      }
+      if (node.kind === "kafka_topic") return nodeKafkaTopic.checked;
+      if (node.kind === "mongodb_collection") return nodeMongodbCollection.checked;
+      return true;
+    }
+    function isVisibleNodeId(id) { return isVisibleNode(nodeDataById.get(id)); }
     const NODE_VERTEX_SHADER = `
       attribute vec2 a_position;
       attribute float a_size;
@@ -2052,6 +2073,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       labelGridCellSize: 110,
       labelRenderedSizeThreshold: 8,
       nodeReducer: (node, data) => {
+        if (!isVisibleNodeId(node)) return { ...data, hidden: true, label: "" };
         if (!selectedId || relatedNodes.has(node)) {
           const order = pathMicroserviceOrder.get(node);
           return order ? { ...data, label: `${order}. ${data.label}` } : data;
@@ -2059,7 +2081,11 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         return { ...data, color: "#d8e0ea", label: "" };
       },
       edgeReducer: (edge, data) => {
-        if (!isVisibleRelation(data.kind)) return { ...data, hidden: true };
+        if (
+          !isVisibleRelation(data.kind)
+          || !isVisibleNodeId(network.source(edge))
+          || !isVisibleNodeId(network.target(edge))
+        ) return { ...data, hidden: true };
         if (!selectedId || relatedEdges.has(edge)) return data;
         return { ...data, color: "#e5eaf0", size: .35 };
       },
@@ -3220,7 +3246,15 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     pathsTab.addEventListener("click", () => setToolbarTab("paths"));
     referencesTab.addEventListener("click", () => setToolbarTab("references"));
     filterPresetButtons.forEach(button => button.addEventListener("click", () => applyRelationPreset(button.dataset.preset)));
-    [relationHttp, relationKafka, relationMongodb].forEach(control => control.addEventListener("change", () => {
+    [
+      relationHttp,
+      relationKafka,
+      relationMongodb,
+      nodeMicroservice,
+      nodeExternalMicroservice,
+      nodeKafkaTopic,
+      nodeMongodbCollection,
+    ].forEach(control => control.addEventListener("change", () => {
       setActiveRelationPreset(null);
       reset();
       dependencyRenderer?.refresh();

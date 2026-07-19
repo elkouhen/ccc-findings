@@ -360,8 +360,9 @@ APIs exposed by the selected microservice, and the published and consumed Java
 message types of a selected Kafka topic when statically known, as well as direct relations. Each
 relation uses a stable `source -> target : action` wording rather than a
 selection-relative direction. The `HTTP`, `Kafka` and `MongoDB` toggles independently
-show or hide those relations; hiding Kafka or MongoDB also hides their topic or collection nodes and
-path searches only traverse the currently displayed relation types. The path search is kept in the
+show or hide those relations. Separate resource toggles control internal
+microservices, external microservices, Kafka topics and MongoDB collections;
+relations attached to a hidden resource are hidden too. The path search is kept in the
 expandable `Explorer un chemin` control so that the primary exploration controls remain compact. A text field accepts a path such as
 `service-a -> topic-1 -> service-b` and highlights the shortest directed path
 between every pair of consecutive entries, preserving REST call direction and
