@@ -214,7 +214,33 @@ def test_render_graph_json_includes_strategy1_external_microservice() -> None:
         "name": "partner-catalog",
         "kind": "microservice",
         "external": True,
+        "shape": "triangle",
     }
+
+
+def test_renderers_use_a_triangle_for_external_microservices() -> None:
+    endpoints_by_service = {
+        "caller-service": [
+            make_endpoint(
+                "call",
+                "ANY <dynamic>",
+                "caller/RestPartnerConfig.java",
+                snippet="cccr-external-microservice:partner-catalog",
+                topic_dynamic=True,
+            )
+        ]
+    }
+    edges = build_graph(endpoints_by_service)
+
+    drawio = ET.fromstring(render_graph_drawio(endpoints_by_service, edges))
+    assert "shape=triangle" in _vertex_for_service(drawio, "partner-catalog").get("style", "")
+
+    d2 = render_graph_d2(endpoints_by_service, edges)
+    assert "shape: triangle" in d2
+
+    html = render_graph_html(endpoints_by_service, edges)
+    assert "EXTERNAL_MICROSERVICE_FRAGMENT_SHADER" in html
+    assert 'external_microservice: createNodeProgram(EXTERNAL_MICROSERVICE_FRAGMENT_SHADER)' in html
 
 
 def test_render_graph_html_exposes_all_indexing_issues() -> None:
@@ -356,6 +382,8 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
 
     assert "specification {" in document
     assert "element microservice" in document
+    assert "element external_microservice" in document
+    assert "shape triangle" in document
     assert "element kafka_topic" in document
     assert "element mongodb_collection" in document
     assert "element external_api" in document
@@ -375,7 +403,7 @@ def test_render_graph_likec4_preserves_http_kafka_and_mongodb_relations() -> Non
     assert "OpenAPI contracts: src/main/resources/openapi.yaml" in document
     assert "service_service-a -[http]-> service_service-b 'HTTP'" in document
     assert document.count("service_service-a -[http]-> service_service-b") == 1
-    assert "service_partner-catalog = microservice 'partner-catalog'" in document
+    assert "service_partner-catalog = external_microservice 'partner-catalog'" in document
     assert "External microservice" in document
     assert "service_service-a -[http]-> service_partner-catalog 'HTTP'" in document
     assert "service_service-a -[publishes]-> topic_orders_created 'publishes OrderCreated'" in document
@@ -782,7 +810,7 @@ def test_render_graph_html_keeps_complexity_architecture_only() -> None:
     assert topic["color"] == "#64748b"
     assert "Connectivite : ${complexity.level} (${complexity.score})" in document
     assert 'type: "arrow"' in document
-    assert 'type: node.kind,' in document
+    assert 'type: node.external ? "external_microservice" : node.kind,' in document
     assert "nodeProgramClasses:" in document
     assert "MICROSERVICE_FRAGMENT_SHADER" in document
     assert "KAFKA_TOPIC_FRAGMENT_SHADER" in document

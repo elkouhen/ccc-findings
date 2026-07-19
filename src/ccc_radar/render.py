@@ -186,6 +186,7 @@ class GraphNodeInfo(TypedDict):
     name: str
     kind: str  # "microservice" | "kafka_topic"
     external: NotRequired[bool]
+    shape: NotRequired[str]
 
 
 class OutboundCallHit(TypedDict):
@@ -250,7 +251,11 @@ def _graph_nodes(services: list[str], edges: list[GraphEdge]) -> list[GraphNodeI
         GraphNodeInfo(
             name=service,
             kind="microservice",
-            **({"external": True} if service in external_services else {}),
+            **(
+                {"external": True, "shape": "triangle"}
+                if service in external_services
+                else {}
+            ),
         )
         for service in all_services
     ] + [
@@ -446,7 +451,9 @@ def render_graph_drawio(
             )
             width, height = node_dimensions[(node_kind, name)]
             style = (
-                "shape=hexagon;perimeter=hexagonPerimeter;whiteSpace=wrap;html=1;"
+                f"shape={'triangle' if name in external_services else 'hexagon'};"
+                f"perimeter={'trianglePerimeter' if name in external_services else 'hexagonPerimeter'};"
+                "whiteSpace=wrap;html=1;"
                 f"fillColor={'#f3f4f6' if name in external_services else '#eaf2ff'};"
                 f"strokeColor={'#6b7280' if name in external_services else '#4f79b5'};strokeWidth=2;"
                 f"fontColor={'#374151' if name in external_services else '#183b66'};fontSize=14;fontStyle=1;shadow=1;"
@@ -893,7 +900,11 @@ def render_graph_html(
                 "label": "\n".join(label_lines),
                 "width": 320,
                 "height": 76 + 18 * max(1, len(shown_apis)),
-                **({"external": True} if name in external_services else {}),
+                **(
+                    {"external": True, "shape": "triangle"}
+                    if name in external_services
+                    else {}
+                ),
             }
         )
     nodes += [
@@ -1212,6 +1223,10 @@ def render_graph_likec4(
         "    notation 'Microservice'",
         "    style { shape component }",
         "  }",
+        "  element external_microservice {",
+        "    notation 'External microservice'",
+        "    style { shape triangle }",
+        "  }",
         "  element kafka_topic {",
         "    notation 'Kafka topic'",
         "    style { shape queue }",
@@ -1312,7 +1327,7 @@ def render_graph_likec4(
             description = f"{description}; External microservice"
         lines.extend(
             [
-                f"    {service_ids[service]} = microservice '{_likec4_string(service)}' {{",
+                f"    {service_ids[service]} = {'external_microservice' if service in external_services else 'microservice'} '{_likec4_string(service)}' {{",
                 "      technology 'Spring Boot'",
                 f"      description '{_likec4_string(description)}'",
                 f"      style {{ color {color} }}",
@@ -1838,7 +1853,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
       y: node.y,
       size: node.size,
       color: node.color,
-      type: node.kind,
+      type: node.external ? "external_microservice" : node.kind,
     }));
     graphData.links.forEach((link, index) => network.addEdgeWithKey(`edge-${index}`, link.source, link.target, {
       label: link.label,
@@ -1900,6 +1915,20 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
         float alpha = 1.0 - smoothstep(-.014, .014, distance);
         if (alpha < .01) discard;
         float border = smoothstep(.33, .42, shape);
+        vec3 fill = vec3(.98, .99, 1.0);
+        gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
+      }
+    `;
+    const EXTERNAL_MICROSERVICE_FRAGMENT_SHADER = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() {
+        vec2 point = gl_PointCoord - vec2(.5);
+        float shape = max(abs(point.x) * .866025 + point.y * .5, -point.y);
+        float distance = shape - .36;
+        float alpha = 1.0 - smoothstep(-.014, .014, distance);
+        if (alpha < .01) discard;
+        float border = smoothstep(.27, .35, shape);
         vec3 fill = vec3(.98, .99, 1.0);
         gl_FragColor = vec4(mix(fill, v_color.rgb, border), v_color.a * alpha);
       }
@@ -2014,6 +2043,7 @@ _SIGMA_GRAPH_HTML_TEMPLATE = """<!doctype html>
     const renderer = new Sigma(network, document.getElementById("graph"), {
       nodeProgramClasses: {
         microservice: createNodeProgram(MICROSERVICE_FRAGMENT_SHADER),
+        external_microservice: createNodeProgram(EXTERNAL_MICROSERVICE_FRAGMENT_SHADER),
         kafka_topic: createNodeProgram(KAFKA_TOPIC_FRAGMENT_SHADER),
         mongodb_collection: createNodeProgram(MONGODB_COLLECTION_FRAGMENT_SHADER),
       },
@@ -3544,7 +3574,7 @@ def render_graph_d2(
         lines.extend(
             [
                 f"{node_id}: {{",
-                "  shape: hexagon",
+                f"  shape: {'triangle' if name in external_services else 'hexagon'}",
                 f'  style.fill: "{"#f3f4f6" if name in external_services else "#dae8fc"}"',
                 f'  style.stroke: "{"#6b7280" if name in external_services else "#6c8ebf"}"',
             ]

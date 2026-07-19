@@ -377,8 +377,9 @@ and last entries must be microservices; intermediate entries can be
 microservices or Kafka topics. The
 generated document persists the current node selection or path in its URL
 fragment, so a browser refresh restores it, embeds graph data locally and loads Sigma.js from its CDN
-when opened. Its legend is also collapsible. Microservices are hexagons, Kafka topics circles and MongoDB
-collections squares; a blue, orange or red border reflects a microservice's
+when opened. Its legend is also collapsible. Internal microservices are hexagons,
+external microservices triangles, Kafka topics circles and MongoDB collections
+squares; a blue, orange or red border reflects a microservice's
 relative complexity. Microservices are ranked by their number of direct HTTP,
 Kafka and MongoDB relations, then split into three groups of equal size as far
 as possible (lowest, middle and highest third). Topics and MongoDB collections
@@ -389,8 +390,9 @@ Kafka publications green, Kafka consumptions orange and MongoDB accesses blue.
 
 `--c4 DIR` writes a runnable LikeC4 project in `DIR`: `architecture.c4`, the
 LikeC4 configuration, `package.json`, `.gitignore` and a README. It declares
-custom `microservice`, `kafka_topic`, `mongodb_collection` and `external_api`
-elements, plus `http`, `publishes`, `consumes`, and data-access relations. It also renders
+custom `microservice`, `external_microservice`, `kafka_topic`,
+`mongodb_collection` and `external_api` elements, plus `http`, `publishes`,
+`consumes`, and data-access relations. It also renders
 unmatched HTTP calls as external HTTP API elements, appends statically inferred
 Java payload types to Kafka relation labels, distinguishes indexed MongoDB reads
 from writes, and lists detected OpenAPI contracts in microservice descriptions.
